@@ -1,10 +1,13 @@
-// BN’s Sagovärld v1.5.1 – konto, kvoter, Stripe, TTS, merch-varianter, godnattmusik + lekfull loader
+// BN’s Sagovärld v1.6.0 – Kid Mode, gratisplan låst för spar-hjältar, Plus = max 10
 
 // === Config (fyll i) ===
 const SUPABASE_URL = "DIN_SUPABASE_URL";
 const SUPABASE_ANON_KEY = "DIN_SUPABASE_ANON_KEY";
-const API_BASE = ""; // samma origin
+const API_BASE = ""; // samma origin (Cloudflare Pages Functions)
 const GENERATE_URL = `${API_BASE}/generate`;
+
+// Kid Mode (4-åringsläge)
+const KID_MODE = true;
 
 // === Supabase init ===
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -52,24 +55,13 @@ const downloadTtsLink = document.getElementById("downloadTtsLink");
 const ttsMsg = document.getElementById("ttsMsg");
 
 const merchBtn = document.getElementById("merchBtn");
-const merchModal = document.getElementById("merchModal");
-const closeMerchBtn = document.getElementById("closeMerchBtn");
-const merchStatus = document.getElementById("merchStatus");
-const variationsGrid = document.getElementById("variationsGrid");
-const productStep = document.getElementById("productStep");
-const createMerchBtn = document.getElementById("createMerchBtn");
-const merchCheckoutMsg = document.getElementById("merchCheckoutMsg");
-const productType = document.getElementById("productType");
-const productColor = document.getElementById("productColor");
-const productSize = document.getElementById("productSize");
 
-// Sleep music
 const playSleepBtn = document.getElementById("playSleepBtn");
 const stopSleepBtn = document.getElementById("stopSleepBtn");
 const sleepAudio = document.getElementById("sleepAudio");
 const ageRange = document.getElementById("ageRange");
 
-// Loader refs
+// Loader
 const loaderOverlay = document.getElementById("loaderOverlay");
 const loaderAnim = document.getElementById("loaderAnim");
 const loaderPizza = document.getElementById("loaderPizza");
@@ -78,8 +70,19 @@ const loaderBar = document.getElementById("loaderBar");
 const loaderPct = document.getElementById("loaderPct");
 const loaderMsg = document.getElementById("loaderMsg");
 const pizzaRow = document.getElementById("pizzaRow");
-const closeLoaderBtn = document.getElementById("closeLoaderBtn");
 
+// Parent modal
+const parentBtn = document.getElementById("parentBtn");
+const parentModal = document.getElementById("parentModal");
+const pmUser = document.getElementById("pmUser");
+const pmLogin = document.getElementById("pmLogin");
+const pmLogout = document.getElementById("pmLogout");
+const pmBuyTokens = document.getElementById("pmBuyTokens");
+const pmSubscribe = document.getElementById("pmSubscribe");
+const pmEnt = document.getElementById("pmEnt");
+const pmClose = document.getElementById("pmClose");
+
+// ===== Loader utils =====
 let loaderTimer=null, loaderProg=0, loaderHold=false;
 function detectLoaderTheme(text){
   const s=(text||"").toLowerCase();
@@ -110,7 +113,15 @@ function showLoader(theme,msg){
 function updateLoader(p){ loaderBar.style.width=`${p}%`; loaderPct.textContent=Math.floor(p); if(!loaderPizza.hidden){ const eat=Math.floor(p/10); [...pizzaRow.children].forEach((el,i)=>el.classList.toggle("eaten", i<eat)); } }
 function completeLoader(){ loaderHold=true; updateLoader(100); setTimeout(hideLoader,350); }
 function hideLoader(){ clearInterval(loaderTimer); loaderOverlay.style.display="none"; }
-closeLoaderBtn?.addEventListener("click", hideLoader);
+
+// === Kid Mode toggles ===
+function applyKidMode(){
+  if(!KID_MODE) return;
+  document.body.classList.add("kid");
+  // Göm avancerade delar
+  document.querySelectorAll(".advanced").forEach(el=> el.style.display="none");
+}
+applyKidMode();
 
 // === Mode HEAD ===
 (async ()=>{
@@ -127,21 +138,32 @@ closeLoaderBtn?.addEventListener("click", hideLoader);
   }
 })();
 
-// === Auth ===
+// === Auth & entitlement ===
 let currentUser = null;
 let entitlement = { plan:"free", tokens_left:0, monthly_quota:8, used_this_month:0 };
 window.__accessToken = null;
+
+// Regler: gratis kan inte spara; Plus = 10 hjältar
+function canSaveProfiles() {
+  return entitlement && entitlement.plan !== "free";
+}
+function maxProfilesForPlan() {
+  if (!canSaveProfiles()) return 0;
+  return entitlement.plan === "plus" ? 10 : 5; // (om du lägger fler nivåer)
+}
 
 async function refreshAuthUI(){
   const { data:{ user } } = await supabase.auth.getUser();
   currentUser = user;
   if(user){
     userEmailEl.textContent = user.email;
+    pmUser.textContent = user.email;
     loginBtn.hidden = true; logoutBtn.hidden = false;
     window.__accessToken = (await supabase.auth.getSession()).data.session?.access_token;
     await refreshEntitlement();
   } else {
     userEmailEl.textContent = "Inte inloggad";
+    pmUser.textContent = "Inte inloggad";
     loginBtn.hidden = false; logoutBtn.hidden = true;
     paywall.hidden = true;
   }
@@ -159,14 +181,39 @@ refreshAuthUI();
 
 async function refreshEntitlement(){
   const res = await fetch("/entitlement", { headers: window.__accessToken ? { "Authorization": `Bearer ${window.__accessToken}` } : {} });
-  if(!res.ok){ paywall.hidden=false; quotaMsg.textContent="Logga in för att fortsätta."; return; }
+  if(!res.ok){ paywall.hidden=false; quotaMsg.textContent="Logga in för att fortsätta."; pmEnt.textContent=""; return; }
   entitlement = await res.json();
+
   const remain = (entitlement.tokens_left||0) + Math.max(0, (entitlement.monthly_quota||0)-(entitlement.used_this_month||0));
   paywall.hidden = remain>0;
   if(!paywall.hidden) quotaMsg.textContent="Din kvot är slut. Välj paket eller abonnemang.";
+
+  const allowed = canSaveProfiles();
+  saveProfileBtn.disabled = !allowed;
+  saveProfileNamedBtn.disabled = !allowed;
+  profileNameEl.disabled = !allowed;
+
+  profileCount.textContent = allowed ? `${loadProfiles().length}/${maxProfilesForPlan()}` : `0/0 (låst)`;
+  pmEnt.textContent = `Plan: ${entitlement.plan} · Kvar denna månad: ${remain}`;
+
+  // Om plan sänks – kapa lokalt antal
+  const max = maxProfilesForPlan();
+  if (loadProfiles().length > max) {
+    const pruned = loadProfiles().slice(0, max);
+    localStorage.setItem(PROFILES_KEY, JSON.stringify(pruned));
+  }
+  renderProfiles();
 }
 
-// === TTS (web) ===
+// Parent modal hooks
+parentBtn.addEventListener("click", ()=> parentModal.showModal());
+pmClose.addEventListener("click", ()=> parentModal.close());
+pmLogin.addEventListener("click", async (e)=>{ e.preventDefault(); loginBtn.click(); });
+pmLogout.addEventListener("click", async (e)=>{ e.preventDefault(); logoutBtn.click(); });
+pmBuyTokens.addEventListener("click", async (e)=>{ e.preventDefault(); buyTokensBtn.click(); });
+pmSubscribe.addEventListener("click", async (e)=>{ e.preventDefault(); subscribeBtn.click(); });
+
+// === Speech Synthesis (web-TTS) ===
 let voices=[];
 function populateVoices(){
   voices = window.speechSynthesis ? window.speechSynthesis.getVoices() : [];
@@ -190,16 +237,16 @@ speakBtn.addEventListener("click", ()=>{
 });
 stopBtn.addEventListener("click", ()=> window.speechSynthesis.cancel());
 
-// === ASR (speech input) ===
+// === Taligenkänning (web) ===
 let rec; let listening=false;
 function setupRecognizer(){
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if(!SR) return null;
   const r = new SR();
   r.lang="sv-SE"; r.interimResults=true; r.continuous=false; r.maxAlternatives=1;
-  r.onstart=()=>{ micStatus.textContent="Mikrofon: lyssnar…"; micBtn.setAttribute("aria-pressed","true"); };
-  r.onend=()=>{ micStatus.textContent="Mikrofon: av"; micBtn.setAttribute("aria-pressed","false"); listening=false; };
-  r.onerror=e=>{ micStatus.textContent=`Mikrofon fel: ${e.error}`; listening=false; };
+  r.onstart=()=>{ micStatus && (micStatus.textContent="Mikrofon: lyssnar…"); micBtn.setAttribute("aria-pressed","true"); };
+  r.onend=()=>{ micStatus && (micStatus.textContent="Mikrofon: av"); micBtn.setAttribute("aria-pressed","false"); listening=false; };
+  r.onerror=e=>{ micStatus && (micStatus.textContent=`Mikrofon fel: ${e.error}`); listening=false; };
   r.onresult=e=>{ let t=""; for(const res of e.results) t+=res[0].transcript; ideaEl.value=t; };
   return r;
 }
@@ -208,11 +255,11 @@ micBtn.addEventListener("click", ()=>{ if(!rec){ alert("Taligenkänning stöds i
 
 // === Snällt minne (session) ===
 const MEM_KEY = "kidsbn.memory.session.v1";
-function loadMem(){ try{ const m=JSON.parse(sessionStorage.getItem(MEM_KEY)||"{}"); heroEl.value=m.hero||""; fact1El.value=m.facts?.[0]||""; fact2El.value=m.facts?.[1]||""; fact3El.value=m.facts?.[2]||""; }catch{} }
-function getMemObj(){ const facts=[fact1El.value,fact2El.value,fact3El.value].map(s=>(s||"").trim()).filter(Boolean).slice(0,3); const hero=(heroEl.value||"").trim(); return { hero, facts }; }
-function saveMem(){ const mem=getMemObj(); sessionStorage.setItem(MEM_KEY, JSON.stringify(mem)); memStatus.textContent="Sparat till denna flik!"; setTimeout(()=>memStatus.textContent="",1200); return mem; }
-function clearMem(){ sessionStorage.removeItem(MEM_KEY); heroEl.value=fact1El.value=fact2El.value=fact3El.value=""; memStatus.textContent="Rensat (session)"; setTimeout(()=>memStatus.textContent="",1200); }
-loadMem(); saveMemBtn.addEventListener("click", saveMem); clearMemBtn.addEventListener("click", clearMem);
+function loadMem(){ try{ const m=JSON.parse(sessionStorage.getItem(MEM_KEY)||"{}"); heroEl && (heroEl.value=m.hero||""); fact1El && (fact1El.value=m.facts?.[0]||""); fact2El && (fact2El.value=m.facts?.[1]||""); fact3El && (fact3El.value=m.facts?.[2]||""); }catch{} }
+function getMemObj(){ const facts=[fact1El?.value,fact2El?.value,fact3El?.value].map(s=>(s||"").trim()).filter(Boolean).slice(0,3); const hero=(heroEl?.value||"").trim(); return { hero, facts }; }
+function saveMem(){ const mem=getMemObj(); sessionStorage.setItem(MEM_KEY, JSON.stringify(mem)); memStatus && (memStatus.textContent="Sparat till denna flik!"); if(memStatus) setTimeout(()=>memStatus.textContent="",1200); return mem; }
+function clearMem(){ sessionStorage.removeItem(MEM_KEY); if(heroEl) heroEl.value=""; if(fact1El) fact1El.value=""; if(fact2El) fact2El.value=""; if(fact3El) fact3El.value=""; memStatus && (memStatus.textContent="Rensat (session)"); if(memStatus) setTimeout(()=>memStatus.textContent="",1200); }
+loadMem(); saveMemBtn?.addEventListener("click", saveMem); clearMemBtn?.addEventListener("click", clearMem);
 
 // === Cooldown ===
 const CD_COOKIE="kidsbn_cd";
@@ -221,18 +268,36 @@ function setCooldown(ms){ const until=Date.now()+ms; document.cookie=`${CD_COOKI
 function tickCooldown(){ const left=getCooldownLeft(); if(left>0){ cooldownEl.textContent=`Vänta ${Math.ceil(left/1000)} s…`; generateBtn.disabled=true; requestAnimationFrame(tickCooldown); } else { cooldownEl.textContent=""; generateBtn.disabled=false; } }
 tickCooldown();
 
-// === Favoritprofiler (lokal) ===
-const MAX_PROFILES=5;
+// === Profiler (lokalt – låst på gratis, Plus=10) ===
 const PROFILES_KEY="kidsbn.profiles.v1";
 function loadProfiles(){ try{ return JSON.parse(localStorage.getItem(PROFILES_KEY)||"[]"); }catch{ return []; } }
 function saveProfiles(arr){ localStorage.setItem(PROFILES_KEY, JSON.stringify(arr)); renderProfiles(); }
 function uid(){ return Math.random().toString(36).slice(2,10); }
 function getLastStory(){ return (storyBox.textContent||"").trim(); }
-function updateCountUI(len){ profileCount.textContent = `${len}/${MAX_PROFILES}`; }
-function createProfile(name){ const profiles=loadProfiles(); if(profiles.length>=MAX_PROFILES){ alert(`Max ${MAX_PROFILES} profiler. Radera en för att spara ny.`); return; } const now=new Date().toISOString(); const mem=getMemObj(); const p={ id:uid(), name:(name||mem.hero||"Min hjälte").slice(0,60), hero:mem.hero, facts:mem.facts, lastStory:getLastStory(), createdAt:now, updatedAt:now }; profiles.push(p); saveProfiles(profiles); }
+function updateCountUI(len){
+  if(!canSaveProfiles()) { profileCount.textContent = "0/0 (låst)"; return; }
+  profileCount.textContent = `${len}/${maxProfilesForPlan()}`;
+}
+function createProfile(name){
+  if(!canSaveProfiles()){
+    alert("Spara-hjältar ingår inte i gratis. Välj Plus för att låsa upp ⭐");
+    paywall.hidden = false;
+    return;
+  }
+  const profiles=loadProfiles();
+  const MAX = maxProfilesForPlan();
+  if(profiles.length>=MAX){
+    alert(`Du har nått gränsen (${MAX}). Radera en hjälte för att spara ny.`);
+    return;
+  }
+  const now=new Date().toISOString();
+  const mem=getMemObj();
+  const p={ id:uid(), name:(name||mem.hero||"Min hjälte").slice(0,60), hero:mem.hero, facts:mem.facts, lastStory:getLastStory(), createdAt:now, updatedAt:now };
+  profiles.push(p); saveProfiles(profiles);
+}
 function renameProfile(id,n){ const arr=loadProfiles(); const p=arr.find(x=>x.id===id); if(!p) return; p.name=(n||p.name).slice(0,60); p.updatedAt=new Date().toISOString(); saveProfiles(arr); }
 function deleteProfile(id){ const arr=loadProfiles().filter(x=>x.id!==id); saveProfiles(arr); }
-function applyProfile(id,alsoStory=false){ const p=loadProfiles().find(x=>x.id===id); if(!p) return; heroEl.value=p.hero||""; fact1El.value=p.facts?.[0]||""; fact2El.value=p.facts?.[1]||""; fact3El.value=p.facts?.[2]||""; saveMem(); if(alsoStory && p.lastStory) storyBox.textContent=p.lastStory; ideaEl.focus(); }
+function applyProfile(id,alsoStory=false){ const p=loadProfiles().find(x=>x.id===id); if(!p) return; if(heroEl) heroEl.value=p.hero||""; if(fact1El) fact1El.value=p.facts?.[0]||""; if(fact2El) fact2El.value=p.facts?.[1]||""; if(fact3El) fact3El.value=p.facts?.[2]||""; saveMem(); if(alsoStory && p.lastStory) storyBox.textContent=p.lastStory; ideaEl.focus(); }
 function attachStoryToProfile(id){ const arr=loadProfiles(); const p=arr.find(x=>x.id===id); if(!p) return; p.lastStory=getLastStory(); p.updatedAt=new Date().toISOString(); saveProfiles(arr); }
 function renderProfiles(){
   const profiles=loadProfiles(); profilesEmpty.style.display=profiles.length?"none":"block"; profilesList.innerHTML=""; updateCountUI(profiles.length);
@@ -259,7 +324,7 @@ renderProfiles();
 saveProfileBtn.addEventListener("click", ()=>createProfile(""));
 saveProfileNamedBtn.addEventListener("click", ()=>{ const n=(profileNameEl.value||"").trim(); createProfile(n); profileNameEl.value=""; });
 
-// === Entitlement Checkout ===
+// === Stripe Checkout knappar ===
 buyTokensBtn.addEventListener("click", async ()=>{
   const res = await fetch("/billing_checkout", {
     method:"POST",
@@ -277,7 +342,7 @@ subscribeBtn.addEventListener("click", async ()=>{
   const data = await res.json(); if(data.url) window.location.href=data.url;
 });
 
-// === Generera saga (med loader + kvot) ===
+// === Generera saga ===
 function showError(msg){ errorMsg.hidden=false; errorMsg.textContent=msg; }
 function clearError(){ errorMsg.hidden=true; errorMsg.textContent=""; }
 
@@ -285,7 +350,7 @@ generateBtn.addEventListener("click", async ()=>{
   clearError();
   if(!currentUser){ alert("Logga in först."); return; }
   const left = getCooldownLeft(); if(left>0){ tickCooldown(); return; }
-  const prompt = (ideaEl.value||"").trim(); if(!prompt){ showError("Skriv eller prata in vad sagan ska handla om."); return; }
+  const prompt = (ideaEl.value||"").trim(); if(!prompt){ showError("Säg eller skriv vad sagan ska handla om."); return; }
 
   const mem = saveMem();
   generateBtn.disabled=true; generateBtn.textContent="⏳ Skapar..."; storyBox.textContent="";
@@ -307,12 +372,12 @@ generateBtn.addEventListener("click", async ()=>{
   }catch(err){
     console.error(err); showError("Kunde inte skapa sagan just nu. Testa igen strax.");
   }finally{
-    generateBtn.disabled=false; generateBtn.textContent="✨ Generera saga"; tickCooldown(); completeLoader();
+    generateBtn.disabled=false; generateBtn.textContent="✨ Skapa"; tickCooldown(); completeLoader();
   }
 });
 
-// === Server-TTS ===
-makeTtsBtn.addEventListener("click", async ()=>{
+// === Server-TTS (valfritt med ElevenLabs) ===
+makeTtsBtn?.addEventListener("click", async ()=>{
   ttsMsg.hidden=true; downloadTtsLink.hidden=true;
   const text=(storyBox.textContent||"").trim(); if(!text){ ttsMsg.hidden=false; ttsMsg.textContent="Ingen saga att läsa in ännu."; return; }
   makeTtsBtn.disabled=true; makeTtsBtn.textContent="⏳ Skapar ljud...";
@@ -321,57 +386,9 @@ makeTtsBtn.addEventListener("click", async ()=>{
     if(res.status===501){ ttsMsg.hidden=false; ttsMsg.textContent="Server-TTS ej aktiverad. Använd ▶️ Spela upp, eller lägg in ELEVENLABS_API_KEY för MP3."; return; }
     if(!res.ok){ const t=await res.text().catch(()=> ""); throw new Error(t||"TTS-fel"); }
     const { id } = await res.json();
-    downloadTtsLink.href=`/tts?id=${encodeURIComponent(id)}`; downloadTtsLink.hidden=false; ttsMsg.hidden=false; ttsMsg.textContent="Klar! Klicka 'Hämta MP3' för att ladda ner.";
+    downloadTtsLink.href=`/tts?id=${encodeURIComponent(id)}`; downloadTtsLink.hidden=false; ttsMsg.hidden=false; ttsMsg.textContent="Klar! Klicka 'Hämta' för att ladda ner.";
   }catch(e){ console.error(e); ttsMsg.hidden=false; ttsMsg.textContent="Kunde inte skapa ljud nu. Prova igen eller använd ▶️."; }
-  finally{ makeTtsBtn.disabled=false; makeTtsBtn.textContent="🎧 Skapa ljudfil"; }
-});
-
-// === Merch (variationer + create) ===
-let selectedVariationId=null, currentMerchJob=null;
-function openMerch(){ merchModal.style.display="block"; }
-function closeMerch(){ merchModal.style.display="none"; variationsGrid.innerHTML=""; productStep.style.display="none"; selectedVariationId=null; merchCheckoutMsg.textContent=""; }
-closeMerchBtn.addEventListener("click", closeMerch);
-
-merchBtn.addEventListener("click", async ()=>{
-  if(!currentUser){ alert("Logga in först för att skapa merch."); return; }
-  const story=(storyBox.textContent||"").trim(); if(!story){ alert("Skapa en saga först."); return; }
-  openMerch(); merchStatus.textContent="Genererar varianter…"; variationsGrid.innerHTML=""; productStep.style.display="none"; selectedVariationId=null;
-  showLoader(detectLoaderTheme(ideaEl.value||"drake"), "Målar din drake…");
-
-  const heroName=(heroEl.value||"En snäll drake").trim();
-  const idea=(ideaEl.value||"").trim();
-  const desc=`${heroName}. Stil: akvarell, mjuka färger, barnvänlig, leende. Motiv från sagan: ${idea.slice(0,160)}`;
-
-  try{
-    const res=await fetch("/illustrate_variations",{
-      method:"POST",
-      headers:{ "Content-Type":"application/json", ...(window.__accessToken?{ "Authorization":`Bearer ${window.__accessToken}` }:{}) },
-      body:JSON.stringify({ hero_desc:desc, n:4 })
-    });
-    if(!res.ok){ merchStatus.textContent="Kunde inte generera bilder just nu."; hideLoader(); return; }
-    const data=await res.json(); currentMerchJob=data.job_id; merchStatus.textContent="Välj din favoritdrake:";
-    for(const v of data.variations){
-      const img=document.createElement("img"); img.src=v.url; img.alt="Drak-variation"; img.style.width="100%"; img.style.border="3px solid transparent"; img.style.borderRadius="10px"; img.style.cursor="pointer";
-      img.onclick=()=>{ [...variationsGrid.querySelectorAll("img")].forEach(el=>el.style.border="3px solid transparent"); img.style.border="3px solid #7c3aed"; selectedVariationId=v.id; productStep.style.display="block"; };
-      variationsGrid.appendChild(img);
-    }
-  }catch(e){ merchStatus.textContent="Nätverksfel."; }
-  finally{ completeLoader(); }
-});
-
-createMerchBtn.addEventListener("click", async ()=>{
-  if(!selectedVariationId){ alert("Välj först en drake."); return; }
-  merchCheckoutMsg.textContent="Skapar produkt…";
-  try{
-    const res=await fetch("/merch_create",{
-      method:"POST",
-      headers:{ "Content-Type":"application/json", ...(window.__accessToken?{ "Authorization":`Bearer ${window.__accessToken}` }:{}) },
-      body:JSON.stringify({ job_id:currentMerchJob, variation_id:selectedVariationId, product:{ type:productType.value, color:productColor.value, size:productSize.value } })
-    });
-    if(!res.ok){ merchCheckoutMsg.textContent="Kunde inte skapa produkten just nu."; return; }
-    const data=await res.json();
-    if(data.checkout_url){ merchCheckoutMsg.innerHTML=`Klar! <a href="${data.checkout_url}" target="_blank" rel="noopener">Öppna checkout</a>`; } else { merchCheckoutMsg.textContent="Produkt skapad (test-läge)."; }
-  }catch(e){ merchCheckoutMsg.textContent="Nätverksfel."; }
+  finally{ makeTtsBtn.disabled=false; makeTtsBtn.textContent="🎧 Skapa MP3"; }
 });
 
 // === Godnattmusik – fyll dessa med dina R2-länkar ===
@@ -394,3 +411,18 @@ stopSleepBtn.addEventListener("click", ()=> {
   sleepAudio.pause();
   sleepAudio.currentTime = 0;
 });
+
+// === Talinmatning knappar ===
+let rec; let listening=false;
+function setupRecognizer(){
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if(!SR) return null;
+  const r = new SR(); r.lang="sv-SE"; r.interimResults=true; r.continuous=false; r.maxAlternatives=1;
+  r.onstart=()=>{ micStatus && (micStatus.textContent="Mikrofon: lyssnar…"); micBtn.setAttribute("aria-pressed","true"); };
+  r.onend=()=>{ micStatus && (micStatus.textContent="Mikrofon: av"); micBtn.setAttribute("aria-pressed","false"); listening=false; };
+  r.onerror=e=>{ micStatus && (micStatus.textContent=`Mikrofon fel: ${e.error}`); listening=false; };
+  r.onresult=e=>{ let t=""; for(const res of e.results) t+=res[0].transcript; ideaEl.value=t; };
+  return r;
+}
+rec = setupRecognizer();
+micBtn.addEventListener("click", ()=>{ if(!rec){ alert("Taligenkänning stöds inte i denna webbläsare."); return; } if(listening){ rec.stop(); listening=false; return; } try{ rec.start(); listening=true; }catch{} });
