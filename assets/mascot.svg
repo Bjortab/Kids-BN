@@ -1,1 +1,7 @@
-
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="BN’s Sagovärld">
+  <defs><linearGradient id="g" x1="0" x2="1"><stop offset="0" stop-color="#a78bfa"/><stop offset="1" stop-color="#7c3aed"/></linearGradient></defs>
+  <circle cx="256" cy="256" r="230" fill="url(#g)"/>
+  <circle cx="196" cy="220" r="28" fill="#fff"/><circle cx="316" cy="220" r="28" fill="#fff"/>
+  <circle cx="196" cy="220" r="14" fill="#1f2a37"/><circle cx="316" cy="220" r="14" fill="#1f2a37"/>
+  <path d="M160 320c60 50 132 50 192 0" stroke="#fff" stroke-width="18" fill="none" stroke-linecap="round"/>
+</svg>
