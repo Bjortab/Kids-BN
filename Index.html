@@ -1,181 +1,73 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="sv">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>BN’s Sagovärld</title>
-  <meta name="description" content="Barnvänlig AI som skapar sagor – med snällt minne, röst, illustrationer och godnattmusik." />
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./styles.css">
+  <title>BN’s Sagovärld — där drömmar blir berättelser</title>
+  <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <header class="topbar">
-    <img src="./assets/mascot.svg" alt="Maskot" class="logo">
-    <h1>BN’s Sagovärld</h1>
-    <span id="modeBadge" class="badge">Läge: okänt</span>
-
-    <div class="authbar">
-      <button id="parentBtn" class="btn gear" aria-haspopup="dialog" title="Föräldra-/konto-inställningar">⚙️</button>
-      <span id="userEmail" class="muted">Inte inloggad</span>
-      <button id="loginBtn" class="btn">Logga in</button>
-      <button id="logoutBtn" class="btn secondary" hidden>Logga ut</button>
+    <div class="brand">
+      <span class="logo">📖✨</span>
+      <strong>BN’s Sagovärld</strong>
+      <small>— där drömmar blir berättelser</small>
     </div>
+    <nav class="actions">
+      <button id="loginBtn" class="ghost">Logga in</button>
+      <button id="plusBtn" class="primary">Köp Plus</button>
+      <button id="tokensBtn" class="secondary">Köp 20 sagor</button>
+    </nav>
   </header>
 
   <main class="container">
-    <!-- Steg 1: idén -->
-    <section class="card">
-      <h2>Berätta din saga</h2>
-      <p class="muted">Säg vad sagan ska handla om, eller skriv i rutan.</p>
+    <section class="panel">
+      <h2>Skapa din saga</h2>
+      <div class="grid">
+        <label>
+          Barnets namn
+          <input id="kidName" placeholder="Lisa" />
+        </label>
+        <label>
+          Ålder
+          <select id="kidAge">
+            <option value="3-5">3–5 år</option>
+            <option value="6-8">6–8 år</option>
+            <option value="9-12">9–12 år</option>
+          </select>
+        </label>
+      </div>
+      <label>
+        Sagognista (berätta vad sagan ska handla om)
+        <textarea id="prompt" rows="4" placeholder="En liten drake som lärde sig flyga..."></textarea>
+      </label>
 
-      <div class="input-row">
-        <textarea id="idea" rows="3" placeholder="Ex: En snäll drake som lär sig flyga."></textarea>
-        <div class="controls main-controls">
-          <button id="micBtn" class="btn secondary" aria-pressed="false">🎤 Prata</button>
-          <button id="generateBtn" class="btn primary">✨ Skapa</button>
-          <span id="cooldown" class="muted"></span>
-        </div>
-        <p id="errorMsg" class="error" role="alert" hidden></p>
+      <div class="row">
+        <button id="generateBtn" class="primary">✨ Skapa saga</button>
+        <button id="ttsBtn" class="secondary" disabled>🎧 Läs upp</button>
+        <button id="saveHeroBtn" class="ghost" disabled>💾 Spara hjälte</button>
       </div>
 
-      <details class="mem advanced">
-        <summary>🧠 Min hjälte & snällt minne (session)</summary>
-        <div class="mem-grid">
-          <label class="label" for="hero">Min hjälte:</label>
-          <input id="hero" type="text" placeholder="Ex: Lisa Lejonhjärta">
-          <label class="label" for="fact1">Faktum 1:</label>
-          <input id="fact1" type="text" placeholder="Ex: Älskar morötter">
-          <label class="label" for="fact2">Faktum 2:</label>
-          <input id="fact2" type="text" placeholder="Ex: Modig när vänner behöver hjälp">
-          <label class="label" for="fact3">Faktum 3:</label>
-          <input id="fact3" type="text" placeholder="Ex: Har en röd ryggsäck">
-          <div class="controls">
-            <button id="saveMemBtn" class="btn">💾 Spara till session</button>
-            <button id="clearMemBtn" class="btn secondary">🧹 Rensa</button>
-            <span id="memStatus" class="muted"></span>
-          </div>
-          <p class="muted tiny-note">Obs: Snällt minne försvinner när fliken stängs.</p>
-        </div>
-      </details>
+      <div id="progress" class="progress hidden">
+        <div class="bar"></div>
+        <span id="progressText">Skapar...</span>
+      </div>
+
+      <article id="storyBox" class="story hidden"></article>
+
+      <audio id="player" controls class="hidden"></audio>
     </section>
 
-    <!-- Steg 2: sagan -->
-    <section class="card">
-      <h2>Din saga</h2>
-      <div id="storyBox" class="story" aria-live="polite"></div>
-
-      <div class="tts-controls main-controls">
-        <button id="speakBtn" class="btn">▶️ Spela</button>
-        <button id="stopBtn" class="btn secondary">⏹ Stoppa</button>
-
-        <div class="advanced inline">
-          <label for="voiceSelect" class="label">Röst:</label>
-          <select id="voiceSelect"></select>
-          <label for="rate" class="label">Hastighet:</label>
-          <input id="rate" type="range" min="0.7" max="1.3" step="0.05" value="1">
-          <button id="makeTtsBtn" class="btn">🎧 Skapa MP3</button>
-          <a id="downloadTtsLink" class="btn secondary" href="#" download hidden>⬇️ Hämta</a>
-        </div>
-      </div>
-
-      <div class="controls">
-        <button id="saveProfileBtn" class="btn">⭐ Spara hjälte</button>
-        <button id="merchBtn" class="btn advanced">🛍️ Skapa merch</button>
-      </div>
-      <p id="ttsMsg" class="muted" hidden></p>
-    </section>
-
-    <!-- Favoritprofiler (låst på gratis, max 10 på Plus) -->
-    <section class="card advanced">
-      <h2>⭐ Favoritprofiler <span id="profileCount" class="badge"></span></h2>
-      <p class="muted">Sparade hjältar låses upp i Plus. Plus innehåller upp till <b>10</b> hjältar.</p>
-
-      <div class="fav-controls">
-        <input id="profileName" type="text" placeholder="Profilnamn (t.ex. Lisa – Drakvän)">
-        <button id="saveProfileNamedBtn" class="btn">💫 Spara som ny profil</button>
-      </div>
-
-      <div id="profilesEmpty" class="muted">Inga profiler sparade än.</div>
-      <ul id="profilesList" class="profiles"></ul>
-
-      <div id="paywall" class="card" hidden>
-        <h3>Fortsätt läsa sagor</h3>
-        <p class="muted" id="quotaMsg"></p>
-        <div class="controls">
-          <button id="buyTokensBtn" class="btn">Köp 20 sagor – 49 kr</button>
-          <button id="subscribeBtn" class="btn primary">Plus – 89 kr/mån</button>
-        </div>
-        <small class="muted">Swish via Stripe. Prenumeration förnyas automatiskt.</small>
-      </div>
-    </section>
-
-    <!-- Godnattmusik -->
-    <section class="card">
-      <h2>🎶 Godnattmusik</h2>
-      <label for="ageRange" class="label">Barnets ålder:</label>
-      <select id="ageRange">
-        <option value="0-1">6–12 månader</option>
-        <option value="2-4">2–4 år</option>
-        <option value="5-7">5–7 år</option>
-        <option value="8-10">8–10 år</option>
-      </select>
-      <div class="controls main-controls">
-        <button id="playSleepBtn" class="btn">▶️ Spela</button>
-        <button id="stopSleepBtn" class="btn secondary">⏹ Stoppa</button>
-      </div>
-      <audio id="sleepAudio" preload="auto"></audio>
-      <p class="tiny-note muted">Tips: lägg dina MP3 i R2 och fyll in länkar i <code>sleepTracks</code> i <em>app.js</em>.</p>
+    <section class="panel">
+      <h3>Dina hjältar</h3>
+      <div id="heroes" class="heroes"></div>
     </section>
   </main>
 
   <footer class="foot">
-    <span class="muted">© BN’s Sagovärld – barnversion, separat från vuxen-BN</span>
+    <small>© BN — barnvänlig magi. Inget konto krävs för att prova. </small>
   </footer>
 
-  <!-- Föräldra-/konto-modal -->
-  <dialog id="parentModal" class="parent-modal">
-    <form method="dialog">
-      <h3>Förälder</h3>
-      <p class="muted small">Konto, köp & trygghet</p>
-      <div class="grid2">
-        <div>
-          <h4>Konto</h4>
-          <p id="pmUser" class="muted">Inte inloggad</p>
-          <button id="pmLogin" class="btn">Logga in</button>
-          <button id="pmLogout" class="btn secondary" type="button">Logga ut</button>
-        </div>
-        <div>
-          <h4>Köp</h4>
-          <button id="pmBuyTokens" class="btn">Köp 20 sagor – 49 kr</button>
-          <button id="pmSubscribe" class="btn primary">Plus – 89 kr/mån</button>
-          <p id="pmEnt" class="muted tiny-note"></p>
-        </div>
-      </div>
-      <div class="right"><button class="btn" id="pmClose">Stäng</button></div>
-    </form>
-  </dialog>
-
-  <!-- Playful Loader -->
-  <div id="loaderOverlay" aria-live="polite" aria-busy="true" style="display:none">
-    <div class="loader-card">
-      <div id="loaderAnim" class="anim dragon" aria-hidden="true">
-        <span class="dragon-emoji">🐉🚴‍♂️</span>
-      </div>
-      <div id="loaderPizza" class="anim pizza" hidden>
-        <div class="pizza-row" id="pizzaRow"></div>
-      </div>
-      <div id="loaderWheel" class="anim wheel" hidden><div class="wheel"></div></div>
-      <div class="progress-wrap">
-        <div class="progress-bar" id="loaderBar"></div>
-        <div class="progress-text"><span id="loaderPct">0</span>%</div>
-        <div id="loaderMsg" class="muted tiny-note">Magin startar strax…</div>
-      </div>
-    </div>
-  </div>
-
-  <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
-  <script src="./app.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>
