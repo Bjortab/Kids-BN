@@ -1,57 +1,53 @@
-export async function onRequestOptions({ env }) {
-  return new Response(null, { status: 204, headers: cors(env.KIDSBN_ALLOWED_ORIGIN || "*") });
-}
-
 export async function onRequestPost({ request, env }) {
-  const allow = env.KIDSBN_ALLOWED_ORIGIN || "*";
-  try {
-    const { prompt, count = 4 } = await request.json();
-    if (!prompt || !prompt.trim()) return json({ error: "Missing prompt" }, 400, allow);
-    if (!env.OPENAI_API_KEY)       return json({ error: "OPENAI_API_KEY saknas." }, 500, allow);
+  const origin = request.headers.get('Origin') || '';
+  const allow = env.KIDSBN_ALLOWED_ORIGIN || origin;
 
-    const n = Math.min(Math.max(1, Number(count)||4), 4);
-    const items = [];
+  const bad = (c,m)=>new Response(m,{status:c,headers:{
+    'Access-Control-Allow-Origin': allow,
+    'Access-Control-Allow-Headers': 'Content-Type'
+  }});
 
-    for (let i=0;i<n;i++){
-      const imgRes = await fetch("https://api.openai.com/v1/images/generations", {
-        method:"POST",
-        headers:{ "Authorization":`Bearer ${env.OPENAI_API_KEY}`, "Content-Type":"application/json" },
-        body: JSON.stringify({
-          model: "gpt-image-1",
-          prompt: `Barnvänlig illustration, mjuka färger, sagostil, utan text. Motiv: ${prompt}`,
-          size: "1024x1024"
-        })
+  try{
+    const { prompt, count=4 } = await request.json();
+    if (!env.OPENAI_API_KEY) return bad(500,'OPENAI_API_KEY saknas');
+
+    const ai = await fetch('https://api.openai.com/v1/images/edits', { method:'OPTIONS' }); // keep warm (no-op)
+
+    const res = await fetch('https://api.openai.com/v1/images/generations',{
+      method:'POST',
+      headers:{'Authorization':`Bearer ${env.OPENAI_API_KEY}`,'Content-Type':'application/json'},
+      body: JSON.stringify({ model:'gpt-image-1', prompt, n: count, size:'1024x1024' })
+    });
+    if (!res.ok) return bad(500, await res.text());
+    const data = await res.json();
+
+    const urls = [];
+    let idx = 0;
+    for (const img of data.data){
+      const base64 = img.b64_json;
+      const bin = Uint8Array.from(atob(base64), c=>c.charCodeAt(0));
+      const id = `img_${Date.now()}_${idx++}.png`;
+      const key = `${env.ART_PREFIX || 'kids/art'}/${id}`;
+      await env.BN_ART_BUCKET.put(key, bin, {
+        httpMetadata:{contentType:'image/png', cacheControl:'public,max-age=31536000,immutable'}
       });
-      if (!imgRes.ok) {
-        const t = await imgRes.text().catch(()=> "");
-        return json({ error: "Image error", details: t }, 502, allow);
-      }
-      const data = await imgRes.json();
-      const b64 = data?.data?.[0]?.b64_json;
-      if (!b64) continue;
-
-      const id = crypto.randomUUID();
-      const key = `${(env.IMAGE_PREFIX || "kids/art").replace(/^\/+|\/+$/g,"")}/${id}.png`;
-      const bin = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-
-      await env["bn-art"].put(key, new Blob([bin], { type:"image/png" }), { httpMetadata:{ contentType:"image/png" } });
-      items.push({ id, key });
+      // offentliga R2-länkar via /art?id=
+      urls.push(`/art?id=${encodeURIComponent(id)}`);
     }
 
-    return json({ items }, 200, allow);
-  } catch (e) {
-    return json({ error: e?.message || "Serverfel" }, 500, allow);
+    return new Response(JSON.stringify({ images: urls }), {
+      headers:{'Content-Type':'application/json','Access-Control-Allow-Origin': allow,'Access-Control-Allow-Headers':'Content-Type'}
+    });
+  }catch(err){
+    return bad(500, `illustrate error: ${err.message}`);
   }
 }
 
-function cors(origin){
-  return {
-    "Access-Control-Allow-Origin": origin,
-    "Access-Control-Allow-Methods": "POST,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization"
-  };
+export async function onRequestOptions({ request, env }) {
+  const origin = request.headers.get('Origin') || '*';
+  return new Response(null, { headers:{
+    'Access-Control-Allow-Origin': env.KIDSBN_ALLOWED_ORIGIN || origin,
+    'Access-Control-Allow-Headers':'Content-Type',
+    'Access-Control-Allow-Methods':'POST,OPTIONS'
+  }});
 }
-function json(obj, status, origin){
-  return new Response(JSON.stringify(obj), { status, headers:{ "Content-Type":"application/json", ...cors(origin) } });
-}
-function atob(b64){return globalThis.atob ? globalThis.atob(b64) : Buffer.from(b64,'base64').toString('binary');}
