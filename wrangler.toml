@@ -3,3 +3,16 @@ compatibility_date = "2024-10-06"
 
 # Säg till Pages var statiska filer finns:
 pages_build_output_dir = "public"
+[vars]
+BN_ALLOWED_ORIGIN = "https://kids-bn.pages.dev"
+SUPABASE_URL = "https://ditt-supabase-url.supabase.co"
+OPENAI_IMAGE_MODEL = "gpt-image-1"
+MERCH_API_URL = "https://api.printful.com"
+BN_ENV = "production"
+
+[env.production.vars]
+BN_ALLOWED_ORIGIN = "https://kids-bn.pages.dev"
+SUPABASE_URL = "https://ditt-supabase-url.supabase.co"
+OPENAI_IMAGE_MODEL = "gpt-image-1"
+MERCH_API_URL = "https://api.printful.com"
+BN_ENV = "production"
