@@ -1,52 +1,43 @@
-// POST /billing_checkout  { mode: "sub"|"one", email?: string }
 export async function onRequestPost({ request, env }) {
-  const allow = env.KIDSBN_ALLOWED_ORIGIN || "*";
+  const sig = request.headers.get("stripe-signature");
+  if (!env.STRIPE_WEBHOOK_SECRET) return new Response("Missing STRIPE_WEBHOOK_SECRET", { status:500 });
+
+  const payload = await request.text();
+  const valid = await verifyStripeSignature(payload, sig, env.STRIPE_WEBHOOK_SECRET);
+  if (!valid) return new Response("Invalid signature", { status:400 });
+
+  const event = JSON.parse(payload);
   try {
-    const { mode, email } = await request.json();
-    if (!env.STRIPE_SECRET_KEY) {
-      return new Response(JSON.stringify({ error: "Stripe not configured" }), { status: 500, headers: cors(allow) });
+    switch (event.type) {
+      case "checkout.session.completed": {
+        const s = event.data.object;
+        // TODO: Mappa s.customer_email/s.customer till din användare (Supabase)
+        // Demo: markera i KV 24h
+        await env.kidsbn_entitlements?.put(`last_checkout:${s.customer_email || s.customer}`, JSON.stringify({ when: Date.now() }), { expirationTtl: 86400 });
+        break;
+      }
+      case "invoice.paid": {
+        const inv = event.data.object;
+        await env.kidsbn_entitlements?.put(`invoice:${inv.customer}`, JSON.stringify({ paid:true, at: Date.now() }), { expirationTtl: 86400 });
+        break;
+      }
+      default: break;
     }
-    const price =
-      mode === "sub" ? env.STRIPE_PRICE_SUB_PLUS :
-      mode === "one" ? env.STRIPE_PRICE_TOKENS20 : null;
-    if (!price) {
-      return new Response(JSON.stringify({ error: "Invalid mode" }), { status: 400, headers: cors(allow) });
-    }
-
-    const success = env.CHECKOUT_SUCCESS_URL || (new URL(request.url)).origin + "/?paid=1";
-    const cancel  = env.CHECKOUT_CANCEL_URL  || (new URL(request.url)).origin + "/?canceled=1";
-
-    // Create Checkout session
-    const res = await fetch("https://api.stripe.com/v1/checkout/sessions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`,
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: new URLSearchParams({
-        mode: mode === "sub" ? "subscription" : "payment",
-        "line_items[0][price]": price,
-        "line_items[0][quantity]": "1",
-        success_url: success,
-        cancel_url: cancel,
-        ...(email ? { customer_email: email } : {}),
-      }),
-    });
-
-    const data = await res.json();
-    if (!res.ok) {
-      return new Response(JSON.stringify({ error: "Stripe error", details: data }), { status: 502, headers: cors(allow) });
-    }
-    return new Response(JSON.stringify({ url: data.url }), { status: 200, headers: cors(allow) });
+    return new Response("ok");
   } catch (e) {
-    return new Response(JSON.stringify({ error: e.message || "Server error" }), { status: 500, headers: cors(allow) });
+    return new Response("hook error: " + (e?.message || e), { status:500 });
   }
 }
 
-function cors(origin) {
-  return {
-    "Access-Control-Allow-Origin": origin,
-    "Access-Control-Allow-Methods": "POST,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
-  };
+async function verifyStripeSignature(payload, signature, secret) {
+  if (!signature) return false;
+  const parts = Object.fromEntries(signature.split(",").map(kv => kv.split("=",2)));
+  if (!parts.t || !parts.v1) return false;
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name:"HMAC", hash:"SHA-256" }, false, ["sign"]);
+  const signedPayload = `${parts.t}.${payload}`;
+  const sigBuf = await crypto.subtle.sign("HMAC", key, encoder.encode(signedPayload));
+  const expected = [...new Uint8Array(sigBuf)].map(b=>b.toString(16).padStart(2,"0")).join("");
+  return timingSafeEqual(expected, parts.v1);
 }
+function timingSafeEqual(a,b){ if(!a||!b||a.length!==b.length) return false; let r=0; for(let i=0;i<a.length;i++) r|=a.charCodeAt(i)^b.charCodeAt(i); return r===0; }
