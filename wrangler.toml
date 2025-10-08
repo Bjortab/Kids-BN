@@ -1,18 +1,57 @@
-name = "kids-bn"
+name = "Kids-BN"
 compatibility_date = "2024-10-06"
 
-# Säg till Pages var statiska filer finns:
+# Statisk output från Cloudflare Pages
 pages_build_output_dir = "public"
+
+# ------------------------
+# 🌍 Globala variabler
+# ------------------------
 [vars]
 BN_ALLOWED_ORIGIN = "https://kids-bn.pages.dev"
-SUPABASE_URL = "https://ditt-supabase-url.supabase.co"
-OPENAI_IMAGE_MODEL = "gpt-image-1"
-MERCH_API_URL = "https://api.printful.com"
 BN_ENV = "production"
 
+# 🔑 Supabase (hjältar, berättelser, cache)
+SUPABASE_URL = "https://ditt-supabase-url.supabase.co"
+SUPABASE_ANON_KEY = "din_anon_key"
+SUPABASE_SERVICE_ROLE = "din_service_role"
+
+# 🧠 AI och röst
+OPENAI_API_KEY = "din_openai_nyckel"
+OPENAI_IMAGE_MODEL = "gpt-image-1"
+ELEVENLABS_API_KEY = "din_elevenlabs_nyckel"
+
+# 🗣️ Whisper röst-till-text
+WHISPER_MODEL = "whisper-1"
+
+# 💳 Stripe
+STRIPE_SECRET_KEY = "din_stripe_secret_key"
+STRIPE_PUBLISHABLE_KEY = "din_stripe_publishable_key"
+STRIPE_WEBHOOK_SECRET = "din_stripe_webhook_secret"
+
+# 🛍️ Merch (t.ex. Printful eller egen endpoint)
+MERCH_API_KEY = "din_merch_api_key"
+MERCH_API_URL = "https://api.printful.com"
+
+# ------------------------
+# 🌐 Produktionsmiljö
+# ------------------------
 [env.production.vars]
 BN_ALLOWED_ORIGIN = "https://kids-bn.pages.dev"
-SUPABASE_URL = "https://ditt-supabase-url.supabase.co"
-OPENAI_IMAGE_MODEL = "gpt-image-1"
-MERCH_API_URL = "https://api.printful.com"
 BN_ENV = "production"
+
+SUPABASE_URL = "https://ditt-supabase-url.supabase.co"
+SUPABASE_ANON_KEY = "din_anon_key"
+SUPABASE_SERVICE_ROLE = "din_service_role"
+
+OPENAI_API_KEY = "din_openai_nyckel"
+OPENAI_IMAGE_MODEL = "gpt-image-1"
+ELEVENLABS_API_KEY = "din_elevenlabs_nyckel"
+WHISPER_MODEL = "whisper-1"
+
+STRIPE_SECRET_KEY = "din_stripe_secret_key"
+STRIPE_PUBLISHABLE_KEY = "din_stripe_publishable_key"
+STRIPE_WEBHOOK_SECRET = "din_stripe_webhook_secret"
+
+MERCH_API_KEY = "din_merch_api_key"
+MERCH_API_URL = "https://api.printful.com"
