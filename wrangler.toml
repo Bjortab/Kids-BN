@@ -1,0 +1,5 @@
+name = "kids-bn"
+compatibility_date = "2024-10-06"
+
+# Säg till Pages var statiska filer finns:
+pages_build_output_dir = "public"
