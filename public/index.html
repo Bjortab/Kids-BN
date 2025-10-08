@@ -1,74 +1,92 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="sv">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>BN’s Sagovärld — där drömmar blir berättelser</title>
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
   <header class="topbar">
     <div class="brand">
-      <span class="logo">📖✨</span>
-      <strong>BN’s Sagovärld</strong>
-      <small>— där drömmar blir berättelser</small>
+      <img src="/assets/mascot.svg" alt="BN" class="logo"/>
+      <span>BN’s Sagovärld</span>
     </div>
-    <nav class="actions">
-      <button id="loginBtn" class="ghost">Logga in</button>
-      <button id="plusBtn" class="primary">Köp Plus</button>
-      <button id="tokensBtn" class="secondary">Köp 20 sagor</button>
-    </nav>
+    <div class="actions">
+      <button id="btnLogin" class="btn ghost">Logga in</button>
+      <button id="btnBuyTokens" class="btn ghost">Köp 20 sagor</button>
+      <button id="btnBuyPlus" class="btn primary small">Köp Plus</button>
+    </div>
   </header>
 
   <main class="container">
-    <section class="panel">
+    <section class="card">
       <h2>Skapa din saga</h2>
-      <div class="grid">
-        <label>
-          Barnets namn
-          <input id="kidName" placeholder="Lisa" />
+      <div class="form-row">
+        <label for="childName">Barnets namn</label>
+        <input id="childName" placeholder="Lisa" />
+      </div>
+
+      <div class="form-row">
+        <label for="age">Ålder</label>
+        <select id="age">
+          <option>3–5 år</option>
+          <option>6–8 år</option>
+          <option>9–12 år</option>
+        </select>
+      </div>
+
+      <div class="form-row">
+        <label for="prompt">Sagognist (vad ska sagan handla om)</label>
+        <textarea id="prompt" rows="3" placeholder="En liten drake som lärde sig flyga..."></textarea>
+      </div>
+
+      <div class="recording">
+        <button id="btnMic" class="btn mic">
+          🎤 Tala in
+        </button>
+        <div class="rec-info">
+          <label class="switch">
+            <input id="useWhisper" type="checkbox">
+            <span class="slider"></span>
+          </label>
+          <span class="rec-note">Använd extra exakt rösttolkning (Whisper)</span>
+        </div>
+      </div>
+
+      <div class="options">
+        <label class="chk">
+          <input id="optMakeImages" type="checkbox" checked>
+          <span>Skapa bilder till sagan</span>
         </label>
-        <label>
-          Ålder
-          <select id="kidAge">
-            <option value="3-5">3–5 år</option>
-            <option value="6-8">6–8 år</option>
-            <option value="9-12">9–12 år</option>
-          </select>
-        </label>
-      </div>
-      <label>
-        Sagognista (berätta vad sagan ska handla om)
-        <textarea id="prompt" rows="4" placeholder="En liten drake som lärde sig flyga..."></textarea>
-      </label>
-
-      <div class="row">
-        <button id="generateBtn" class="primary">✨ Skapa saga</button>
-        <button id="ttsBtn" class="secondary" disabled>🎧 Läs upp</button>
-        <button id="saveHeroBtn" class="ghost" disabled>💾 Spara hjälte</button>
       </div>
 
-      <div id="progress" class="progress hidden">
-        <div class="bar"></div>
-        <span id="progressText">Skapar...</span>
+      <div class="btn-row">
+        <button id="btnGenerate" class="btn primary xl">✨ Skapa saga (med uppläsning)</button>
+        <button id="btnTTS" class="btn" title="Läs upp nu">🔊 Läs upp</button>
+        <button id="btnIllustrate" class="btn" title="Skapa/uppdatera bilder">🖼️ Illustrera</button>
+        <button id="btnSaveHero" class="btn" title="Spara hjälte">⭐ Spara hjälte</button>
+        <button id="btnMerch" class="btn ghost" title="Skapa merch av hjälten">🛍️ Merch</button>
       </div>
 
-      <article id="storyBox" class="story hidden"></article>
+      <div id="status" class="status"></div>
 
-      <audio id="player" controls class="hidden"></audio>
+      <h3>Resultat</h3>
+      <article id="story" class="story"></article>
+
+      <div id="audioWrap" class="audio-wrap hidden">
+        <audio id="audio" controls></audio>
+      </div>
+
+      <div id="gallery" class="gallery"></div>
     </section>
 
-    <section class="panel">
+    <section class="card">
       <h3>Dina hjältar</h3>
       <div id="heroes" class="heroes"></div>
     </section>
   </main>
 
-  <footer class="foot">
-    <small>© BN — barnvänlig magi. Inget konto krävs för att prova. </small>
-  </footer>
-
-  <script src="app.js"></script>
+  <script src="/app.js" defer></script>
 </body>
 </html>
-
