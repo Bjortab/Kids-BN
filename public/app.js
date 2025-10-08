@@ -1,154 +1,175 @@
-// ------- konfig -------
-const ORIGIN = location.origin; // https://kids-bn.pages.dev
-// ----------------------
-
 const el = (id) => document.getElementById(id);
-const state = { story: "", audioId: null, lastHero: null };
+const statusEl = el('status');
+const storyEl  = el('story');
+const audioEl  = el('audio');
+const audioWrap= el('audioWrap');
+const galEl    = el('gallery');
+const heroesEl = el('heroes');
 
-el("generateBtn").addEventListener("click", onGenerate);
-el("ttsBtn").addEventListener("click", onTTS);
-el("saveHeroBtn").addEventListener("click", onSaveHero);
-el("plusBtn").addEventListener("click", () => startCheckout("sub"));
-el("tokensBtn").addEventListener("click", () => startCheckout("one"));
-el("loginBtn").addEventListener("click", () => alert("Login kommer strax – du kan testa utan konto nu."));
+const allowedOrigin = window.location.origin; // används för enkel CORS-check i feltext
 
-async function onGenerate() {
-  const name = el("kidName").value.trim() || "Vännen";
-  const age = el("kidAge").value;
-  const prompt = el("prompt").value.trim();
-  if (!prompt) return toast("Skriv först vad sagan ska handla om ✍️");
-
-  lockUI(true, "Skapar sagan...");
-
-  try {
-    // POST /generate  { prompt, kidName, age }
-    const res = await fetch(`${ORIGIN}/generate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt, kidName: name, ageGroup: age })
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data?.error || "Kunde inte skapa saga");
-    state.story = data.story || data.text || "";
-    state.lastHero = data.hero || null;
-
-    el("storyBox").textContent = state.story;
-    el("storyBox").classList.remove("hidden");
-    el("ttsBtn").disabled = !state.story;
-    el("saveHeroBtn").disabled = !state.lastHero;
-    toast("Sagan är klar! 🎉");
-  } catch (e) {
-    console.error(e);
-    toast(e.message || "Tekniskt fel");
-  } finally {
-    lockUI(false);
-  }
+// --- UI helpers
+function setStatus(msg, kind='info'){
+  statusEl.classList.toggle('error', kind==='error');
+  statusEl.textContent = msg || '';
+}
+function showAudio(src){
+  if (!src) { audioWrap.classList.add('hidden'); return; }
+  audioEl.src = src;
+  audioWrap.classList.remove('hidden');
+}
+function addHeroPill(name){
+  const span = document.createElement('span');
+  span.className = 'hero-pill';
+  span.textContent = name;
+  heroesEl.appendChild(span);
 }
 
-async function onTTS() {
-  if (!state.story) return;
-  lockUI(true, "Skapar ljud...");
+// --- Microphone record (local or Whisper)
+let mediaRec, chunks = [], isRecording = false;
 
-  try {
-    // POST /tts  { text, voice? }  – din Worker lagrar i R2 och returnerar {id}
-    const res = await fetch(`${ORIGIN}/tts`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: state.story })
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data?.error || "Kunde inte skapa ljud");
-    state.audioId = data.id;
-
-    // GET /tts?id=...  – streama tillbaka mp3
-    const url = `${ORIGIN}/tts?id=${encodeURIComponent(state.audioId)}`;
-    const a = el("player");
-    a.src = url;
-    a.classList.remove("hidden");
-    a.play().catch(() => {});
-    toast("Ljud klart! 🎧");
-  } catch (e) {
-    console.error(e);
-    toast(e.message || "Tekniskt fel");
-  } finally {
-    lockUI(false);
-  }
-}
-
-async function onSaveHero() {
-  if (!state.lastHero) return;
-  lockUI(true, "Sparar hjälte...");
-
-  try {
-    // enkel demo: spara lokalt – din riktiga backend har redan endpoint via Supabase
-    const heroes = JSON.parse(localStorage.getItem("kidsbn_heroes") || "[]");
-    if (heroes.length >= 10) {
-      toast("Max 10 hjältar på Plus-planen.");
-      return;
+async function toggleMic(){
+  if (!isRecording){
+    try{
+      const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
+      mediaRec = new MediaRecorder(stream);
+      chunks = [];
+      mediaRec.ondataavailable = (e)=>{ if (e.data.size>0) chunks.push(e.data); };
+      mediaRec.onstop = async ()=>{
+        const blob = new Blob(chunks, { type: 'audio/webm' });
+        if (el('useWhisper').checked){
+          setStatus('Transkriberar (Whisper)...');
+          const fd = new FormData();
+          fd.append('file', blob, 'speech.webm');
+          const r = await fetch('/stt', { method:'POST', body:fd });
+          if (!r.ok){ const t = await r.text(); setStatus('Whisper-fel: ' + t, 'error'); return; }
+          const { text } = await r.json();
+          el('prompt').value = text || '';
+          setStatus('Transkribering klar.');
+        } else {
+          // lokal webspeech om tillgänglig
+          setStatus('Lokal inspelning klar (läggs inte upp).');
+        }
+      };
+      mediaRec.start();
+      isRecording = true;
+      el('btnMic').textContent = '⏹️ Stoppa';
+      setStatus('Spelar in...');
+    }catch(err){
+      setStatus('Mikrofonfel: ' + err.message, 'error');
     }
-    heroes.push(state.lastHero);
-    localStorage.setItem("kidsbn_heroes", JSON.stringify(heroes));
-    renderHeroes();
-    toast("Hjälten sparad! 💾");
-  } catch (e) {
-    console.error(e);
-    toast("Kunde inte spara hjälten.");
-  } finally {
-    lockUI(false);
-  }
-}
-
-function renderHeroes() {
-  const box = el("heroes");
-  const heroes = JSON.parse(localStorage.getItem("kidsbn_heroes") || "[]");
-  if (!heroes.length) { box.innerHTML = "<span style='color:#a8b3d6'>Inga sparade hjältar ännu.</span>"; return; }
-  box.innerHTML = "";
-  heroes.forEach((h, i) => {
-    const div = document.createElement("div");
-    div.className = "hero";
-    div.innerHTML = `<strong>${escapeHTML(h.name || "Hjälte")}</strong><br><small>${escapeHTML(h.tagline || "")}</small>`;
-    box.appendChild(div);
-  });
-}
-
-async function startCheckout(mode) {
-  try {
-    const res = await fetch(`${ORIGIN}/billing_checkout`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode })
-    });
-    const data = await res.json();
-    if (!res.ok || !data?.url) throw new Error("Stripe checkout kunde inte startas.");
-    location.href = data.url; // redirect till Stripe Checkout
-  } catch (e) {
-    console.error(e);
-    toast(e.message || "Tekniskt fel vid betalning.");
-  }
-}
-
-function lockUI(locked, label) {
-  el("generateBtn").disabled = locked;
-  el("ttsBtn").disabled = locked || !state.story;
-  el("saveHeroBtn").disabled = locked || !state.lastHero;
-
-  const p = el("progress");
-  const t = el("progressText");
-  if (locked) {
-    p.classList.remove("hidden");
-    t.textContent = label || "Arbetar...";
   } else {
-    p.classList.add("hidden");
+    mediaRec?.stop();
+    isRecording = false;
+    el('btnMic').textContent = '🎤 Tala in';
   }
 }
 
-function toast(msg) {
-  console.log(msg);
-  el("progressText").textContent = msg;
+// --- API calls
+async function apiPOST(path, payload, isJSON=true){
+  const headers = isJSON ? { 'Content-Type':'application/json' } : {};
+  const res = await fetch(path, {
+    method:'POST',
+    headers,
+    body: isJSON ? JSON.stringify(payload) : payload
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`${path} ${res.status}: ${text}`);
+  }
+  return res.json();
 }
 
-function escapeHTML(s){return s?.replace(/[&<>"']/g,m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]))}
+// Generate story, then TTS, then optional images
+async function onGenerate(){
+  try{
+    setStatus('Skapar saga...');
+    galEl.innerHTML = '';
+    showAudio(null);
 
-// init
-renderHeroes();
+    const name = el('childName').value.trim() || 'Vännen';
+    const age  = el('age').value;
+    const prompt = el('prompt').value.trim();
 
+    const { story } = await apiPOST('/generate', { name, age, prompt });
+    storyEl.textContent = story || '';
+    setStatus('Sagan är klar. Skapar uppläsning...');
+
+    const tts = await apiPOST('/tts', { text: story, childName: name, age });
+    // tts: { id, url }  -> GET /tts?id=...
+    showAudio(`/tts?id=${encodeURIComponent(tts.id)}`);
+
+    if (el('optMakeImages').checked){
+      setStatus('Skapar bilder...');
+      const { images } = await apiPOST('/illustrate_variations', { prompt: `${name} ${age} ${prompt}`, count: 4 });
+      galEl.innerHTML = '';
+      images.forEach(url=>{
+        const img = document.createElement('img');
+        img.src = url;
+        galEl.appendChild(img);
+      });
+      setStatus('Allt klart!');
+    } else {
+      setStatus('Allt klart!');
+    }
+  }catch(err){
+    console.error(err);
+    setStatus(err.message || 'Något gick fel', 'error');
+  }
+}
+
+async function onTTS(){
+  try{
+    const text = storyEl.textContent.trim();
+    if (!text){ setStatus('Ingen saga att läsa upp.', 'error'); return; }
+    setStatus('Skapar uppläsning...');
+    const name = el('childName').value.trim() || 'Vännen';
+    const age  = el('age').value;
+    const { id } = await apiPOST('/tts', { text, childName:name, age });
+    showAudio(`/tts?id=${encodeURIComponent(id)}`);
+    setStatus('Uppläsning klar.');
+  }catch(err){
+    console.error(err);
+    setStatus(err.message, 'error');
+  }
+}
+
+async function onIllustrate(){
+  try{
+    const prompt = el('prompt').value.trim();
+    if (!prompt){ setStatus('Skriv/tala in en prompt först.', 'error'); return; }
+    setStatus('Skapar bilder...');
+    const { images } = await apiPOST('/illustrate_variations', { prompt, count: 4 });
+    galEl.innerHTML = '';
+    images.forEach(url=>{
+      const img = document.createElement('img');
+      img.src = url;
+      galEl.appendChild(img);
+    });
+    setStatus('Bilder klara.');
+  }catch(err){
+    console.error(err);
+    setStatus(err.message, 'error');
+  }
+}
+
+function onSaveHero(){
+  const name = el('childName').value.trim();
+  if (!name){ setStatus('Ange ett namn först.', 'error'); return; }
+  addHeroPill(name);
+  setStatus('Hjälte sparad (lokalt minne).');
+}
+
+function onMerch(){
+  setStatus('Merch kommer här: vi genererar variantbilder och skickar till vald POD-partner. (Stub)');
+}
+
+// wire up
+window.addEventListener('DOMContentLoaded', ()=>{
+  el('btnMic').addEventListener('click', toggleMic);
+  el('btnGenerate').addEventListener('click', onGenerate);
+  el('btnTTS').addEventListener('click', onTTS);
+  el('btnIllustrate').addEventListener('click', onIllustrate);
+  el('btnSaveHero').addEventListener('click', onSaveHero);
+  el('btnMerch').addEventListener('click', onMerch);
+});
