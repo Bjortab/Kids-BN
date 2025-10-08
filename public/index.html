@@ -1,1 +1,74 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BN’s Sagovärld — där drömmar blir berättelser</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">📖✨</span>
+      <strong>BN’s Sagovärld</strong>
+      <small>— där drömmar blir berättelser</small>
+    </div>
+    <nav class="actions">
+      <button id="loginBtn" class="ghost">Logga in</button>
+      <button id="plusBtn" class="primary">Köp Plus</button>
+      <button id="tokensBtn" class="secondary">Köp 20 sagor</button>
+    </nav>
+  </header>
+
+  <main class="container">
+    <section class="panel">
+      <h2>Skapa din saga</h2>
+      <div class="grid">
+        <label>
+          Barnets namn
+          <input id="kidName" placeholder="Lisa" />
+        </label>
+        <label>
+          Ålder
+          <select id="kidAge">
+            <option value="3-5">3–5 år</option>
+            <option value="6-8">6–8 år</option>
+            <option value="9-12">9–12 år</option>
+          </select>
+        </label>
+      </div>
+      <label>
+        Sagognista (berätta vad sagan ska handla om)
+        <textarea id="prompt" rows="4" placeholder="En liten drake som lärde sig flyga..."></textarea>
+      </label>
+
+      <div class="row">
+        <button id="generateBtn" class="primary">✨ Skapa saga</button>
+        <button id="ttsBtn" class="secondary" disabled>🎧 Läs upp</button>
+        <button id="saveHeroBtn" class="ghost" disabled>💾 Spara hjälte</button>
+      </div>
+
+      <div id="progress" class="progress hidden">
+        <div class="bar"></div>
+        <span id="progressText">Skapar...</span>
+      </div>
+
+      <article id="storyBox" class="story hidden"></article>
+
+      <audio id="player" controls class="hidden"></audio>
+    </section>
+
+    <section class="panel">
+      <h3>Dina hjältar</h3>
+      <div id="heroes" class="heroes"></div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <small>© BN — barnvänlig magi. Inget konto krävs för att prova. </small>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
 
