@@ -1,206 +1,141 @@
-// ------ DOM refs ------
-const nameEl   = document.getElementById('child-name');
-const ageEl    = document.getElementById('age');
-const promptEl = document.getElementById('prompt');
+const el = {
+  recordBtn: document.getElementById("recordBtn"),
+  generateBtn: document.getElementById("generateBtn"),
+  resetBtn: document.getElementById("resetHeroes"),
+  prompt: document.getElementById("prompt"),
+  name: document.getElementById("childName"),
+  age: document.getElementById("ageGroup"),
+  out: document.getElementById("storyOutput"),
+  audio: document.getElementById("storyAudio"),
+  audioWrap: document.getElementById("audioWrap"),
+  playFallback: document.getElementById("playFallback"),
+  recStatus: document.getElementById("recStatus"),
+};
 
-const btnVoice      = document.getElementById('btn-voice');
-const btnGen        = document.getElementById('btn-generate');
-const btnTts        = document.getElementById('btn-tts');
-const btnIll        = document.getElementById('btn-illustrate');
-const btnSaveHero   = document.getElementById('btn-save-hero');
+let isRecording = false;
+let mediaRecorder;
+let chunks = [];
 
-const voiceHint = document.getElementById('voice-hint');
-const storyEl   = document.getElementById('story');
-const playerEl  = document.getElementById('player');
-const galleryEl = document.getElementById('gallery');
-const heroesEl  = document.getElementById('heroes');
+// ====== RÖSTINPELNING (WHISPER) ======
+el.recordBtn.addEventListener("click", async () => {
+  if (!isRecording) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      chunks = [];
+      mediaRecorder = new MediaRecorder(stream);
 
-// ------ helpers ------
-function notify(t){ alert(t); }
-function lock(btn, on, label){
-  btn.disabled = on;
-  if (label) btn.textContent = on ? label : labelDefault(btn.id);
-}
-function labelDefault(id){
-  switch(id){
-    case 'btn-generate': return '✨ Skapa saga';
-    case 'btn-tts': return '🔊 Läs upp';
-    case 'btn-illustrate': return '🖼️ Illustrera';
-    default: return '';
-  }
-}
+      mediaRecorder.ondataavailable = e => chunks.push(e.data);
 
-// ------ Generate story ------
-btnGen.addEventListener('click', generateStory);
+      mediaRecorder.onstart = () => {
+        isRecording = true;
+        el.recordBtn.classList.add("recording");
+        el.recordBtn.setAttribute("aria-pressed", "true");
+        el.recordBtn.querySelector(".btn-text").textContent = "⏹ Stoppa inspelning";
+        el.recStatus.textContent = "Spelar in… prata tydligt nära mikrofonen.";
+      };
 
-async function generateStory() {
-  const kidName = (nameEl.value || 'Vännen').trim();
-  const ageGroup = ageEl.value || '3–5 år';
-  const prompt = (promptEl.value || '').trim();
+      mediaRecorder.onstop = async () => {
+        isRecording = false;
+        el.recordBtn.classList.remove("recording");
+        el.recordBtn.setAttribute("aria-pressed", "false");
+        el.recordBtn.querySelector(".btn-text").textContent = "🎤 Tala in";
+        el.recStatus.textContent = "Bearbetar din inspelning…";
 
-  if (!prompt) return notify("Skriv vad sagan ska handla om.");
+        const blob = new Blob(chunks, { type: "audio/webm" });
+        const formData = new FormData();
+        formData.append("file", blob, "voice.webm");
 
-  lock(btnGen, true, "Skapar saga…");
-  try {
-    const res = await fetch('/generate', {
-      method: 'POST',
-      headers: { 'Content-Type':'application/json' },
-      body: JSON.stringify({ prompt, kidName, ageGroup })
-    });
-    const data = await res.json().catch(()=> ({}));
-    if (!res.ok) {
-      notify(data?.error || `Fel (${res.status})`);
-      return;
+        try {
+          const res = await fetch("/functions/whisper_transcribe", { method: "POST", body: formData });
+          const data = await res.json();
+          el.prompt.value = (data && data.text) ? data.text : "";
+          el.recStatus.textContent = data.text ? "Klar – texten fylldes i automatiskt." : "Inget kunde höras – prova igen.";
+        } catch (e) {
+          el.recStatus.textContent = "Något gick fel vid tolkningen. Prova igen.";
+        }
+      };
+
+      mediaRecorder.start();
+    } catch (err) {
+      alert("Kunde inte starta mikrofonen: " + err.message);
     }
-    storyEl.textContent = data.story || '';
-    playerEl.hidden = true;
-    galleryEl.innerHTML = '';
-    notify("Sagan är klar! 🎉");
-  } catch(e) {
-    console.error(e);
-    notify("Tekniskt fel. Försök igen.");
-  } finally {
-    lock(btnGen, false, "Skapar saga…");
-  }
-}
-
-// ------ TTS ------
-btnTts.addEventListener('click', playTTS);
-
-async function playTTS(){
-  const text = (storyEl.textContent || '').trim();
-  if (!text) return notify("Skapa en saga först.");
-  lock(btnTts, true, "Skapar ljud…");
-  try {
-    const res = await fetch('/tts', {
-      method: 'POST',
-      headers: { 'Content-Type':'application/json' },
-      body: JSON.stringify({ text })
-    });
-    const data = await res.json();
-    if (!res.ok) return notify(data?.error || "Kunde inte skapa ljud.");
-    const url = `/tts?id=${encodeURIComponent(data.id)}`;
-    playerEl.src = url;
-    playerEl.hidden = false;
-    await playerEl.play().catch(()=>{});
-  } catch(e){ console.error(e); notify("TTS fel."); }
-  finally { lock(btnTts, false, "Skapar ljud…"); }
-}
-
-// ------ Illustrate ------
-btnIll.addEventListener('click', illustrate);
-
-async function illustrate(){
-  const text = (storyEl.textContent || '').trim();
-  if (!text) return notify("Skapa en saga först.");
-  lock(btnIll, true, "Skapar bilder…");
-  try {
-    const res = await fetch('/illustrate_variations', {
-      method: 'POST',
-      headers: { 'Content-Type':'application/json' },
-      body: JSON.stringify({ prompt: text, count: 4 })
-    });
-    const data = await res.json();
-    if (!res.ok) return notify(data?.error || "Kunde inte skapa bilder.");
-    galleryEl.innerHTML = '';
-    (data.items || []).forEach(it => {
-      const img = document.createElement('img');
-      img.src = `/art?id=${encodeURIComponent(it.key)}`;
-      img.alt = 'illustration';
-      galleryEl.appendChild(img);
-    });
-  } catch(e){ console.error(e); notify("Bildfel."); }
-  finally { lock(btnIll, false, "Skapar bilder…"); }
-}
-
-// ------ Save hero (lokal demo: max 10) ------
-btnSaveHero.addEventListener('click', ()=>{
-  const kidName = (nameEl.value || 'Vännen').trim();
-  const heroes = JSON.parse(localStorage.getItem('kidsbn_heroes') || '[]');
-  if (heroes.length >= 10) return notify("Max 10 hjältar på Plus-planen.");
-  heroes.push({ name: kidName, tagline: 'Barnets favorit', t: Date.now() });
-  localStorage.setItem('kidsbn_heroes', JSON.stringify(heroes));
-  renderHeroes();
-  notify("Hjälten sparad! ⭐");
-});
-
-function renderHeroes(){
-  const heroes = JSON.parse(localStorage.getItem('kidsbn_heroes') || '[]');
-  heroesEl.innerHTML = heroes.length ? '' : '<span style="color:#a9b3c0">Inga sparade hjältar ännu.</span>';
-  heroes.forEach(h=>{
-    const div = document.createElement('div');
-    div.className = 'story';
-    div.textContent = `${h.name} — ${h.tagline || ''}`;
-    heroesEl.appendChild(div);
-  });
-}
-renderHeroes();
-
-// ------ Voice input (Local STT / Whisper) ------
-let isRec = false, mediaRecorder=null, chunks=[], speechRec=null, sttMode='local';
-document.querySelectorAll('input[name="sttMode"]').forEach(r => r.addEventListener('change', e => sttMode=e.target.value));
-
-btnVoice.addEventListener('click', async ()=>{
-  if (!isRec){
-    if (sttMode==='local') startLocalSTT();
-    else await startWhisperRecord();
   } else {
-    if (sttMode==='local') stopLocalSTT();
-    else stopWhisperRecord();
+    mediaRecorder.stop();
   }
 });
 
-function setRec(on){
-  isRec = on;
-  btnVoice.classList.toggle('recording', on);
-  btnVoice.querySelector('.mic-label').textContent = on ? 'Stoppa' : 'Tala in';
-  voiceHint.textContent = on ? 'Spelar in… prata tydligt nära mikrofonen.' : '';
-}
+// ====== SKAPA SAGA + TTS (AUTOSPEL) ======
+el.generateBtn.addEventListener("click", async () => {
+  const name = (el.name.value || "").trim();
+  const age = el.age.value;
+  const prompt = (el.prompt.value || "").trim();
 
-// Lokal STT
-function startLocalSTT(){
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR){ voiceHint.textContent='Din webbläsare saknar lokal STT. Välj Whisper.'; return; }
-  speechRec = new SR();
-  speechRec.lang='sv-SE'; speechRec.continuous=true; speechRec.interimResults=true;
-  setRec(true);
-  let interim='';
-  speechRec.onresult=(e)=>{
-    let finalText='';
-    for(let i=e.resultIndex;i<e.results.length;i++){
-      const tr = e.results[i][0].transcript;
-      if (e.results[i].isFinal) finalText += tr + ' ';
-      else interim = tr;
+  if (!prompt) return alert("Skriv eller tala in vad sagan ska handla om!");
+
+  el.out.innerHTML = "<p><i>Skapar saga…</i></p>";
+  el.audioWrap.hidden = true;
+  el.audio.removeAttribute("src");
+  el.playFallback.hidden = true;
+
+  // 1) Text
+  const storyRes = await fetch("/functions/generate_story", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, age, prompt })
+  });
+  const storyData = await storyRes.json();
+  if (!storyData.story) return alert("Kunde inte skapa sagan.");
+
+  el.out.innerHTML = `<h3>${escapeHtml(storyData.title)}</h3><p>${nl2p(storyData.story)}</p>`;
+  scrollToResult();
+
+  // 2) Ljud
+  const ttsRes = await fetch("/functions/tts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text: storyData.story })
+  });
+  const ttsData = await ttsRes.json();
+
+  if (ttsData.url) {
+    el.audio.src = ttsData.url;
+    el.audioWrap.hidden = false;
+
+    // Försök autoplay (tillåtet efter klick)
+    try {
+      await el.audio.play();
+      el.playFallback.hidden = true;
+    } catch (_) {
+      // Om webbläsaren stoppar autoplay
+      el.playFallback.hidden = false;
     }
-    promptEl.value = (promptEl.value + ' ' + finalText + ' ' + interim).trim();
-  };
-  speechRec.onerror=()=>{ voiceHint.textContent='Lokal STT fel.'; setRec(false); };
-  speechRec.onend=()=> setRec(false);
-  speechRec.start();
-}
-function stopLocalSTT(){ try{ speechRec && speechRec.stop(); }catch{} setRec(false); }
+  }
+});
 
-// Whisper STT
-async function startWhisperRecord(){
-  const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
-  chunks=[]; mediaRecorder = new MediaRecorder(stream, { mimeType:'audio/webm' });
-  mediaRecorder.ondataavailable = (e)=>{ if (e.data.size>0) chunks.push(e.data); };
-  mediaRecorder.onstop = async ()=>{
-    setRec(false); voiceHint.textContent='Transkriberar…';
-    try{
-      const blob = new Blob(chunks, { type:'audio/webm' });
-      const fd = new FormData();
-      fd.append('file', blob, 'speech.webm');
-      fd.append('language','sv');
-      const res = await fetch('/stt', { method:'POST', body: fd });
-      const data = await res.json();
-      const text = (data.text||'').trim();
-      if (text) { promptEl.value = (promptEl.value ? promptEl.value+' ' : '') + text; voiceHint.textContent='Klart ✅'; }
-      else voiceHint.textContent='Fick ingen text.';
-    }catch(e){ console.error(e); voiceHint.textContent='Kunde inte transkribera.'; }
-  };
-  setRec(true);
-  mediaRecorder.start();
-  setTimeout(()=>{ if(isRec) stopWhisperRecord(); }, 45_000);
+// Fallback-knapp om autoplay blockeras
+el.playFallback.addEventListener("click", () => {
+  el.audio.play();
+  el.playFallback.hidden = true;
+});
+
+// ====== Rensa hjältar (nollställer minne) ======
+el.resetBtn.addEventListener("click", async () => {
+  try {
+    await fetch("/functions/heroes_reset", { method: "POST" });
+    alert("Alla hjältar är nu nollställda. Nya sagor använder inga tidigare figurer förrän du väljer att spara dem igen.");
+  } catch {
+    alert("Kunde inte rensa hjältar. Försök igen.");
+  }
+});
+
+// ====== Hjälpfunktioner ======
+function scrollToResult() {
+  document.getElementById("result").scrollIntoView({ behavior: "smooth", block: "start" });
 }
-function stopWhisperRecord(){ try{ mediaRecorder && mediaRecorder.stop(); }catch{} setRec(false); }
+
+function nl2p(text) {
+  return escapeHtml(text).split(/\n{2,}/).map(p => `<p>${p}</p>`).join("");
+}
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
