@@ -1,57 +1,85 @@
-export async function onRequestOptions({ env }) {
-  return new Response(null, { status: 204, headers: cors(env.KIDSBN_ALLOWED_ORIGIN || "*") });
-}
+export async function onRequestPost(context) {
+  const { request, env } = context;
+  const origin = request.headers.get('Origin') || '';
+  const allow = env.KIDSBN_ALLOWED_ORIGIN || origin;
 
-export async function onRequestPost({ request, env }) {
-  const allow = env.KIDSBN_ALLOWED_ORIGIN || "*";
+  const bad = (code, msg) => new Response(msg, {
+    status: code,
+    headers: {
+      'Access-Control-Allow-Origin': allow,
+      'Access-Control-Allow-Headers': 'Content-Type',
+    }
+  });
+
   try {
-    const { text, voice } = await request.json();
-    if (!text || !text.trim()) return json({ error: "Missing text" }, 400, allow);
-    if (!env.ELEVENLABS_API_KEY) return json({ error: "TTS disabled (no ELEVENLABS_API_KEY)" }, 501, allow);
+    const { text, childName, age } = await request.json();
+    if (!env.ELEVENLABS_API_KEY) return bad(500, 'ELEVENLABS_API_KEY saknas');
+    const voiceId = env.ELEVENLABS_VOICE_ID || env.DEFAULT_VOICE_ID;
+    if (!voiceId) return bad(500, 'ELEVENLABS_VOICE_ID saknas');
 
-    const id = crypto.randomUUID();
-    const prefix = (env.AUDIO_PREFIX || "kids/tts").replace(/^\/+|\/+$/g, "");
-    const key = `${prefix}/${id}.mp3`;
+    if (!text || !text.trim()) return bad(400, 'Tom text');
 
-    const voiceId = voice || env.ELEVENLABS_VOICE_ID || "EXAVITQu4vr4xnSDxMaL";
-    const ttsRes = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?optimize_streaming_latency=2`, {
-      method: "POST",
-      headers: { "xi-api-key": env.ELEVENLABS_API_KEY, "Content-Type": "application/json", Accept: "audio/mpeg" },
-      body: JSON.stringify({ text: text.slice(0, 5000), voice_settings: { stability: 0.5, similarity_boost: 0.75 } })
+    // Generera TTS via ElevenLabs
+    const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+      method: 'POST',
+      headers: {
+        'xi-api-key': env.ELEVENLABS_API_KEY,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        text,
+        voice_settings: { stability: 0.55, similarity_boost: 0.75 },
+        model_id: 'eleven_multilingual_v2',
+        output_format: 'mp3_44100_128'
+      })
     });
-    if (!ttsRes.ok) {
-      const t = await ttsRes.text().catch(()=> "");
-      return json({ error: "TTS failed", details: t }, 502, allow);
+
+    if (!r.ok) {
+      const t = await r.text();
+      return bad(500, `ElevenLabs fel: ${t}`);
     }
 
-    await env["bn-audio"].put(key, ttsRes.body, { httpMetadata: { contentType: "audio/mpeg" } });
-    return json({ id }, 200, allow);
-  } catch (e) { return json({ error: e?.message || "Server error" }, 500, allow); }
-}
+    const mp3 = await r.arrayBuffer();
 
-export async function onRequestGet({ request, env }) {
-  const allow = env.KIDSBN_ALLOWED_ORIGIN || "*";
-  try {
-    const url = new URL(request.url);
-    const id = url.searchParams.get("id");
-    if (!id) return new Response(JSON.stringify({ error: "Missing id" }), { status: 400, headers: cors(allow) });
+    // Spara i R2
+    const id = `${(childName || 'barn')}-${Date.now()}.mp3`;
+    const key = `${env.AUDIO_PREFIX || 'kids/tts'}/${id}`;
+    await env.BN_AUDIO_BUCKET.put(key, mp3, {
+      httpMetadata: { contentType: 'audio/mpeg', cacheControl: 'public,max-age=31536000,immutable' }
+    });
 
-    const prefix = (env.AUDIO_PREFIX || "kids/tts").replace(/^\/+|\/+$/g, "");
-    const key = `${prefix}/${id}.mp3`;
-    const obj = await env["bn-audio"].get(key);
-    if (!obj) return new Response(JSON.stringify({ error: "Not found" }), { status: 404, headers: cors(allow) });
-
-    return new Response(obj.body, { status: 200, headers: { "Content-Type":"audio/mpeg", "Cache-Control":"public, max-age=31536000, immutable", ...cors(allow) } });
-  } catch (e) {
-    return new Response(JSON.stringify({ error: e?.message || "Server error" }), { status: 500, headers: cors(allow) });
+    return new Response(JSON.stringify({ id, url: `/tts?id=${encodeURIComponent(id)}` }), {
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': allow,
+        'Access-Control-Allow-Headers': 'Content-Type',
+      }
+    });
+  } catch (err) {
+    return bad(500, `TTS error: ${err.message}`);
   }
 }
 
-function cors(origin){
-  return {
-    "Access-Control-Allow-Origin": origin,
-    "Access-Control-Allow-Methods": "GET,POST,HEAD,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization"
-  };
+export async function onRequestGet(context) {
+  const { request, env } = context;
+  const url = new URL(request.url);
+  const id = url.searchParams.get('id');
+  const key = `${env.AUDIO_PREFIX || 'kids/tts'}/${id}`;
+  const obj = await env.BN_AUDIO_BUCKET.get(key);
+  if (!obj) return new Response('Not found', { status: 404 });
+  return new Response(obj.body, {
+    headers: { 'Content-Type': 'audio/mpeg', 'Cache-Control':'public, max-age=31536000, immutable' }
+  });
 }
-function json(obj, status, origin){ return new Response(JSON.stringify(obj), { status, headers: { "Content-Type":"application/json", ...cors(origin) } }); }
+
+export async function onRequestOptions(context) {
+  const { request, env } = context;
+  const origin = request.headers.get('Origin') || '*';
+  return new Response(null, {
+    headers: {
+      'Access-Control-Allow-Origin': env.KIDSBN_ALLOWED_ORIGIN || origin,
+      'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Allow-Methods': 'POST, GET, OPTIONS'
+    }
+  });
+}
