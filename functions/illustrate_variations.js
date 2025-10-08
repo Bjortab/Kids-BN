@@ -1,105 +1,57 @@
-// Skapar N bildvarianter och sparar i R2 med ART_PREFIX
-// POST /illustrate_variations  { hero_desc, n? } -> { job_id, variations:[{id,url}] }
+export async function onRequestOptions({ env }) {
+  return new Response(null, { status: 204, headers: cors(env.KIDSBN_ALLOWED_ORIGIN || "*") });
+}
 
 export async function onRequestPost({ request, env }) {
   const allow = env.KIDSBN_ALLOWED_ORIGIN || "*";
-
   try {
-    if (!env.OPENAI_API_KEY) {
-      return new Response(JSON.stringify({ error: "Image gen disabled" }), {
-        status: 501,
-        headers: cors(allow),
-      });
-    }
+    const { prompt, count = 4 } = await request.json();
+    if (!prompt || !prompt.trim()) return json({ error: "Missing prompt" }, 400, allow);
+    if (!env.OPENAI_API_KEY)       return json({ error: "OPENAI_API_KEY saknas." }, 500, allow);
 
-    const { hero_desc, n } = await request.json();
-    if (!hero_desc || !hero_desc.trim()) {
-      return new Response(JSON.stringify({ error: "Missing hero_desc" }), {
-        status: 400,
-        headers: cors(allow),
-      });
-    }
-    const count = Math.min(Math.max(Number(n) || 4, 1), 4);
+    const n = Math.min(Math.max(1, Number(count)||4), 4);
+    const items = [];
 
-    const jobId = crypto.randomUUID();
-    const prefix = (env.ART_PREFIX || "art/").replace(/^\/+|\/+$/g, "");
-    const baseKey = `${prefix}/${jobId}`;
-
-    // Prompt till OpenAI Images
-    const prompt = [
-      "Barnvänlig illustration.",
-      "Akvarellkänsla, mjuka färger, vänligt ansikte.",
-      "Ingen text, inga vattenstämplar.",
-      `Motiv: ${hero_desc.slice(0, 300)}.`,
-    ].join(" ");
-
-    const variations = [];
-    for (let i = 0; i < count; i++) {
+    for (let i=0;i<n;i++){
       const imgRes = await fetch("https://api.openai.com/v1/images/generations", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${env.OPENAI_API_KEY}`,
-          "Content-Type": "application/json",
-        },
+        method:"POST",
+        headers:{ "Authorization":`Bearer ${env.OPENAI_API_KEY}`, "Content-Type":"application/json" },
         body: JSON.stringify({
           model: "gpt-image-1",
-          prompt,
-          size: "1024x1024",
-          n: 1,
-          // background: "transparent" // valfritt, offrar kvalitet ibland
-        }),
+          prompt: `Barnvänlig illustration, mjuka färger, sagostil, utan text. Motiv: ${prompt}`,
+          size: "1024x1024"
+        })
       });
-
       if (!imgRes.ok) {
-        const t = await imgRes.text().catch(() => "");
-        return new Response(
-          JSON.stringify({ error: "Image API failed", details: t }),
-          { status: 502, headers: cors(allow) }
-        );
+        const t = await imgRes.text().catch(()=> "");
+        return json({ error: "Image error", details: t }, 502, allow);
       }
-
       const data = await imgRes.json();
-      const b64 = data.data?.[0]?.b64_json;
-      if (!b64) {
-        return new Response(JSON.stringify({ error: "No image data" }), {
-          status: 500,
-          headers: cors(allow),
-        });
-      }
-      const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+      const b64 = data?.data?.[0]?.b64_json;
+      if (!b64) continue;
 
-      const key = `${baseKey}/${i + 1}.png`;
-      await env["bn-art"].put(key, bytes, {
-        httpMetadata: { contentType: "image/png" },
-      });
+      const id = crypto.randomUUID();
+      const key = `${(env.IMAGE_PREFIX || "kids/art").replace(/^\/+|\/+$/g,"")}/${id}.png`;
+      const bin = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
 
-      // Appen hämtar via /art?id=<jobId>/<i+1>.png
-      const id = `${jobId}/${i + 1}.png`;
-      const url = `${originOf(env)}/art?id=${encodeURIComponent(id)}`;
-      variations.push({ id, url });
+      await env["bn-art"].put(key, new Blob([bin], { type:"image/png" }), { httpMetadata:{ contentType:"image/png" } });
+      items.push({ id, key });
     }
 
-    return new Response(JSON.stringify({ job_id: jobId, variations }), {
-      status: 200,
-      headers: cors(allow),
-    });
+    return json({ items }, 200, allow);
   } catch (e) {
-    return new Response(JSON.stringify({ error: e?.message || "Server error" }), {
-      status: 500,
-      headers: cors(allow),
-    });
+    return json({ error: e?.message || "Serverfel" }, 500, allow);
   }
 }
 
-function cors(origin) {
+function cors(origin){
   return {
     "Access-Control-Allow-Origin": origin,
-    "Access-Control-Allow-Methods": "GET,POST,HEAD,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Allow-Methods": "POST,OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization"
   };
 }
-
-function originOf(env) {
-  // För Pages ligger request-origin i runtime, men vi kan falla tillbaka på miljövariabel
-  return env.MERCH_BASE_URL || "";
+function json(obj, status, origin){
+  return new Response(JSON.stringify(obj), { status, headers:{ "Content-Type":"application/json", ...cors(origin) } });
 }
+function atob(b64){return globalThis.atob ? globalThis.atob(b64) : Buffer.from(b64,'base64').toString('binary');}
