@@ -1,92 +1,64 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="sv">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>BN’s Sagovärld — där drömmar blir berättelser</title>
-  <link rel="stylesheet" href="/styles.css" />
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BN's Sagovärld</title>
+  <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <img src="/assets/mascot.svg" alt="BN" class="logo"/>
-      <span>BN’s Sagovärld</span>
-    </div>
-    <div class="actions">
-      <button id="btnLogin" class="btn ghost">Logga in</button>
-      <button id="btnBuyTokens" class="btn ghost">Köp 20 sagor</button>
-      <button id="btnBuyPlus" class="btn primary small">Köp Plus</button>
-    </div>
+  <header>
+    <h1>BN’s Sagovärld</h1>
+    <p>där drömmar blir berättelser</p>
   </header>
 
-  <main class="container">
-    <section class="card">
-      <h2>Skapa din saga</h2>
-      <div class="form-row">
-        <label for="childName">Barnets namn</label>
-        <input id="childName" placeholder="Lisa" />
-      </div>
+  <main>
+    <section id="story-creator" aria-label="Skapa saga">
+      <label> Barnets namn:
+        <input type="text" id="childName" placeholder="Lisa" autocomplete="name" />
+      </label>
 
-      <div class="form-row">
-        <label for="age">Ålder</label>
-        <select id="age">
+      <label> Ålder:
+        <select id="ageGroup">
           <option>3–5 år</option>
           <option>6–8 år</option>
           <option>9–12 år</option>
         </select>
-      </div>
+      </label>
 
-      <div class="form-row">
-        <label for="prompt">Sagognist (vad ska sagan handla om)</label>
-        <textarea id="prompt" rows="3" placeholder="En liten drake som lärde sig flyga..."></textarea>
-      </div>
+      <label> Sagognista (vad ska sagan handla om?):
+        <textarea id="prompt" placeholder="En liten drake som lärde sig flyga..." rows="3"></textarea>
+      </label>
 
-      <div class="recording">
-        <button id="btnMic" class="btn mic">
-          🎤 Tala in
+      <div class="button-row">
+        <button id="recordBtn" class="btn-green" aria-pressed="false">
+          <span class="mic-indicator" aria-hidden="true"></span>
+          <span class="btn-text">🎤 Tala in</span>
         </button>
-        <div class="rec-info">
-          <label class="switch">
-            <input id="useWhisper" type="checkbox">
-            <span class="slider"></span>
-          </label>
-          <span class="rec-note">Använd extra exakt rösttolkning (Whisper)</span>
-        </div>
+
+        <button id="generateBtn" class="btn-primary">
+          ✨ Skapa saga (med uppläsning)
+        </button>
+
+        <button id="resetHeroes" class="btn-warning">
+          🧹 Rensa hjältar
+        </button>
       </div>
 
-      <div class="options">
-        <label class="chk">
-          <input id="optMakeImages" type="checkbox" checked>
-          <span>Skapa bilder till sagan</span>
-        </label>
-      </div>
-
-      <div class="btn-row">
-        <button id="btnGenerate" class="btn primary xl">✨ Skapa saga (med uppläsning)</button>
-        <button id="btnTTS" class="btn" title="Läs upp nu">🔊 Läs upp</button>
-        <button id="btnIllustrate" class="btn" title="Skapa/uppdatera bilder">🖼️ Illustrera</button>
-        <button id="btnSaveHero" class="btn" title="Spara hjälte">⭐ Spara hjälte</button>
-        <button id="btnMerch" class="btn ghost" title="Skapa merch av hjälten">🛍️ Merch</button>
-      </div>
-
-      <div id="status" class="status"></div>
-
-      <h3>Resultat</h3>
-      <article id="story" class="story"></article>
-
-      <div id="audioWrap" class="audio-wrap hidden">
-        <audio id="audio" controls></audio>
-      </div>
-
-      <div id="gallery" class="gallery"></div>
+      <p id="recStatus" class="rec-status" aria-live="polite"></p>
     </section>
 
-    <section class="card">
-      <h3>Dina hjältar</h3>
-      <div id="heroes" class="heroes"></div>
+    <section id="result" aria-live="polite">
+      <h2>Resultat</h2>
+      <div id="storyOutput"></div>
+
+      <div id="audioWrap" class="audio-wrap" hidden>
+        <audio id="storyAudio" controls preload="auto"></audio>
+        <button id="playFallback" class="btn-secondary" hidden>▶️ Spela upp</button>
+      </div>
     </section>
   </main>
 
-  <script src="/app.js" defer></script>
+  <script src="app.js"></script>
 </body>
 </html>
