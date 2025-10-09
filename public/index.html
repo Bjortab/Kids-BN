@@ -2,98 +2,70 @@
 <html lang="sv">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>BN’s Sagovärld — där drömmar blir berättelser</title>
-  <link rel="stylesheet" href="./styles.css" />
+  <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <header class="site-header">
-    <div class="brand">
-      <img src="./assets/mascot.svg" alt="BN" class="logo" />
-      <div class="ttl">
-        <h1>BN’s Sagovärld</h1>
-        <p>där drömmar blir berättelser</p>
-      </div>
-    </div>
-    <nav class="header-actions">
-      <button id="btnLogin" class="btn ghost">Logga in</button>
-      <button id="btnBuy" class="btn primary">Köp 20 sagor</button>
-    </nav>
+  <header class="top">
+    <h1>BN’s Sagovärld</h1>
+    <p class="tagline">…där drömmar blir berättelser</p>
   </header>
 
-  <main class="container">
-    <section class="card">
-      <h2>Skapa din saga</h2>
+  <main class="card">
+    <div class="row">
+      <label for="childName">Barnets namn</label>
+      <input id="childName" placeholder="Lisa" />
+    </div>
 
-      <div class="grid">
-        <label class="field">
-          <span>Barnets namn</span>
-          <input id="childName" type="text" placeholder="Lisa" />
-        </label>
+    <div class="row">
+      <label for="ageRange">Ålder</label>
+      <select id="ageRange">
+        <option>1–2 år</option>
+        <option selected>3–4 år</option>
+        <option>5–6 år</option>
+        <option>7–8 år</option>
+        <option>9–10 år</option>
+        <option>11–12 år</option>
+      </select>
+    </div>
 
-        <label class="field">
-          <span>Ålder</span>
-          <select id="ageBand">
-            <option value="1-2">1–2 år</option>
-            <option value="3-4" selected>3–4 år</option>
-            <option value="5-6">5–6 år</option>
-            <option value="7-8">7–8 år</option>
-            <option value="9-10">9–10 år</option>
-            <option value="11-12">11–12 år</option>
-          </select>
-          <small id="ageHint" class="muted"></small>
-        </label>
-      </div>
+    <div class="row">
+      <label for="prompt">Sagognista (vad ska sagan handla om?)</label>
+      <textarea id="prompt" placeholder="En liten drake som lärde sig flyga…"></textarea>
+    </div>
 
-      <label class="field">
-        <span>Sagognista (vad ska sagan handla om?)</span>
-        <textarea id="prompt" rows="3" placeholder="En liten drake som lärde sig flyga..."></textarea>
+    <div class="row small">
+      <label class="checkbox">
+        <input id="chkWhisperExact" type="checkbox" />
+        Använd extra exakt rösttolkning (Whisper)
       </label>
+      <label class="checkbox">
+        <input id="chkMakeImages" type="checkbox" />
+        Skapa bilder till sagan (avaktiverad om modellen ej är verifierad)
+      </label>
+    </div>
 
-      <div class="row actions">
-        <button id="btnRecord" class="btn success lg">
-          <span class="dot"></span> Tala in
-        </button>
+    <div class="row hero">
+      <label for="heroName">Hjältens namn (valfritt)</label>
+      <input id="heroName" placeholder="t.ex. Draken Holger" />
+      <button id="btnSaveHero" class="btn ghost" title="Spara hjälten för senare">⭐ Spara hjälte</button>
+      <button id="btnResetHeroes" class="btn ghost" title="Rensa sparade hjältar">🗑️ Rensa hjältar</button>
+    </div>
 
-        <label class="chk">
-          <input id="chkUseWhisper" type="checkbox" checked />
-          <span>Använd extra exakt rösttolkning (Whisper)</span>
-        </label>
+    <div class="row buttons">
+      <button id="btnTalk" class="btn primary">🎤 Tala in</button>
+      <button id="btnGenerate" class="btn success">✨ Skapa saga (med uppläsning)</button>
+    </div>
 
-        <label class="chk">
-          <input id="chkMakeImages" type="checkbox" />
-          <span>Skapa bilder till sagan</span>
-        </label>
-      </div>
+    <div id="banner" class="banner hidden">⏳ Skapar saga…</div>
+    <div id="error" class="error hidden"></div>
 
-      <div class="row actions">
-        <button id="btnGenerate" class="btn primary lg">
-          Skapa saga (med uppläsning)
-        </button>
-        <button id="btnSaveHero" class="btn">
-          ⭐ Spara hjälte
-        </button>
-        <button id="btnClearHeroes" class="btn warn">
-          🗑️ Rensa hjältar
-        </button>
-      </div>
-
-      <div id="heroChips" class="chips"></div>
-
-      <div id="progress" class="progress hidden">
-        <div class="bar"></div><span>Skapar sagan…</span>
-      </div>
-
-      <h3>Resultat</h3>
-      <article id="result" class="result"></article>
-      <audio id="audio" controls class="audio hidden"></audio>
-    </section>
+    <h3>Resultat</h3>
+    <div id="story" class="story"></div>
+    <audio id="audio" controls class="hidden"></audio>
   </main>
 
-  <footer class="site-footer">
-    <small>© BN — barnvänlig magi, inget konto krävs för att prova.</small>
-  </footer>
-
-  <script src="./app.js"></script>
+  <script src="/app.js" defer></script>
 </body>
 </html>
