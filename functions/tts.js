@@ -1,65 +1,49 @@
-// functions/api/tts.js
-// Tar emot { text, voiceId? } → svarar { ok, audioBase64 } (MPEG)
+// /api/tts  —  POST { text }
+// Returnerar { ok:true, audioBase64: "data:audio/wav;base64,..." } eller tydligt fel.
 
-const CORS = (env) => ({
-  "Access-Control-Allow-Origin": env?.BN_ALLOWED_ORIGIN || "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization"
-});
+function corsHeaders() {
+  return {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization"
+  };
+}
 
-export async function onRequestOptions({ env }) {
-  return new Response(null, { status: 204, headers: CORS(env) });
+export async function onRequestOptions() {
+  return new Response(null, { status: 204, headers: corsHeaders() });
 }
 
 export async function onRequestPost({ request, env }) {
   try {
-    if (!env.ELEVENLABS_API_KEY) {
-      return new Response(JSON.stringify({ ok: false, error: "ELEVENLABS_API_KEY saknas" }), {
-        status: 500, headers: { "Content-Type": "application/json", ...CORS(env) }
-      });
-    }
-    const { text, voiceId } = await request.json();
+    const { text } = await request.json();
     if (!text) {
-      return new Response(JSON.stringify({ ok: false, error: "Ingen text att läsa" }), {
-        status: 400, headers: { "Content-Type": "application/json", ...CORS(env) }
-      });
-    }
-    const vid = voiceId || env.DEFAULT_VOICE_ID || "21m00Tcm4TlvDq8ikWAM"; // example fallback
-
-    const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${vid}`, {
-      method: "POST",
-      headers: {
-        "xi-api-key": env.ELEVENLABS_API_KEY,
-        "Content-Type": "application/json",
-        "Accept": "audio/mpeg"
-      },
-      body: JSON.stringify({
-        text,
-        model_id: env.ELEVENLABS_VOICE_MODEL || "eleven_multilingual_v2",
-        voice_settings: { stability: 0.5, similarity_boost: 0.75 }
-      })
-    });
-
-    if (!res.ok) {
-      const err = await res.text();
-      return new Response(JSON.stringify({ ok: false, error: `ElevenLabs ${res.status}: ${err}` }), {
-        status: 500, headers: { "Content-Type": "application/json", ...CORS(env) }
-      });
+      return Response.json(
+        { ok: false, error: "text saknas", status: 400 },
+        { status: 400, headers: corsHeaders() }
+      );
     }
 
-    const arrayBuf = await res.arrayBuffer();
-    const b64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuf)));
+    // Här kopplar du in ElevenLabs eller annan TTS.
+    if (!env.ELEVENLABS_API_KEY) {
+      // Skicka demo-svar som gör att frontend fungerar (ingen 405).
+      return Response.json(
+        { ok: false, error: "ELEVENLABS_API_KEY saknas i miljön", status: 501 },
+        { status: 501, headers: corsHeaders() }
+      );
+    }
 
-    return new Response(JSON.stringify({ ok: true, audioBase64: `data:audio/mpeg;base64,${b64}` }), {
-      headers: { "Content-Type": "application/json", ...CORS(env) }
-    });
-  } catch (e) {
-    return new Response(JSON.stringify({ ok: false, error: e.message }), {
-      status: 500, headers: { "Content-Type": "application/json", ...CORS(env) }
-    });
+    // TODO: Implementera riktig TTS. Exemplet nedan är bara en stub.
+    // const audioBase64 = "data:audio/wav;base64,....";
+    // return Response.json({ ok:true, audioBase64 }, { headers: corsHeaders() });
+
+    return Response.json(
+      { ok: false, error: "TTS ej implementerad ännu (nyckel finns).", status: 501 },
+      { status: 501, headers: corsHeaders() }
+    );
+  } catch (err) {
+    return Response.json(
+      { ok: false, error: `Serverfel: ${err.message}`, status: 500 },
+      { status: 500, headers: corsHeaders() }
+    );
   }
-}
-
-export async function onRequest() {
-  return new Response("Method Not Allowed", { status: 405 });
 }
