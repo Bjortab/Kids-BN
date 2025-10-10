@@ -1,19 +1,15 @@
 // functions/api/generate_story.js
 
-// --- Hjälpare -------------------------------------------------
-const mapAgeToSpec = (ageRange) => {
-  const table = {
-    "1–2": { min: 60,  max: 150, tone: "mycket enkel, rytmisk, upprepningar, trygg och varm" },
-    "3–4": { min: 120, max: 250, tone: "enkel, lekfull, tydlig början och slut, humor" },
-    "5–6": { min: 180, max: 350, tone: "lite mer komplex, små problem som löses, fantasi" },
-    "7–8": { min: 280, max: 450, tone: "äventyr, mysterium, humor, enkla cliffhangers" },
-    "9–10": { min: 380, max: 650, tone: "fantasy, vänskap, moraliska frågor, tydliga scener" },
-    "11–12": { min: 500, max: 900, tone: "djupare teman, karaktärsutveckling, längre scener" },
-  };
-  return table[ageRange] || table["3–4"];
-};
+const mapAgeToSpec = (ageRange) => ({
+  "1–2":  { min: 60,  max: 150, tone: "mycket enkel, rytmisk, upprepningar, trygg och varm" },
+  "3–4":  { min: 120, max: 250, tone: "enkel, lekfull, tydlig början och slut, humor" },
+  "5–6":  { min: 180, max: 350, tone: "lite mer komplex, små problem som löses, fantasi" },
+  "7–8":  { min: 280, max: 450, tone: "äventyr, mysterium, humor, enkla cliffhangers" },
+  "9–10": { min: 380, max: 650, tone: "fantasy, vänskap, moraliska frågor, tydliga scener" },
+  "11–12":{ min: 500, max: 900, tone: "djupare teman, karaktärsutveckling, längre scener" },
+}[ageRange] || { min: 120, max: 250, tone: "enkel, lekfull, tydlig början och slut, humor" });
 
-const corsHeaders = (origin) => ({
+const cors = (origin) => ({
   "Access-Control-Allow-Origin": origin || "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization",
@@ -21,50 +17,57 @@ const corsHeaders = (origin) => ({
   "Content-Type": "application/json; charset=utf-8",
 });
 
-// --- OPTIONS (CORS preflight) --------------------------------
-export const onRequestOptions = async ({ env }) => {
+export default async function onRequest(ctx) {
+  const { request, env } = ctx;
   const origin = env?.BN_ALLOWED_ORIGIN || "*";
-  return new Response(null, { status: 204, headers: corsHeaders(origin) });
-};
 
-// --- POST (huvudlogik) ---------------------------------------
-export const onRequestPost = async ({ request, env }) => {
-  const origin = env?.BN_ALLOWED_ORIGIN || "*";
-  const OPENAI_API_KEY = env?.OPENAI_API_KEY;
-
-  if (!OPENAI_API_KEY) {
-    return new Response(JSON.stringify({ ok: false, error: "Saknar OPENAI_API_KEY i Secrets." }),
-      { status: 500, headers: corsHeaders(origin) });
+  // CORS preflight
+  if (request.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: cors(origin) });
   }
 
+  // Endast POST tillåts
+  if (request.method !== "POST") {
+    return new Response(JSON.stringify({ ok:false, error:"Method Not Allowed" }), {
+      status: 405, headers: cors(origin),
+    });
+  }
+
+  // Läs in
   let body;
   try {
     body = await request.json();
   } catch {
-    return new Response(JSON.stringify({ ok: false, error: "Ogiltig JSON." }),
-      { status: 400, headers: corsHeaders(origin) });
+    return new Response(JSON.stringify({ ok:false, error:"Ogiltig JSON" }), {
+      status: 400, headers: cors(origin),
+    });
   }
 
   const { childName = "", ageRange = "3–4", prompt = "", heroName = "" } = body || {};
   if (!prompt) {
-    return new Response(JSON.stringify({ ok: false, error: "Fältet 'prompt' krävs." }),
-      { status: 400, headers: corsHeaders(origin) });
+    return new Response(JSON.stringify({ ok:false, error:"Fältet 'prompt' krävs." }), {
+      status: 400, headers: cors(origin),
+    });
+  }
+
+  const OPENAI_API_KEY = env?.OPENAI_API_KEY;
+  if (!OPENAI_API_KEY) {
+    return new Response(JSON.stringify({ ok:false, error:"Saknar OPENAI_API_KEY i Secrets." }), {
+      status: 500, headers: cors(origin),
+    });
   }
 
   const spec = mapAgeToSpec(ageRange);
   const heroLine = heroName?.trim()
-    ? `Om det passar, inkludera hjälten "${heroName.trim()}" i sagan.`
-    : `Ingen hjälte krävs; skapa figurer efter behov.`;
+    ? `Om det passar, inkludera hjälten "${heroName.trim()}".`
+    : `Ingen hjälte måste återanvändas; skapa figurer efter behov.`;
 
   const systemPrompt = `
 Du är en svensk sagoberättare för barn ${ageRange} år.
 Skriv en saga på ${spec.min}–${spec.max} ord.
-Ton: ${spec.tone}.
-Avsluta med varm, positiv känsla. ${heroLine}
+Ton: ${spec.tone}. Avsluta varmt och positivt. ${heroLine}
 Barnets namn (om angivet): ${childName}.
 `.trim();
-
-  const model = env?.OPENAI_TEXT_MODEL || "gpt-4o-mini";
 
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -74,7 +77,7 @@ Barnets namn (om angivet): ${childName}.
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model,
+        model: env?.OPENAI_TEXT_MODEL || "gpt-4o-mini",
         temperature: 0.8,
         messages: [
           { role: "system", content: systemPrompt },
@@ -85,26 +88,19 @@ Barnets namn (om angivet): ${childName}.
 
     if (!res.ok) {
       const err = await res.text();
-      return new Response(JSON.stringify({ ok: false, error: "Fel från OpenAI", details: err }),
-        { status: 502, headers: corsHeaders(origin) });
+      return new Response(JSON.stringify({ ok:false, error:"Fel från OpenAI", details: err }), {
+        status: 502, headers: cors(origin),
+      });
     }
 
     const data = await res.json();
     const story = data?.choices?.[0]?.message?.content?.trim() || "Kunde inte skapa saga.";
-    return new Response(JSON.stringify({ ok: true, story }),
-      { status: 200, headers: corsHeaders(origin) });
+    return new Response(JSON.stringify({ ok:true, story }), {
+      status: 200, headers: cors(origin),
+    });
   } catch (e) {
-    return new Response(JSON.stringify({ ok: false, error: String(e) }),
-      { status: 500, headers: corsHeaders(origin) });
+    return new Response(JSON.stringify({ ok:false, error:String(e) }), {
+      status: 500, headers: cors(origin),
+    });
   }
-};
-
-// --- Fallback-router (löser 405-problem) ---------------------
-export const onRequest = async (ctx) => {
-  const method = ctx.request.method.toUpperCase();
-  if (method === "OPTIONS") return onRequestOptions(ctx);
-  if (method === "POST")    return onRequestPost(ctx);
-  const origin = ctx.env?.BN_ALLOWED_ORIGIN || "*";
-  return new Response(JSON.stringify({ ok:false, error:"Method Not Allowed" }),
-    { status: 405, headers: corsHeaders(origin) });
-};
+}
