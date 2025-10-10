@@ -1,8 +1,9 @@
 // functions/api/generate_story.js
 
+// --- Hjälpare -------------------------------------------------
 const mapAgeToSpec = (ageRange) => {
   const table = {
-    "1–2": { min: 60, max: 150, tone: "mycket enkel, rytmisk, upprepningar, trygg och varm" },
+    "1–2": { min: 60,  max: 150, tone: "mycket enkel, rytmisk, upprepningar, trygg och varm" },
     "3–4": { min: 120, max: 250, tone: "enkel, lekfull, tydlig början och slut, humor" },
     "5–6": { min: 180, max: 350, tone: "lite mer komplex, små problem som löses, fantasi" },
     "7–8": { min: 280, max: 450, tone: "äventyr, mysterium, humor, enkla cliffhangers" },
@@ -20,38 +21,34 @@ const corsHeaders = (origin) => ({
   "Content-Type": "application/json; charset=utf-8",
 });
 
+// --- OPTIONS (CORS preflight) --------------------------------
 export const onRequestOptions = async ({ env }) => {
   const origin = env?.BN_ALLOWED_ORIGIN || "*";
   return new Response(null, { status: 204, headers: corsHeaders(origin) });
 };
 
+// --- POST (huvudlogik) ---------------------------------------
 export const onRequestPost = async ({ request, env }) => {
   const origin = env?.BN_ALLOWED_ORIGIN || "*";
   const OPENAI_API_KEY = env?.OPENAI_API_KEY;
 
   if (!OPENAI_API_KEY) {
-    return new Response(
-      JSON.stringify({ ok: false, error: "Saknar OPENAI_API_KEY i Secrets." }),
-      { status: 500, headers: corsHeaders(origin) }
-    );
+    return new Response(JSON.stringify({ ok: false, error: "Saknar OPENAI_API_KEY i Secrets." }),
+      { status: 500, headers: corsHeaders(origin) });
   }
 
-  let payload;
+  let body;
   try {
-    payload = await request.json();
+    body = await request.json();
   } catch {
-    return new Response(JSON.stringify({ ok: false, error: "Ogiltig JSON." }), {
-      status: 400,
-      headers: corsHeaders(origin),
-    });
+    return new Response(JSON.stringify({ ok: false, error: "Ogiltig JSON." }),
+      { status: 400, headers: corsHeaders(origin) });
   }
 
-  const { childName = "", ageRange = "3–4", prompt = "", heroName = "" } = payload || {};
+  const { childName = "", ageRange = "3–4", prompt = "", heroName = "" } = body || {};
   if (!prompt) {
-    return new Response(
-      JSON.stringify({ ok: false, error: "Fältet 'prompt' krävs." }),
-      { status: 400, headers: corsHeaders(origin) }
-    );
+    return new Response(JSON.stringify({ ok: false, error: "Fältet 'prompt' krävs." }),
+      { status: 400, headers: corsHeaders(origin) });
   }
 
   const spec = mapAgeToSpec(ageRange);
@@ -87,24 +84,27 @@ Barnets namn (om angivet): ${childName}.
     });
 
     if (!res.ok) {
-      const errText = await res.text();
-      return new Response(
-        JSON.stringify({ ok: false, error: "Fel från OpenAI", details: errText }),
-        { status: 502, headers: corsHeaders(origin) }
-      );
+      const err = await res.text();
+      return new Response(JSON.stringify({ ok: false, error: "Fel från OpenAI", details: err }),
+        { status: 502, headers: corsHeaders(origin) });
     }
 
     const data = await res.json();
     const story = data?.choices?.[0]?.message?.content?.trim() || "Kunde inte skapa saga.";
-
-    return new Response(
-      JSON.stringify({ ok: true, story }),
-      { status: 200, headers: corsHeaders(origin) }
-    );
+    return new Response(JSON.stringify({ ok: true, story }),
+      { status: 200, headers: corsHeaders(origin) });
   } catch (e) {
-    return new Response(JSON.stringify({ ok: false, error: String(e) }), {
-      status: 500,
-      headers: corsHeaders(origin),
-    });
+    return new Response(JSON.stringify({ ok: false, error: String(e) }),
+      { status: 500, headers: corsHeaders(origin) });
   }
+};
+
+// --- Fallback-router (löser 405-problem) ---------------------
+export const onRequest = async (ctx) => {
+  const method = ctx.request.method.toUpperCase();
+  if (method === "OPTIONS") return onRequestOptions(ctx);
+  if (method === "POST")    return onRequestPost(ctx);
+  const origin = ctx.env?.BN_ALLOWED_ORIGIN || "*";
+  return new Response(JSON.stringify({ ok:false, error:"Method Not Allowed" }),
+    { status: 405, headers: corsHeaders(origin) });
 };
