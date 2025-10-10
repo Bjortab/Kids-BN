@@ -5,67 +5,55 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>BN’s Sagovärld — där drömmar blir berättelser</title>
   <link rel="stylesheet" href="/styles.css" />
+  <script src="/app.js" defer></script>
 </head>
 <body>
-  <header class="top">
+  <header class="site-header">
     <h1>BN’s Sagovärld</h1>
-    <p class="tagline">…där drömmar blir berättelser</p>
+    <p>…där drömmar blir berättelser</p>
   </header>
 
-  <main class="card">
-    <div class="row">
+  <main id="app" class="card">
+    <div class="field">
       <label for="childName">Barnets namn</label>
-      <input id="childName" placeholder="Lisa" />
+      <input id="childName" type="text" placeholder="Lisa" />
     </div>
 
-    <div class="row">
+    <div class="field">
       <label for="ageRange">Ålder</label>
       <select id="ageRange">
-        <option>1–2 år</option>
-        <option selected>3–4 år</option>
-        <option>5–6 år</option>
-        <option>7–8 år</option>
-        <option>9–10 år</option>
-        <option>11–12 år</option>
+        <option>1–2</option>
+        <option>3–4</option>
+        <option>5–6</option>
+        <option>7–8</option>
+        <option>9–10</option>
+        <option>11–12</option>
       </select>
     </div>
 
-    <div class="row">
+    <div class="field">
       <label for="prompt">Sagognista (vad ska sagan handla om?)</label>
-      <textarea id="prompt" placeholder="En liten drake som lärde sig flyga…"></textarea>
+      <textarea id="prompt" rows="4" placeholder="En liten drake som lärde sig flyga…"></textarea>
     </div>
 
-    <div class="row small">
-      <label class="checkbox">
-        <input id="chkWhisperExact" type="checkbox" />
-        Använd extra exakt rösttolkning (Whisper)
-      </label>
-      <label class="checkbox">
-        <input id="chkMakeImages" type="checkbox" />
-        Skapa bilder till sagan (avaktiverad om modellen ej är verifierad)
-      </label>
-    </div>
-
-    <div class="row hero">
+    <div class="field">
       <label for="heroName">Hjältens namn (valfritt)</label>
-      <input id="heroName" placeholder="t.ex. Draken Holger" />
-      <button id="btnSaveHero" class="btn ghost" title="Spara hjälten för senare">⭐ Spara hjälte</button>
-      <button id="btnResetHeroes" class="btn ghost" title="Rensa sparade hjältar">🗑️ Rensa hjältar</button>
+      <input id="heroName" type="text" placeholder="t.ex. Draken Holger" />
     </div>
 
-    <div class="row buttons">
-      <button id="btnTalk" class="btn primary">🎤 Tala in</button>
-      <button id="btnGenerate" class="btn success">✨ Skapa saga (med uppläsning)</button>
+    <div class="buttons">
+      <button id="btnRecord" type="button" class="btn primary">Tala in</button>
+      <button id="btnCreate" type="button" class="btn success">Skapa saga (med uppläsning)</button>
+      <button id="btnClearHeroes" type="button" class="btn ghost" title="Töm sparade hjältar">
+        Rensa hjältar
+      </button>
     </div>
 
-    <div id="banner" class="banner hidden">⏳ Skapar saga…</div>
-    <div id="error" class="error hidden"></div>
-
-    <h3>Resultat</h3>
-    <div id="story" class="story"></div>
-    <audio id="audio" controls class="hidden"></audio>
+    <section id="result" class="result"></section>
   </main>
 
-  <script src="/app.js" defer></script>
+  <footer class="site-footer">
+    <small>© BN — barnvänlig magi. Inget konto krävs för att prova.</small>
+  </footer>
 </body>
 </html>
