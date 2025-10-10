@@ -23,7 +23,7 @@ OPENAI_IMAGE_MODEL = "gpt-image-1"
 WHISPER_MODEL     = "whisper-1"
 
 # ElevenLabs – röst-ID är ok att ligga här (bytt ut mot din egen)
-ELEVENLABS_VOICE_ID = "din_default_voice_id"
+ELEVENLABS_VOICE_ID = "aSLKtNoVBZlxQEMsnGL2"
 
 # Printful (exempel, ofarlig)
 MERCH_API_URL = "https://api.printful.com"
