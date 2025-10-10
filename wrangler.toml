@@ -1,26 +1,32 @@
 name = "kids-bn"
 compatibility_date = "2024-10-06"
 
-# Säg till Pages var statiska filer ligger
+# Statisk output från Cloudflare Pages
 pages_build_output_dir = "public"
 
+# 🌍 Globala miljövariabler (ofarliga, icke-hemliga)
 [vars]
 BN_ALLOWED_ORIGIN = "https://kids-bn.pages.dev"
 BN_ENV = "production"
 
+# Supabase (endast publika värden)
 SUPABASE_URL = "https://ditt-supabase-url.supabase.co"
-SUPABASE_ANON_KEY = "din_anon_key"
-SUPABASE_SERVICE_ROLE = "din_service_role"
 
-OPENAI_API_KEY = "din_openai_nyckel"
+# OpenAI / ElevenLabs / Whisper (modellval)
 OPENAI_IMAGE_MODEL = "gpt-image-1"
-
-ELEVENLABS_API_KEY = "din_elevenlabs_nyckel"
 WHISPER_MODEL = "whisper-1"
 
-STRIPE_SECRET_KEY = "din_stripe_secret_key"
-STRIPE_PUBLISHABLE_KEY = "din_stripe_publishable_key"
-STRIPE_WEBHOOK_SECRET = "din_stripe_webhook_secret"
-
-MERCH_API_KEY = "din_api_nyckel"
+# Merch API (endast endpoint, inte nyckel)
 MERCH_API_URL = "https://api.printful.com"
+
+# 🧠 Kommentar:
+# Alla känsliga nycklar (API keys m.m.) sätts i Cloudflare Dashboard
+# under Settings → Variables and Secrets som "Secret":
+# - ELEVENLABS_API_KEY
+# - OPENAI_API_KEY
+# - STRIPE_SECRET_KEY
+# - STRIPE_PUBLISHABLE_KEY
+# - STRIPE_WEBHOOK_SECRET
+# - SUPABASE_ANON_KEY
+# - SUPABASE_SERVICE_ROLE
+# - MERCH_API_KEY
