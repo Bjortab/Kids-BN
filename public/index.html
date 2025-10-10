@@ -2,57 +2,87 @@
 <html lang="sv">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>BN’s Sagovärld — där drömmar blir berättelser</title>
-  <link rel="stylesheet" href="/styles.css" />
-  <script src="/app.js" defer></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>BN’s Sagovärld</title>
+  <link rel="stylesheet" href="/styles.css?v=20251010a" />
 </head>
 <body>
   <header class="site-header">
-    <h1>BN’s Sagovärld</h1>
-    <p>…där drömmar blir berättelser</p>
+    <h1><span class="brand">BN’s Sagovärld</span><small>…där drömmar blir berättelser</small></h1>
   </header>
 
-  <main id="app" class="card">
+  <main class="card">
     <div class="field">
       <label for="childName">Barnets namn</label>
-      <input id="childName" type="text" placeholder="Lisa" />
+      <input id="childName" type="text" placeholder="t.ex. Lisa" autocomplete="off" />
     </div>
 
     <div class="field">
       <label for="ageRange">Ålder</label>
       <select id="ageRange">
-        <option>1–2</option>
-        <option>3–4</option>
-        <option>5–6</option>
-        <option>7–8</option>
-        <option>9–10</option>
-        <option>11–12</option>
+        <option value="1-2">1–2</option>
+        <option value="3-4">3–4</option>
+        <option value="5-6">5–6</option>
+        <option value="7-8">7–8</option>
+        <option value="9-10">9–10</option>
+        <option value="11-12">11–12</option>
       </select>
     </div>
 
     <div class="field">
       <label for="prompt">Sagognista (vad ska sagan handla om?)</label>
-      <textarea id="prompt" rows="4" placeholder="En liten drake som lärde sig flyga…"></textarea>
+      <textarea id="prompt" rows="3" placeholder="En liten drake som lärde sig flyga…"></textarea>
+    </div>
+
+    <div class="row row--options">
+      <label class="check">
+        <input id="useWhisper" type="checkbox" />
+        <span>Använd extra exakt rösttolkning (Whisper)</span>
+      </label>
+
+      <label class="check">
+        <input id="makeImages" type="checkbox" disabled />
+        <span>Skapa bilder till sagan (avvaktiverad just nu)</span>
+      </label>
     </div>
 
     <div class="field">
       <label for="heroName">Hjältens namn (valfritt)</label>
-      <input id="heroName" type="text" placeholder="t.ex. Draken Holger" />
+      <input id="heroName" type="text" placeholder="t.ex. Draken Holger" autocomplete="off" />
     </div>
 
-    <div class="buttons">
-      <button id="btnRecord"   type="button" class="btn xl primary">🎙️ Tala in</button>
-      <button id="btnCreate"   type="button" class="btn xl success">✨ Skapa saga (med uppläsning)</button>
-      <button id="btnSaveHero" type="button" class="btn xl warn">⭐ Spara hjälte</button>
-      <button id="btnClearHeroes" type="button" class="btn xl ghost">🗑️ Rensa hjältar</button>
+    <div class="row row--buttons" role="group" aria-label="Åtgärder">
+      <button id="btnSpeak" class="btn btn--primary" type="button">
+        <span class="icon">🎙️</span> Tala in
+      </button>
+
+      <button id="btnGenerate" class="btn btn--success" type="button">
+        <span class="icon">✨</span> Skapa saga (med uppläsning)
+      </button>
+
+      <button id="btnSaveHero" class="btn btn--accent" type="button">
+        <span class="icon">⭐</span> Spara hjälte
+      </button>
     </div>
 
-    <section id="result" class="result"></section>
+    <div class="row">
+      <button id="btnResetHeroes" class="btn btn--ghost" type="button">🗑️ Rensa hjältar</button>
+    </div>
+
+    <div id="status" class="status" aria-live="polite"></div>
+
+    <section class="result">
+      <h2>Resultat</h2>
+      <pre id="resultText" class="result__text"></pre>
+
+      <audio id="resultAudio" controls class="audio" hidden></audio>
+    </section>
   </main>
 
   <footer class="site-footer">
-    <small>© BN — barnvänlig magi. Inget konto krävs för att prova.</small>
+    <small>© BN — barnvänlig magi, inget konto krävs för att prova.</small>
   </footer>
+
+  <script src="/app.js?v=20251010a" defer></script>
 </body>
 </html>
