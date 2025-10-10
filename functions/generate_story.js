@@ -1,47 +1,91 @@
-// /api/generate_story  —  MÅSTE svara på POST (annars 405)
+import { ok, bad, methodNotAllowed, ensurePost } from '../_utils';
 
-function corsHeaders() {
-  return {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization"
-  };
-}
+export const onRequestPost = async (ctx) => {
+  try{
+    const { request, env } = ctx;
+    if (!ensurePost(request)) return methodNotAllowed();
 
-export async function onRequestOptions() {
-  // Preflight
-  return new Response(null, { status: 204, headers: corsHeaders() });
-}
+    const body = await request.json();
+    const {
+      childName = '',
+      heroName = '',
+      ageRange = '3-4',
+      prompt = '',
+      controls = { minWords:250, maxWords:500, tone:'barnvänlig', chapters:1 },
+      read_aloud = true
+    } = body || {};
 
-export async function onRequestPost({ request, env }) {
-  try {
-    const { name, ageRange, prompt, heroName, minWords, maxWords, ageTone } = await request.json();
+    // Bygg “system prompt”
+    const sys = [
+      `Du är en varm barnboksförfattare på svenska.`,
+      `Skriv en saga för åldersspann ${ageRange}.`,
+      `Längd: mellan ${controls.minWords} och ${controls.maxWords} ord.`,
+      `Ton och stil: ${controls.tone}.`,
+      `Kapitel: ${controls.chapters} (endast om naturligt).`,
+      `Använd hjältenamnet endast om det skickats in av användaren.`,
+      `Undvik att blanda in hjältar från tidigare sagor om de inte anges nu.`,
+    ].join(' ');
 
-    if (!name || !prompt || !ageRange) {
-      return Response.json(
-        { ok: false, error: "name, prompt och ageRange krävs", status: 400 },
-        { status: 400, headers: corsHeaders() }
-      );
+    const user = [
+      `Barnets namn: ${childName || '(inte angivet)'}`,
+      heroName ? `Hjältens namn: ${heroName}` : '',
+      `Sagognista: ${prompt}`
+    ].filter(Boolean).join('\n');
+
+    // ===== OpenAI text =====
+    const textRes = await fetch('https://api.openai.com/v1/chat/completions', {
+      method:'POST',
+      headers:{
+        'Authorization': `Bearer ${env.OPENAI_API_KEY}`,
+        'Content-Type':'application/json'
+      },
+      body: JSON.stringify({
+        model: env.OPENAI_MODEL || 'gpt-4o-mini',
+        temperature: 0.7,
+        messages: [
+          { role:'system', content: sys },
+          { role:'user', content: user }
+        ]
+      })
+    });
+
+    if (!textRes.ok){
+      const t = await textRes.text().catch(()=> '');
+      return bad(`OpenAI text fel: ${textRes.status} ${t}`, 502);
+    }
+    const textData = await textRes.json();
+    const story = textData.choices?.[0]?.message?.content?.trim?.() || '';
+
+    let audioUrl = null;
+
+    if (read_aloud && story){
+      // ===== ElevenLabs TTS (valfritt om du inte vill läsa upp direkt) =====
+      try{
+        const voiceId = env.ELEVENLABS_VOICE_ID || 'EXAVITQu4vr4xnSDxMaL'; // standard-röst
+        const tts = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+          method:'POST',
+          headers:{
+            'xi-api-key': env.ELEVENLABS_API_KEY,
+            'Content-Type':'application/json'
+          },
+          body: JSON.stringify({ text: story, voice_settings:{ stability:0.5, similarity_boost:0.75 } })
+        });
+
+        if (tts.ok){
+          const buf = await tts.arrayBuffer();
+          // Spara i R2 eller returnera som data-URL (enkelt men större svar).
+          // Här returnerar vi tillfälligt en data-URL för demo:
+          const base64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+          audioUrl = `data:audio/mpeg;base64,${base64}`;
+        }
+      }catch(_e){}
     }
 
-    // --- Här skulle din OpenAI-anrop gå. För att undvika 405 fokuserar vi på korrekt svarformat. ---
-    // Validera att OPENAI_API_KEY finns – annars svara tydligt men korrekt.
-    if (!env.OPENAI_API_KEY) {
-      return Response.json(
-        { ok: false, error: "OPENAI_API_KEY saknas i miljön", status: 501 },
-        { status: 501, headers: corsHeaders() }
-      );
-    }
-
-    // Minimal prompt/”mock” om du vill testa flödet utan att dra API:
-    const ord = Math.max(minWords || 120, 120);
-    const story = `(${ageRange}, ${ageTone || "barnvänlig ton"}) ${name} – ${heroName ? "med hjälten " + heroName + " – " : ""}${prompt}. [≈${ord} ord, demo-berättelse]`;
-
-    return Response.json({ ok: true, story }, { headers: corsHeaders() });
-  } catch (err) {
-    return Response.json(
-      { ok: false, error: `Serverfel: ${err.message}`, status: 500 },
-      { status: 500, headers: corsHeaders() }
-    );
+    return ok({ story, audioUrl });
+  }catch(err){
+    return bad(`Serverfel: ${err?.message || err}`, 500);
   }
-}
+};
+
+// GET -> 405 för att undvika 405-förvirring i UI om fel metod skickas
+export const onRequestGet = async () => methodNotAllowed();
