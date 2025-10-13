@@ -1,63 +1,66 @@
 // ===== DOM =====
-const el = (id) => document.getElementById(id);
+const $ = (id) => document.getElementById(id);
 
-const nameInput   = el('childName');     // Barnets namn (text)
-const ageInput    = el('ageRange');      // Ålder ex. "1–2"
-const promptEl    = el('prompt');        // Sagognista (textarea)
-const heroInput   = el('heroName');      // Hjältens namn (valfritt)
+const nameInput   = $('childName');
+const ageInput    = $('ageRange');
+const promptEl    = $('prompt');
+const heroInput   = $('heroName');
 
-const btnSpeak    = el('btnSpeak');      // "Tala in"
-const btnCreate   = el('btnCreate');     // "Skapa saga (med uppläsning)"
-const btnSaveHero = el('btnSaveHero');   // "Spara hjälte"
-const btnReset    = el('btnResetHeroes');// "Rensa hjältar"
+const btnSpeak    = $('btnSpeak');
+const btnCreate   = $('btnCreate');
+const btnSaveHero = $('btnSaveHero');
+const btnReset    = $('btnResetHeroes');
 
-const outBox      = el('result');        // Rutan där sagan visas
-const statusLine  = el('statusText');    // (valfritt) litet statusmeddelande
+const outBox      = $('result');
+const statusLine  = $('statusText');
 
-// Litet hjälp-UI
 const setStatus = (msg) => { if (statusLine) statusLine.textContent = msg || ''; };
-const showError = (msg) => {
-  outBox.style.color = '#ff6b6b';
-  outBox.textContent = msg;
-};
-const showStory = (txt) => {
-  outBox.style.color = '#ffffff';
-  outBox.textContent = txt;
-};
+const showError = (msg) => { outBox.style.color = '#ff6b6b'; outBox.textContent = msg; };
+const showStory = (txt) => { outBox.style.color = '#ffffff'; outBox.textContent = txt; };
 
 // ===== Hjälpfunktioner =====
-async function postJSON(url, body, extraHeaders = {}) {
-  const res = await fetch(url, {
+async function postJSON(url, body) {
+  return fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...extraHeaders },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  return res;
 }
 
-// Skapar/byter ut en <audio> under resultatrutan
+// Prova flera endpoints i tur och ordning, returnera första OK-svaret
+async function postTry(urls, body) {
+  let lastErr;
+  for (const u of urls) {
+    try {
+      const res = await postJSON(u, body);
+      if (res.ok) return res;
+      lastErr = new Error(`${u} → ${res.status}`);
+      // 405/404? testa nästa
+      if (res.status === 404 || res.status === 405) continue;
+      // annan status: kasta direkt
+      const txt = await res.text().catch(() => '');
+      throw new Error(`${u} → ${res.status} ${txt}`);
+    } catch (e) {
+      lastErr = e;
+      console.error('[postTry]', u, e);
+    }
+  }
+  throw lastErr || new Error('Inget svar från servern.');
+}
+
 function attachAudioPlayerFromBlob(blob) {
-  // Ta bort ev. tidigare spelare
   const old = document.getElementById('audioPlayer');
   if (old) old.remove();
-
   const url = URL.createObjectURL(blob);
   const audio = document.createElement('audio');
   audio.id = 'audioPlayer';
   audio.controls = true;
   audio.preload = 'auto';
   audio.src = url;
-
-  // Lägg den efter texten
   outBox.insertAdjacentElement('afterend', audio);
-
-  // Autoplay (tillåts oftast efter user-gesture)
-  audio.play().catch(() => {
-    // Om autoplay blockas: det finns i alla fall en spelare synlig
-  });
+  audio.play().catch(() => {});
 }
 
-// Fångar både audio/mpeg-stream och JSON med base64
 async function handleTTSResponse(res) {
   const ct = res.headers.get('content-type') || '';
   if (ct.includes('audio/')) {
@@ -65,33 +68,32 @@ async function handleTTSResponse(res) {
     attachAudioPlayerFromBlob(blob);
     return;
   }
-  const data = await res.json().catch(() => ({}));
-  if (data?.audioBase64) {
+  // prova JSON med base64
+  let data = {};
+  try { data = await res.json(); } catch {}
+  if (data && data.audioBase64) {
     const bin = atob(data.audioBase64);
-    const len = bin.length;
-    const bytes = new Uint8Array(len);
-    for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
-    attachAudioPlayerFromBlob(new Blob([bytes], { type: 'audio/mpeg' }));
+    const buf = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+    attachAudioPlayerFromBlob(new Blob([buf], { type: 'audio/mpeg' }));
     return;
   }
   throw new Error(data?.error || 'TTS gav inget ljud.');
 }
 
-// ===== Skapa saga + uppläsning =====
+// ===== Skapa saga + TTS =====
 btnCreate?.addEventListener('click', async () => {
   try {
-    // Lås knappen
     btnCreate.disabled = true;
-    const originalLabel = btnCreate.textContent;
+    const original = btnCreate.textContent;
     btnCreate.textContent = 'Skapar...';
     setStatus('Skapar saga...');
 
     const payload = {
       name:     (nameInput?.value || '').trim(),
-      ageRange: (ageInput?.value || '').trim(),   // ex. "1–2"
+      ageRange: (ageInput?.value || '').trim(),
       prompt:   (promptEl?.value || '').trim(),
       heroName: (heroInput?.value || '').trim(),
-      // Liten flagga till backend att vi vill ha extra strikt kvalitet (kan ignoreras om inte implementerat)
       quality:  'kids_v1'
     };
 
@@ -100,82 +102,63 @@ btnCreate?.addEventListener('click', async () => {
       return;
     }
 
-    // 1) Skapa sagan
-    const storyRes = await postJSON('/api/generate_story', payload);
+    // 1) STORY — prova båda rutterna
+    const storyRes = await postTry(
+      ['/api/generate_story', '/generate_story'],
+      payload
+    );
+
+    // hämta JSON oavsett
     const storyData = await storyRes.json().catch(() => ({}));
-
-    if (!storyRes.ok || !storyData?.ok) {
-      throw new Error(storyData?.error || `Serverfel (story): ${storyRes.status}`);
-    }
-
+    if (!storyData?.ok) throw new Error(storyData?.error || 'Kunde inte skapa sagan.');
     const story = storyData.story || '';
     if (!story) throw new Error('Tomt svar från generate_story.');
+
     showStory(story);
     setStatus('Skapar uppläsning...');
 
-    // 2) TTS
-    // Om ditt /tts förväntar sig { text, voiceId } – byt fieldnamn här.
-    const ttsRes = await postJSON('/tts', {
-      text: story,
-      // Skicka med valfritt röst-id om du använder ElevenLabs:
-      // voiceId: 'din_röst_id'
-    });
-
-    if (!ttsRes.ok) {
-      // Försök få ev JSON-fel från servern
-      let msg = `Serverfel (tts): ${ttsRes.status}`;
-      try {
-        const errJ = await ttsRes.json();
-        if (errJ?.error) msg = errJ.error;
-      } catch {}
-      throw new Error(msg);
-    }
+    // 2) TTS — prova båda rutterna
+    const ttsRes = await postTry(
+      ['/tts', '/api/tts'],
+      { text: story } // lägg voiceId här om du använder ElevenLabs
+    );
 
     await handleTTSResponse(ttsRes);
     setStatus('Klar!');
+
+    // återställ knapptext
+    btnCreate.textContent = original;
   } catch (err) {
+    console.error('[create]', err);
     showError(String(err));
     setStatus('');
   } finally {
-    if (btnCreate) {
-      btnCreate.disabled = false;
-      btnCreate.textContent = '✨ Skapa saga (med uppläsning)';
-    }
+    btnCreate.disabled = false;
   }
 });
 
-// ===== Spara/Rensa hjältar (lokalt i browsern) =====
-function loadHeroes() {
-  try {
-    return JSON.parse(localStorage.getItem('bn_heroes') || '[]');
-  } catch { return []; }
-}
-function saveHeroes(list) {
-  localStorage.setItem('bn_heroes', JSON.stringify(list));
-}
+// ===== Lokala hjältar =====
+function loadHeroes() { try { return JSON.parse(localStorage.getItem('bn_heroes') || '[]'); } catch { return []; } }
+function saveHeroes(list) { localStorage.setItem('bn_heroes', JSON.stringify(list)); }
+
 btnSaveHero?.addEventListener('click', () => {
   const h = (heroInput?.value || '').trim();
   if (!h) return;
   const list = loadHeroes();
-  if (!list.includes(h)) {
-    list.push(h);
-    saveHeroes(list);
-    setStatus(`Sparade hjälten “${h}”.`);
-  }
+  if (!list.includes(h)) list.push(h);
+  saveHeroes(list);
+  setStatus(`Sparade hjälten “${h}”.`);
 });
+
 btnReset?.addEventListener('click', () => {
   saveHeroes([]);
   setStatus('Hjältar rensade.');
 });
 
-// ===== (Frivilligt) Tala in – stubb för inspelning till /whisper_transcribe =====
-// Behålls för kompatibilitet. Du kan komplettera med riktig inspelning senare.
+// ===== (Stubb) “Tala in” – lämnas orörd tills vi kopplar riktig inspelning =====
 btnSpeak?.addEventListener('click', async () => {
   try {
-    setStatus('Mikrofon-inspelning (stub)…');
-    // Implementera WebAudio/MediaRecorder här om du vill.
-    // När du har en Blob: skicka FormData till /whisper_transcribe och fyll promptEl.value = text
-    // Den här stubbens poäng är att inte krascha UI om knappen finns.
+    setStatus('Mikrofon – kommer snart (stub).');
   } catch (e) {
     showError(`Kunde inte spela in: ${String(e)}`);
   } finally {
@@ -183,7 +166,7 @@ btnSpeak?.addEventListener('click', async () => {
   }
 });
 
-// ===== Små UX-detaljer =====
+// Små UX-saker
 ;['input','change'].forEach(evt => {
   ageInput?.addEventListener(evt, () => setStatus(''));
   promptEl?.addEventListener(evt, () => setStatus(''));
