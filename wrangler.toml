@@ -32,3 +32,14 @@ MERCH_API_URL = "https://api.printful.com"
 [env.preview.vars]
 BN_ENV = "preview"
 BN_ALLOWED_ORIGIN = "https://*.pages.dev"
+# === R2 Bucket för cache av ljud ===
+[[r2_buckets]]
+binding = "BN_AUDIOS"
+bucket_name = "bn-audio"
+preview_bucket_name = "bn-audio"
+
+# === D1 Databas (framtida loggar / statistik) ===
+[[d1_databases]]
+binding = "BN_DB"
+database_name = "bn_db"
+database_id = "567a8125-986d-4311-8b6b-xxxxxxxxxxxx"  # <-- byt till ditt riktiga ID från D1-sidan
