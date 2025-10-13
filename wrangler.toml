@@ -42,4 +42,4 @@ preview_bucket_name = "bn-audio"
 [[d1_databases]]
 binding = "BN_DB"
 database_name = "bn_db"
-database_id = "567a8125-986d-4311-8b6b-xxxxxxxxxxxx"  # <-- byt till ditt riktiga ID från D1-sidan
+database_id = "567ad325-9fd0-4311-8c7e-53ce03b2b9ac"  # <-- byt till ditt riktiga ID från D1-sidan
