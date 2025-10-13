@@ -1,49 +1,53 @@
-// /api/tts  —  POST { text }
-// Returnerar { ok:true, audioBase64: "data:audio/wav;base64,..." } eller tydligt fel.
-
-function corsHeaders() {
-  return {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization"
-  };
-}
-
-export async function onRequestOptions() {
-  return new Response(null, { status: 204, headers: corsHeaders() });
-}
-
-export async function onRequestPost({ request, env }) {
+// functions/api/tts.js
+export async function onRequestPost(context) {
   try {
-    const { text } = await request.json();
+    const { text } = await context.request.json();
+
     if (!text) {
-      return Response.json(
-        { ok: false, error: "text saknas", status: 400 },
-        { status: 400, headers: corsHeaders() }
-      );
+      return new Response(JSON.stringify({ error: 'Ingen text skickades till TTS.' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
     }
 
-    // Här kopplar du in ElevenLabs eller annan TTS.
-    if (!env.ELEVENLABS_API_KEY) {
-      // Skicka demo-svar som gör att frontend fungerar (ingen 405).
-      return Response.json(
-        { ok: false, error: "ELEVENLABS_API_KEY saknas i miljön", status: 501 },
-        { status: 501, headers: corsHeaders() }
-      );
-    }
+    // === Enkel teststub ===
+    // Just nu returnerar vi bara texten så du kan se att allt funkar.
+    // Byt ut detta mot riktig TTS senare.
+    const fakeAudio = Buffer.from('UklGRigAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=', 'base64'); // tom WAV
+    return new Response(fakeAudio, {
+      status: 200,
+      headers: {
+        'Content-Type': 'audio/wav',
+        'Access-Control-Allow-Origin': '*',
+      },
+    });
 
-    // TODO: Implementera riktig TTS. Exemplet nedan är bara en stub.
-    // const audioBase64 = "data:audio/wav;base64,....";
-    // return Response.json({ ok:true, audioBase64 }, { headers: corsHeaders() });
-
-    return Response.json(
-      { ok: false, error: "TTS ej implementerad ännu (nyckel finns).", status: 501 },
-      { status: 501, headers: corsHeaders() }
-    );
+    // === Exempel för riktig OpenAI TTS ===
+    /*
+    const apiKey = context.env.OPENAI_API_KEY;
+    const res = await fetch('https://api.openai.com/v1/audio/speech', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini-tts',
+        voice: 'alloy',
+        input: text,
+      }),
+    });
+    if (!res.ok) throw new Error(`OpenAI TTS-fel: ${res.status}`);
+    const audio = await res.arrayBuffer();
+    return new Response(audio, {
+      status: 200,
+      headers: { 'Content-Type': 'audio/mpeg' },
+    });
+    */
   } catch (err) {
-    return Response.json(
-      { ok: false, error: `Serverfel: ${err.message}`, status: 500 },
-      { status: 500, headers: corsHeaders() }
-    );
+    return new Response(JSON.stringify({ error: err.message || 'Fel i TTS' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
 }
