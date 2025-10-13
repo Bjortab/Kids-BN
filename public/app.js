@@ -12,13 +12,13 @@
   const btnResetHeroes = $('#btnResetHeroes');
   const statusEl = $('#status');
   const resultText = $('#resultText');
-  const resultAudio = $('#resultAudio'); // <audio id="resultAudio" controls hidden></audio> i HTML
+  const resultAudio = $('#resultAudio');
 
   // ===== State guard =====
   let isBusy = false;
   const setBusy = (v, msg = '') => {
     isBusy = v;
-    [btnSpeak, btnGenerate, btnSaveHero, btnResetHeroes].forEach(b => b && (b.disabled = v));
+    [btnSpeak, btnGenerate, btnSaveHero, btnResetHeroes].forEach(b => { if (b) b.disabled = v; });
     if (msg) setStatus(msg);
   };
 
@@ -40,17 +40,17 @@
   const ageToControls = (age) => {
     switch (age) {
       case '1-2':  return { minWords: 50,  maxWords: 160,  tone:'bilderbok, rim, färger, ljud och upprepningar', chapters:1 };
-      case '3-4':  return { minWords: 120, maxWords: 280,  tone:'enkel handling med tydlig början/slut; humor', chapters:1 };
-      case '5-6':  return { minWords: 250, maxWords: 450,  tone:'lite mer komplexa berättelser; problem som löses', chapters:1 };
-      case '7-8':  return { minWords: 400, maxWords: 700,  tone:'äventyr/mysterier; introducera cliffhangers', chapters:2 };
-      case '9-10': return { minWords: 600, maxWords: 1000, tone:'fantasy/vänskap/moral; kapitel', chapters:2 };
-      case '11-12':return { minWords: 900, maxWords: 1400, tone:'djupare teman; karaktärsutveckling', chapters:3 };
+      case '3-4':  return { minWords: 120, maxWords: 280,  tone:'enkel handling med tydlig början och slut; humor och igenkänning', chapters:1 };
+      case '5-6':  return { minWords: 250, maxWords: 450,  tone:'lite mer komplexa berättelser med problem som löses; korta kapitel', chapters:1 };
+      case '7-8':  return { minWords: 400, maxWords: 700,  tone:'äventyr och mysterier, humor; introducera serier och cliffhangers', chapters:2 };
+      case '9-10': return { minWords: 600, maxWords: 1000, tone:'fantasy/vänskap/moralfrågor; kapitelberättelse, 2–3 sidor', chapters:2 };
+      case '11-12':return { minWords: 900, maxWords: 1400, tone:'djupare teman och karaktärsutveckling; kapitel', chapters:3 };
       default:     return { minWords: 250, maxWords: 500,  tone:'barnvänlig', chapters:1 };
     }
   };
 
   const buildStoryPayload = () => {
-    const age = ageRange?.value || '';
+    const age = (ageRange?.value || '').trim();
     const controls = ageToControls(age);
     return {
       childName: (childName?.value || '').trim(),
@@ -61,45 +61,8 @@
     };
   };
 
-  // ===== Audio helpers =====
-  function playBlobAsAudio(blob) {
-    if (!resultAudio) return;
-    const url = URL.createObjectURL(blob);
-    resultAudio.src = url;
-    resultAudio.hidden = false;
-    // försök autoplay efter user gesture (knappklick)
-    resultAudio.play().catch(() => {});
-  }
-
-  async function handleTTSResponse(res) {
-    // 1) Direkta audio-bytes (audio/mpeg, audio/wav etc.)
-    const ct = res.headers.get('content-type') || '';
-    if (ct.includes('audio/')) {
-      const blob = await res.blob();
-      playBlobAsAudio(blob);
-      return;
-    }
-    // 2) JSON med audioUrl eller audioBase64
-    const data = await res.json().catch(() => ({}));
-    if (data?.audioUrl) {
-      resultAudio.src = data.audioUrl;
-      resultAudio.hidden = false;
-      await resultAudio.play().catch(()=>{});
-      return;
-    }
-    if (data?.audioBase64) {
-      const bin = atob(data.audioBase64);
-      const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      playBlobAsAudio(new Blob([bytes], { type: 'audio/mpeg' }));
-      return;
-    }
-    throw new Error(data?.error || 'TTS gav inget ljud.');
-  }
-
-  // ===== Recording (browser) -> Whisper function =====
+  // ===== Recording (browser) -> Whisper function (oförändrat stub-läge) =====
   let mediaRecorder, chunks = [];
-
   const startRecording = async () => {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     chunks = [];
@@ -117,12 +80,10 @@
     setStatus('Spelar in… tryck ”Tala in” igen för att stoppa.');
     btnSpeak?.classList.add('is-recording');
   };
-
   const stopRecording = () => {
     if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
     btnSpeak?.classList.remove('is-recording');
   };
-
   const sendToWhisper = async (blob) => {
     setBusy(true, 'Skickar ljud till Whisper…');
     const res = await fetch('/api/whisper_transcribe', {
@@ -130,30 +91,26 @@
       headers: { 'Content-Type': 'audio/webm' },
       body: blob
     });
-
     if (!res.ok) {
       const txt = await res.text().catch(()=> '');
-      setBusy(false);
+      setBusy(false, '');
       throw new Error(`Whisper svarade inte: ${res.status} ${txt}`);
     }
     const data = await res.json();
     if (prompt) prompt.value = (data.text || '').trim();
-    setBusy(false, 'Lokal inspelning klar (läggs inte upp).');
+    setBusy(false, 'Lokal inspelning klar.');
   };
 
-  // ===== Handlers =====
   btnSpeak?.addEventListener('click', async () => {
     try{
-      if (isBusy && btnSpeak.classList.contains('is-recording')) {
-        stopRecording();
-        return;
-      }
+      if (isBusy && btnSpeak.classList.contains('is-recording')) { stopRecording(); return; }
       await startRecording();
     }catch(err){
       setStatus('Mikrofon fel: ' + (err?.message || err), 'error');
     }
   });
 
+  // ===== Skapa saga + TTS =====
   btnGenerate?.addEventListener('click', async () => {
     if (isBusy) return;
     const payload = buildStoryPayload();
@@ -165,13 +122,10 @@
 
     setBusy(true, 'Skapar saga…');
     if (resultText) resultText.textContent = '';
-    if (resultAudio) {
-      resultAudio.hidden = true;
-      resultAudio.removeAttribute('src');
-    }
+    if (resultAudio) { resultAudio.hidden = true; resultAudio.removeAttribute('src'); }
 
     try{
-      // ===== 1) Skapa sagan =====
+      // 1) Generera sagan
       const res = await fetch('/api/generate_story', {
         method: 'POST',
         headers: { 'Content-Type':'application/json' },
@@ -179,53 +133,55 @@
       });
 
       if (res.status === 405){
-        setBusy(false);
-        setStatus('Misslyckades: 405 Method Not Allowed. Funktionen accepterar inte POST. Kontrollera att functions/api/generate_story.js exporterar onRequestPost.', 'error');
+        setBusy(false, '');
+        setStatus('Misslyckades: 405 Method Not Allowed. Kontrollera att functions/api/generate_story.js exporterar onRequestPost.', 'error');
         return;
       }
       if (!res.ok){
         const t = await res.text().catch(()=> '');
         throw new Error(`${res.status} ${t}`);
       }
+
       const data = await res.json();
+      const story = data.story || '';
+      if (resultText) resultText.textContent = story;
 
-      if (data.story && resultText) resultText.textContent = data.story;
-
-      // ===== 2) Skapa uppläsning (TTS) =====
+      // 2) Riktig TTS (OpenAI)
       setStatus('Skapar uppläsning…');
-      // Prova /api/tts först, fallback /tts om du kör utan prefix
-      let ttsRes = await fetch('/api/tts', {
+      const tts = await fetch('/tts', {
         method: 'POST',
         headers: { 'Content-Type':'application/json' },
         body: JSON.stringify({
-          text: data.story || payload.prompt || ''
-          // voiceId: 'din_elevenlabs_röst_id'  // om din /tts använder det
+          text: story,
+          voice: 'alloy',   // ändra om du vill prova andra röster när de blir tillgängliga
+          format: 'mp3',
+          speed: 1.0
         })
       });
-      if (!ttsRes.ok) {
-        // fallback
-        const fallback = await fetch('/tts', {
-          method: 'POST',
-          headers: { 'Content-Type':'application/json' },
-          body: JSON.stringify({ text: data.story || payload.prompt || '' })
-        });
-        if (!fallback.ok) {
-          let msg = `TTS-fel: ${fallback.status}`;
-          try { const j = await fallback.json(); if (j?.error) msg = j.error; } catch {}
-          throw new Error(msg);
-        }
-        await handleTTSResponse(fallback);
-      } else {
-        await handleTTSResponse(ttsRes);
+
+      if (!tts.ok) {
+        const errT = await tts.text().catch(()=> '');
+        throw new Error(`TTS-fel: ${tts.status} ${errT}`);
+      }
+
+      // Växla på audio-spelaren med den strömmade MP3:an
+      const blob = await tts.blob();
+      const url = URL.createObjectURL(blob);
+      if (resultAudio) {
+        resultAudio.src = url;
+        resultAudio.hidden = false;
+        // försök autoplay (tillåts om klick skedde)
+        resultAudio.play().catch(() => {});
       }
 
       setBusy(false, 'Klar!', 'ok');
     }catch(err){
-      setBusy(false);
+      setBusy(false, '');
       setStatus('Kunde inte skapa sagan/ljud: '+ (err?.message || err), 'error');
     }
   });
 
+  // ===== Hjältar lokalt =====
   btnSaveHero?.addEventListener('click', () => {
     const h = (heroName?.value || '').trim();
     if (!h){ setStatus('Skriv ett hjältenamn först.', 'error'); return; }
@@ -234,7 +190,6 @@
     saveHeroes(list);
     setStatus(`Sparade hjälten: ${h}`, 'ok');
   });
-
   btnResetHeroes?.addEventListener('click', () => {
     saveHeroes([]);
     setStatus('Rensade sparade hjältar.', 'ok');
