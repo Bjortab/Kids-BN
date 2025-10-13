@@ -1,28 +1,77 @@
-/* Lås stora knappar (barnvänligt) */
-.btn { min-height: 54px; min-width: 200px; font-size: 18px; font-weight: 700; }
-
-/* Inspelningsindikator */
-#btnSpeak.is-recording {
-  animation: bnPulse 0.9s infinite;
-  box-shadow: 0 0 0 6px rgba(255,0,0,0.25);
-}
-@keyframes bnPulse {
-  0% { transform: scale(1); } 50% { transform: scale(0.98); } 100% { transform: scale(1); }
+:root {
+  --bg:#0e0f12; --card:#1a1d22; --text:#e9eef5; --muted:#a5afbd;
+  --blue:#1da1f2; --green:#18c37e; --yellow:#f6b73c; --gray:#3a3f47;
+  --red:#ff6b6b; --radius:14px;
 }
 
-/* Spinner overlay */
-.bn-spinner {
-  position: fixed; inset: 0; display: none;
-  background: rgba(0,0,0,0.5); z-index: 9999;
-  align-items: center; justify-content: center;
+* { box-sizing: border-box; }
+html, body { height:100%; }
+body {
+  margin:0; background:radial-gradient(1200px 600px at 50% -200px,#22283a 0,#0e0f12 60%);
+  color:var(--text); font:16px/1.45 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
 }
-.bn-spinner.is-visible { display: flex; }
-.bn-spinner__box { text-align: center; }
-.bn-spinner__dot {
-  display:inline-block; width:12px; height:12px; border-radius:50%;
-  background:#21d07a; margin:0 6px; animation: bnBounce .9s infinite alternate;
+
+.app { max-width:900px; margin:24px auto 48px; padding:0 16px; }
+.app__header { text-align:center; margin:24px 0 8px; }
+.app__header h1 { margin:0 0 4px; color:#19e28f; letter-spacing:.3px; }
+.subtitle { margin:0; color:var(--muted); font-size:14px; }
+
+.card {
+  background:var(--card); border-radius:var(--radius); padding:18px;
+  box-shadow:0 6px 24px rgba(0,0,0,.35); margin-top:16px;
 }
-.bn-spinner__dot:nth-child(2){ animation-delay:.15s; }
-.bn-spinner__dot:nth-child(3){ animation-delay:.30s; }
-@keyframes bnBounce { from{ transform:translateY(0); opacity:.6 } to{ transform:translateY(-10px); opacity:1 } }
-.bn-spinner__msg { color:#fff; margin-top:12px; font-weight:700; font-size:16px; text-shadow:0 1px 2px rgba(0,0,0,.4); }
+
+label { display:block; margin:10px 0 12px; color:var(--muted); font-size:14px; }
+input[type=text], select, textarea {
+  width:100%; margin-top:6px; padding:14px 16px; color:var(--text);
+  background:#0f1218; border:1px solid #2b3140; border-radius:12px; outline:none;
+}
+textarea { resize:vertical; min-height:80px; }
+
+.toggles { display:flex; gap:14px; flex-wrap:wrap; margin-top:4px; }
+.check { display:flex; align-items:center; gap:8px; color:var(--muted); }
+
+.btnrow { display:flex; gap:12px; flex-wrap:wrap; margin-top:14px; }
+.btnrow .btn { flex:1 1 220px; }
+
+.btn {
+  display:inline-flex; align-items:center; justify-content:center;
+  padding:18px 20px; border:0; border-radius:14px; font-weight:700;
+  font-size:18px; color:#061215; cursor:pointer; transition:transform .05s ease, opacity .2s ease;
+}
+.btn:active { transform:translateY(1px); }
+.btn:disabled { opacity:.6; cursor:not-allowed; }
+
+.btn--blue   { background:var(--blue); }
+.btn--green  { background:var(--green); }
+.btn--yellow { background:var(--yellow); }
+.btn--gray   { background:var(--gray); color:#dfe6ef; }
+
+.status { margin-top:10px; min-height:20px; font-size:14px; color:var(--muted); }
+.status--ok { color:#8be28c; }
+.status--error { color:var(--red); }
+
+#resultCard { margin-top:16px; }
+.result__text {
+  background:#0b0e14; border:1px solid #242a36; border-radius:12px;
+  padding:16px; color:#eaeef7; min-height:120px; white-space:pre-wrap;
+}
+.result__audio { margin-top:12px; width:100%; }
+
+.spinner {
+  position:fixed; inset:0; display:grid; place-items:center;
+  background:rgba(4,7,12,.55); backdrop-filter: blur(2px);
+}
+.spinner[hidden] { display:none; }
+.spinner__dot {
+  width:54px; height:54px; border-radius:50%;
+  border:6px solid rgba(255,255,255,.25);
+  border-top-color:#19e28f; animation:spin 1s linear infinite; margin:auto;
+}
+#spinnerMsg { text-align:center; color:#dfe6ef; margin-top:12px; font-weight:600; }
+@keyframes spin { to { transform:rotate(360deg); } }
+
+/* Mobil */
+@media (max-width:560px) {
+  .btnrow .btn { flex:1 1 100%; font-size:18px; padding:18px; }
+}
