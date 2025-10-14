@@ -1,220 +1,173 @@
 (() => {
-  // ===== Helpers =====
-  const $ = s => document.querySelector(s);
+  const $ = sel => document.querySelector(sel);
 
-  // DOM refs
   const childName = $('#childName');
   const ageRange  = $('#ageRange');
-  const promptEl  = $('#prompt');
+  const prompt    = $('#prompt');
   const heroName  = $('#heroName');
   const useWhisper= $('#useWhisper');
 
   const btnSpeak  = $('#btnSpeak');
-  const btnGen    = $('#btnGenerate');
-  const btnSave   = $('#btnSaveHero');
-  const btnReset  = $('#btnResetHeroes');
+  const btnGenerate = $('#btnGenerate');
+  const btnSaveHero = $('#btnSaveHero');
+  const btnResetHeroes = $('#btnResetHeroes');
 
   const statusEl  = $('#status');
-  const textOut   = $('#resultText');
-  const audioOut  = $('#resultAudio');
+  const resultText= $('#resultText');
+  const resultAudio = $('#resultAudio');
 
-  const spinner   = $('#spinner');
-  const spinnerMsg= $('#spinnerMsg');
+  // Spinner + cache-meter (du har dessa i HTML/CSS)
+  const ttsSpinner = $('#ttsSpinner');
+  const cacheWrap  = $('#cacheWrap');
+  const cacheBar   = $('#cacheBar');
+  const cacheText  = $('#cacheText');
 
-  const setStatus = (msg, type='') => {
+  // Bild-container
+  const storyImagesWrap = $('#storyImages');
+
+  let isBusy = false;
+  const setBusy = (v, msg = '') => {
+    isBusy = v;
+    [btnSpeak, btnGenerate, btnSaveHero, btnResetHeroes].forEach(b => b && (b.disabled = v));
+    setStatus(msg);
+  };
+  const setStatus = (msg, type = '') => {
+    if (!statusEl) return;
     statusEl.textContent = msg || '';
     statusEl.classList.remove('status--ok','status--error');
     if (type) statusEl.classList.add(`status--${type}`);
   };
-  const showSpin = (msg='Arbetar…') => { spinnerMsg.textContent = msg; spinner.hidden = false; };
-  const hideSpin = () => { spinner.hidden = true; };
 
-  // Large, fixed buttons must always be clickable unless busy
-  let busy = false;
-  const setBusy = (v, msg='') => {
-    busy = v;
-    [btnSpeak, btnGen, btnSave, btnReset].forEach(b=> b.disabled = v);
-    if (v && msg) showSpin(msg); else hideSpin();
-  };
-
-  // ===== Age controls for the backend =====
-  const ageToControls = (age) => {
-    switch (age) {
-      case '1-2':  return { minWords: 30,  maxWords: 70, tone:'bilderbok, djur, bondgård, färger, maskiner', chapters:1 };
-      case '3-4':  return { minWords: 120, maxWords: 280, tone:'enkel handling, tydlig början och slut, humor och igenkänning', chapters:1 };
-      case '5-6':  return { minWords: 250, maxWords: 450, tone:'lite mer komplex, problem som löses; korta kapitel', chapters:1 };
-      case '7-8':  return { minWords: 400, maxWords: 700, tone:'äventyr/mysterier, humor; introducera cliffhangers', chapters:2 };
-      case '9-10': return { minWords: 600, maxWords: 1000, tone:'fantasy, vänskap, moral; kapitelkänsla', chapters:2 };
-      case '11-12':return { minWords: 900, maxWords: 1400, tone:'djupare teman, karaktärsutveckling', chapters:3 };
-      default:     return { minWords: 250, maxWords: 500,  tone:'barnvänlig', chapters:1 };
-    }
-  };
-
-  // ===== Local heroes store =====
-  const heroKey='bn_heroes_v1';
-  const loadHeroes = () => { try{ return JSON.parse(localStorage.getItem(heroKey)||'[]'); } catch { return []; } };
-  const saveHeroes = (list) => localStorage.setItem(heroKey, JSON.stringify(list.slice(0,50)));
-
-  // ===== Network helpers =====
-  async function postJSON(url, body, headers={}) {
-    return await fetch(url, {
-      method:'POST',
-      headers: { 'Content-Type':'application/json', ...headers },
-      body: JSON.stringify(body)
+  function showSpinner(show){ if(ttsSpinner) ttsSpinner.hidden = !show; }
+  function updateCacheMeter(hits, total){
+    if (!cacheWrap || !cacheBar || !cacheText) return;
+    const ratio = total > 0 ? Math.max(0, Math.min(1, hits/total)) : 0;
+    const pct = Math.round(ratio * 100);
+    cacheBar.style.width = `${pct}%`;
+    cacheText.textContent = `Återanvänt från minnet: ${pct}%`;
+    cacheWrap.hidden = false;
+  }
+  function renderStoryImages(images){
+    if (!storyImagesWrap) return;
+    storyImagesWrap.innerHTML = '';
+    (images || []).forEach(img => {
+      const card = document.createElement('div');
+      card.className = 'story-image-card';
+      card.innerHTML = `<img src="${img.url}" alt="${(img.tags||[]).slice(0,2).join(', ')}" />`;
+      storyImagesWrap.appendChild(card);
     });
   }
 
-  function attachAudioFromBlob(blob) {
-    const url = URL.createObjectURL(blob);
-    audioOut.hidden = false;
-    audioOut.src = url;
-    audioOut.play().catch(()=>{ /* autoplay kan blockas */ });
-  }
+  const heroKey = 'bn_heroes_v1';
+  const loadHeroes = () => { try { return JSON.parse(localStorage.getItem(heroKey) || '[]'); } catch { return []; } };
+  const saveHeroes = (list) => localStorage.setItem(heroKey, JSON.stringify(list.slice(0, 50)));
 
-  async function handleTTSResponse(res) {
-    const ct = res.headers.get('content-type') || '';
-    if (ct.includes('audio/')) {
-      const blob = await res.blob();
-      attachAudioFromBlob(blob);
-      return;
+  const ageToControls = (age) => {
+    switch (age) {
+      case '1-2':  return { minWords: 50,  maxWords: 160,  tone:'bilderbok, rim, färger, ljud och upprepningar', chapters:1 };
+      case '3-4':  return { minWords: 120, maxWords: 280,  tone:'enkel handling med tydlig början och slut; humor och igenkänning', chapters:1 };
+      case '5-6':  return { minWords: 250, maxWords: 450,  tone:'lite mer komplexa berättelser med problem som löses; korta kapitel', chapters:1 };
+      case '7-8':  return { minWords: 400, maxWords: 700,  tone:'äventyr och mysterier, humor; introducera serier och cliffhangers', chapters:2 };
+      case '9-10': return { minWords: 600, maxWords: 1000, tone:'fantasy/vänskap/moralfrågor; kapitelberättelse, 2–3 sidor', chapters:2 };
+      case '11-12':return { minWords: 900, maxWords: 1600, tone:'djupare teman och karaktärsutveckling; kapitel', chapters:3 };
+      default:     return { minWords: 250, maxWords: 500,  tone:'barnvänlig', chapters:1 };
     }
-    const data = await res.json().catch(()=> ({}));
-    if (data && data.audioBase64) {
-      const bin = atob(data.audioBase64);
-      const buf = new Uint8Array(bin.length);
-      for (let i=0;i<bin.length;i++) buf[i]=bin.charCodeAt(i);
-      attachAudioFromBlob(new Blob([buf], { type:'audio/mpeg' }));
-      return;
-    }
-    throw new Error(data?.error || 'TTS gav inget ljud.');
-  }
-
-  // ===== Generate story with read-aloud =====
-  btnGen.addEventListener('click', async () => {
-    if (busy) return;
-
-    const payload = {
-      childName: (childName.value||'').trim(),
-      heroName : (heroName.value||'').trim(),
-      ageRange : (ageRange.value||'').trim(),
-      prompt   : (promptEl.value||'').trim(),
-      controls : ageToControls(ageRange.value),
-      read_aloud: true
+  };
+  const buildStoryPayload = () => {
+    const age = ageRange.value;
+    return {
+      childName: (childName.value || '').trim(),
+      heroName:  (heroName.value || '').trim(),
+      ageRange:  age,
+      prompt:    (prompt.value || '').trim(),
+      controls:  ageToControls(age)
     };
-    if (!payload.prompt && !useWhisper.checked) {
-      setStatus('Skriv något i sagognistan eller använd Tala in.', 'error');
+  };
+
+  // === Generate (story + TTS + images) ===
+  btnGenerate?.addEventListener('click', async () => {
+    if (isBusy) return;
+    const payload = buildStoryPayload();
+    if (!payload.prompt && !useWhisper?.checked) {
+      setStatus('Skriv något i sagognistan eller tala in.', 'error');
       return;
     }
 
-    setBusy(true, 'Skapar sagan…');
-    textOut.textContent = '';
-    audioOut.hidden = true;
-    audioOut.removeAttribute('src');
+    resultText.textContent = '';
+    resultAudio.hidden = true;
+    resultAudio.removeAttribute('src');
+    cacheWrap.hidden = true;
+    showSpinner(false);
+    if (storyImagesWrap) storyImagesWrap.innerHTML = '';
 
     try {
-      const storyRes = await postJSON('/api/generate_story', payload);
-      if (storyRes.status === 405) {
-        // fallback om funktionen ligger på /generate_story
-        const storyRes2 = await postJSON('/generate_story', payload);
-        if (!storyRes2.ok) throw new Error('Servern accepterar inte POST på generate_story.');
-        const j2 = await storyRes2.json();
-        if (!j2?.ok) throw new Error(j2?.error || 'Okänt fel från generate_story.');
-        textOut.textContent = j2.story || '';
-      } else {
-        const j = await storyRes.json().catch(()=> ({}));
-        if (!storyRes.ok || !j?.ok) throw new Error(j?.error || `Serverfel: ${storyRes.status}`);
-        textOut.textContent = j.story || '';
-      }
+      setBusy(true, 'Skapar saga…');
 
-      setBusy(true, 'Skapar uppläsning…');
-      // prova /api/tts först, fallback /tts
-      let tts = await fetch('/api/tts', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ text: textOut.textContent }) });
-      if (tts.status === 404 || tts.status === 405) {
-        tts = await fetch('/tts', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ text: textOut.textContent }) });
-      }
-      if (!tts.ok) {
-        const t = await tts.text().catch(()=> '');
-        throw new Error(`TTS misslyckades: ${tts.status} ${t}`);
-      }
-      await handleTTSResponse(tts);
+      // 1) Story
+      const resStory = await fetch('/api/generate_story', {
+        method: 'POST',
+        headers: { 'Content-Type':'application/json' },
+        body: JSON.stringify({ ...payload, read_aloud:true })
+      });
+      if (!resStory.ok) throw new Error(`Story: ${resStory.status} ${await resStory.text().catch(()=> '')}`);
+      const data = await resStory.json();
+      if (data.story) resultText.textContent = data.story;
 
-      setStatus('Klar!', 'ok');
+      // 2) TTS
+      setStatus('Skapar uppläsning…');
+      showSpinner(true);
+      const resTTS = await fetch('/tts', {
+        method: 'POST',
+        headers: { 'Content-Type':'application/json' },
+        body: JSON.stringify({ text: data.story, voiceId: '' })
+      });
+      if (!resTTS.ok) throw new Error(`TTS: ${resTTS.status} ${await resTTS.text().catch(()=> '')}`);
+
+      const hits  = parseInt(resTTS.headers.get('x-tts-hits')  || '0', 10);
+      const total = parseInt(resTTS.headers.get('x-tts-total') || '0', 10);
+      if (!Number.isNaN(total)) updateCacheMeter(hits, total);
+
+      const blob = await resTTS.blob();
+      const url = URL.createObjectURL(blob);
+      resultAudio.src = url;
+      resultAudio.hidden = false;
+
+      // 3) Bilder
+      try {
+        const imgRes = await fetch('/api/images', {
+          method: 'POST',
+          headers: { 'Content-Type':'application/json' },
+          body: JSON.stringify({ storyText: data.story, ageRange: payload.ageRange, count: 3 })
+        });
+        if (imgRes.ok) {
+          const j = await imgRes.json();
+          if (j?.images) renderStoryImages(j.images);
+        }
+      } catch {}
+
+      showSpinner(false);
+      setBusy(false, 'Klar!', 'ok');
+      resultAudio.play().catch(()=>{});
     } catch (err) {
-      setStatus(String(err?.message || err), 'error');
-    } finally {
-      setBusy(false);
+      showSpinner(false);
+      setBusy(false, '');
+      setStatus('Kunde inte skapa sagan: ' + (err?.message || err), 'error');
     }
   });
 
-  // ===== Record -> Whisper =====
-  let rec, chunks=[];
-  function hasRecording() { return typeof MediaRecorder !== 'undefined'; }
-
-  btnSpeak.addEventListener('click', async () => {
-    if (busy) return;
-
-    if (!hasRecording()) {
-      setStatus('Din webbläsare stödjer inte inspelning. Testa Chrome/Edge/Firefox på mobil eller desktop.', 'error');
-      return;
-    }
-
-    try {
-      if (!rec || rec.state === 'inactive') {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
-        chunks = [];
-        rec = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-        rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
-        rec.onstop = async () => {
-          try {
-            setBusy(true, 'Skickar ljud till Whisper…');
-            const blob = new Blob(chunks, { type:'audio/webm' });
-            // multipart
-            const fd = new FormData();
-            fd.append('file', blob, 'speech.webm');
-
-            let r = await fetch('/api/whisper_transcribe', { method:'POST', body: fd });
-            if (r.status === 404 || r.status === 405) {
-              r = await fetch('/whisper_transcribe', { method:'POST', body: fd });
-            }
-            if (!r.ok) {
-              const t = await r.text().catch(()=> '');
-              throw new Error(`Whisper fel: ${r.status} ${t}`);
-            }
-            const j = await r.json();
-            promptEl.value = (j?.text || '').trim();
-            setStatus('Talet transkriberat.', 'ok');
-          } catch (e) {
-            setStatus(e?.message || String(e), 'error');
-          } finally {
-            setBusy(false);
-          }
-        };
-        rec.start();
-        btnSpeak.classList.add('is-recording');
-        setStatus('Spelar in… tryck igen för att stoppa.');
-      } else {
-        rec.stop();
-        btnSpeak.classList.remove('is-recording');
-      }
-    } catch (e) {
-      setStatus('Mikrofonfel: ' + (e?.message || e), 'error');
-    }
-  });
-
-  // ===== Save/Reset heroes =====
-  btnSave.addEventListener('click', () => {
-    const h = (heroName.value||'').trim();
-    if (!h) { setStatus('Skriv ett hjältenamn först.', 'error'); return; }
+  // Hjältar
+  btnSaveHero?.addEventListener('click', () => {
+    const h = (heroName.value || '').trim();
+    if (!h){ setStatus('Skriv ett hjältenamn först.', 'error'); return; }
     const list = loadHeroes();
     if (!list.includes(h)) list.unshift(h);
     saveHeroes(list);
-    setStatus(`Sparade hjälten ${h}.`, 'ok');
+    setStatus(`Sparade hjälten: ${h}`, 'ok');
+  });
+  btnResetHeroes?.addEventListener('click', () => {
+    saveHeroes([]);
+    setStatus('Rensade sparade hjältar.', 'ok');
   });
 
-  btnReset.addEventListener('click', () => {
-    saveHeroes([]); setStatus('Rensade sparade hjältar.', 'ok');
-  });
-
-  // init
   setStatus('');
 })();
