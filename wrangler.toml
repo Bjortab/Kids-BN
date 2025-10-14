@@ -1,50 +1,31 @@
-# wrangler.toml — Kids-BN (Golden Copy)
-# OBS: spara filen på repo-roten som `wrangler.toml`
-
-name = "kids-bn"                # måste vara gemener (små bokstäver)
+name = "kids-bn"
 compatibility_date = "2024-10-06"
-
-# Säg till Pages var dina statiska filer ligger
 pages_build_output_dir = "public"
 
-# --------  Globala (icke-hemliga) variabler  --------
 [vars]
-# App-miljö
+APP = "kids"
 BN_ENV = "production"
-
-# Vart sidan kör i prod (används för CORS m.m.)
 BN_ALLOWED_ORIGIN = "https://kids-bn.pages.dev"
-
-# Supabase (endast URL är ofarlig att visa)
-SUPABASE_URL = "https://igwguyjpnzwqlkmdabxw.supabase.co"
-
-# OpenAI-modeller (ofarliga)
 OPENAI_IMAGE_MODEL = "gpt-image-1"
-WHISPER_MODEL     = "whisper-1"
-
-# ElevenLabs – röst-ID är ok att ligga här (bytt ut mot din egen)
-ELEVENLABS_VOICE_ID = "aSLKtNoVBZlxQEMsnGL2"
-
-# Printful (exempel, ofarlig)
+WHISPER_MODEL      = "whisper-1"
+ELEVENLABS_VOICE_ID = "stUxxV0ZVE9Lpe9mGLz7"
 MERCH_API_URL = "https://api.printful.com"
 
-# --------  Preview-miljö (frivilligt)  --------
 [env.preview.vars]
 BN_ENV = "preview"
 BN_ALLOWED_ORIGIN = "https://*.pages.dev"
-# === R2 Bucket för cache av ljud ===
+
+[[d1_databases]]
+binding = "BN_DB"
+database_name = "bn_db"
+database_id = "REPLACE_WITH_YOUR_D1_ID"
+
 [[r2_buckets]]
 binding = "BN_AUDIOS"
 bucket_name = "bn-audio"
 preview_bucket_name = "bn-audio"
 
-# === D1 Databas (framtida loggar / statistik) ===
-[[d1_databases]]
-binding = "BN_DB"
-database_name = "bn_db"
-database_id = "567ad325-9fd0-4311-8c7e-53ce03b2b9ac"  # <-- byt till ditt riktiga ID från D1-sidan
-# --- R2: BILDER (för sagans illustrationer och animationer) ---
 [[r2_buckets]]
-binding             = "BN_IMAGES"       # <- det här namnet används i koden
-bucket_name         = "bn-images"       # ditt R2-bucketnamn
-preview_bucket_name = "bn-images"       # samma för testmiljön (preview)
+binding = "BN_IMAGES"
+bucket_name = "bn-images"
+preview_bucket_name = "bn-images"
