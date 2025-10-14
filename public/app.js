@@ -64,7 +64,7 @@
 
   const ageToControls = (age) => {
     switch (age) {
-      case '1-2':  return { minWords: 50,  maxWords: 160,  tone:'bilderbok, rim, färger, ljud och upprepningar', chapters:1 };
+      case '1-2':  return { minWords: 20,  maxWords: 80,  tone:'bilderbok, pekbok, bondgård, maskiner, färger', chapters:1 };
       case '3-4':  return { minWords: 120, maxWords: 280,  tone:'enkel handling med tydlig början och slut; humor och igenkänning', chapters:1 };
       case '5-6':  return { minWords: 250, maxWords: 450,  tone:'lite mer komplexa berättelser med problem som löses; korta kapitel', chapters:1 };
       case '7-8':  return { minWords: 400, maxWords: 700,  tone:'äventyr och mysterier, humor; introducera serier och cliffhangers', chapters:2 };
