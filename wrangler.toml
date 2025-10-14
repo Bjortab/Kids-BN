@@ -43,3 +43,8 @@ preview_bucket_name = "bn-audio"
 binding = "BN_DB"
 database_name = "bn_db"
 database_id = "567ad325-9fd0-4311-8c7e-53ce03b2b9ac"  # <-- byt till ditt riktiga ID från D1-sidan
+# --- R2: BILDER (för sagans illustrationer och animationer) ---
+[[r2_buckets]]
+binding             = "BN_IMAGES"       # <- det här namnet används i koden
+bucket_name         = "bn-images"       # ditt R2-bucketnamn
+preview_bucket_name = "bn-images"       # samma för testmiljön (preview)
