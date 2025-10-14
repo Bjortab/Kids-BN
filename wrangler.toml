@@ -18,7 +18,7 @@ BN_ALLOWED_ORIGIN = "https://*.pages.dev"
 [[d1_databases]]
 binding = "BN_DB"
 database_name = "bn_db"
-database_id = "REPLACE_WITH_YOUR_D1_ID"
+database_id = "567ad325-9fd0-4311-8c7e-53ce03b2b9ac"
 
 [[r2_buckets]]
 binding = "BN_AUDIOS"
