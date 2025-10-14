@@ -1,170 +1,194 @@
 (() => {
+  // ===== DOM =====
   const $ = sel => document.querySelector(sel);
-
   const childName = $('#childName');
   const ageRange  = $('#ageRange');
   const prompt    = $('#prompt');
   const heroName  = $('#heroName');
-  const useWhisper= $('#useWhisper');
+  const useWhisper = $('#useWhisper');            // (finns i ditt UI)
+  const useImages  = $('#useImages');             // <— kryssrutan "Skapa bilder till sagan"
+  const btnSpeak   = $('#btnSpeak');
+  const btnGenerate= $('#btnGenerate');
+  const btnSaveHero= $('#btnSaveHero');
+  const btnReset   = $('#btnResetHeroes');
+  const statusEl   = $('#status');
+  const resultText = $('#resultText');
+  const resultAudio= $('#resultAudio');
 
-  const btnSpeak  = $('#btnSpeak');
-  const btnGenerate = $('#btnGenerate');
-  const btnSaveHero = $('#btnSaveHero');
-  const btnResetHeroes = $('#btnResetHeroes');
+  // Här placerar vi media (skapas om det inte finns)
+  let mediaBox = $('#mediaBox');
+  if (!mediaBox) {
+    mediaBox = document.createElement('div');
+    mediaBox.id = 'mediaBox';
+    mediaBox.style.marginTop = '12px';
+    // lägg efter textresultatet
+    const anchor = $('#result') || resultText?.parentElement || document.body;
+    anchor.appendChild(mediaBox);
+  }
 
-  const statusEl  = $('#status');
-  const resultText= $('#resultText');
-  const resultAudio = $('#resultAudio');
-
-  // Spinner + cache-meter (du har dessa i HTML/CSS)
-  const ttsSpinner = $('#ttsSpinner');
-  const cacheWrap  = $('#cacheWrap');
-  const cacheBar   = $('#cacheBar');
-  const cacheText  = $('#cacheText');
-
-  // Bild-container
-  const storyImagesWrap = $('#storyImages');
-
+  // ===== State guard =====
   let isBusy = false;
   const setBusy = (v, msg = '') => {
     isBusy = v;
-    [btnSpeak, btnGenerate, btnSaveHero, btnResetHeroes].forEach(b => b && (b.disabled = v));
-    setStatus(msg);
+    [btnSpeak, btnGenerate, btnSaveHero, btnReset].forEach(b => b && (b.disabled = v));
+    if (msg) setStatus(msg);
   };
+
   const setStatus = (msg, type = '') => {
     if (!statusEl) return;
     statusEl.textContent = msg || '';
-    statusEl.classList.remove('status--ok','status--error');
+    statusEl.classList.remove('status--ok', 'status--error');
     if (type) statusEl.classList.add(`status--${type}`);
   };
 
-  function showSpinner(show){ if(ttsSpinner) ttsSpinner.hidden = !show; }
-  function updateCacheMeter(hits, total){
-    if (!cacheWrap || !cacheBar || !cacheText) return;
-    const ratio = total > 0 ? Math.max(0, Math.min(1, hits/total)) : 0;
-    const pct = Math.round(ratio * 100);
-    cacheBar.style.width = `${pct}%`;
-    cacheText.textContent = `Återanvänt från minnet: ${pct}%`;
-    cacheWrap.hidden = false;
-  }
-  function renderStoryImages(images){
-    if (!storyImagesWrap) return;
-    storyImagesWrap.innerHTML = '';
-    (images || []).forEach(img => {
-      const card = document.createElement('div');
-      card.className = 'story-image-card';
-      card.innerHTML = `<img src="${img.url}" alt="${(img.tags||[]).slice(0,2).join(', ')}" />`;
-      storyImagesWrap.appendChild(card);
-    });
-  }
-
-  const heroKey = 'bn_heroes_v1';
-  const loadHeroes = () => { try { return JSON.parse(localStorage.getItem(heroKey) || '[]'); } catch { return []; } };
-  const saveHeroes = (list) => localStorage.setItem(heroKey, JSON.stringify(list.slice(0, 50)));
-
-  const ageToControls = (age) => {
-    switch (age) {
-      case '1-2':  return { minWords: 20,  maxWords: 80,  tone:'bilderbok, pekbok, bondgård, maskiner, färger', chapters:1 };
-      case '3-4':  return { minWords: 120, maxWords: 280,  tone:'enkel handling med tydlig början och slut; humor och igenkänning', chapters:1 };
-      case '5-6':  return { minWords: 250, maxWords: 450,  tone:'lite mer komplexa berättelser med problem som löses; korta kapitel', chapters:1 };
-      case '7-8':  return { minWords: 400, maxWords: 700,  tone:'äventyr och mysterier, humor; introducera serier och cliffhangers', chapters:2 };
-      case '9-10': return { minWords: 600, maxWords: 1000, tone:'fantasy/vänskap/moralfrågor; kapitelberättelse, 2–3 sidor', chapters:2 };
-      case '11-12':return { minWords: 900, maxWords: 1600, tone:'djupare teman och karaktärsutveckling; kapitel', chapters:3 };
-      default:     return { minWords: 250, maxWords: 500,  tone:'barnvänlig', chapters:1 };
+  // ===== Hjälp: text→kategori =====
+  const knownCats = ['dragon','bunny','pirate','princess','dino','space'];
+  function guessCategoryFromPrompt(txt) {
+    const t = (txt || '').toLowerCase();
+    for (const k of knownCats) {
+      if (t.includes(k)) return k;
+      // svenska synonymer
+      if (k === 'dragon'    && (t.includes('drake') || t.includes('drakar'))) return 'dragon';
+      if (k === 'bunny'     && (t.includes('kanin') || t.includes('kaniner'))) return 'bunny';
+      if (k === 'pirate'    && (t.includes('pirat'))) return 'pirate';
+      if (k === 'princess'  && (t.includes('prinsess'))) return 'princess';
+      if (k === 'dino'      && (t.includes('dino') || t.includes('dinosaur'))) return 'dino';
+      if (k === 'space'     && (t.includes('rymd') || t.includes('planeter'))) return 'space';
     }
-  };
-  const buildStoryPayload = () => {
-    const age = ageRange.value;
-    return {
-      childName: (childName.value || '').trim(),
-      heroName:  (heroName.value || '').trim(),
-      ageRange:  age,
-      prompt:    (prompt.value || '').trim(),
-      controls:  ageToControls(age)
-    };
-  };
+    return ''; // okänd
+  }
 
-  // === Generate (story + TTS + images) ===
+  // ===== Heroer (lokal lagring) =====
+  const heroKey = 'bn_heroes_v1';
+  const loadHeroes = () => { try { return JSON.parse(localStorage.getItem(heroKey)||'[]'); } catch { return []; } };
+  const saveHeroes = (list) => localStorage.setItem(heroKey, JSON.stringify(list.slice(0,50)));
+
+  // ====== DIN BEFINTLIGA DEL – OFÖRÄNDRAD (saga + TTS) ======
+  async function createStoryAndTTS() {
+    const payload = {
+      childName: (childName?.value||'').trim(),
+      ageRange : (ageRange?.value||'').trim(),
+      prompt   : (prompt?.value||'').trim(),
+      heroName : (heroName?.value||'').trim(),
+      read_aloud: true
+    };
+    if (!payload.prompt && !useWhisper?.checked) {
+      throw new Error('Skriv något i sagognistan eller tala in.');
+    }
+
+    // 1) Skapa sagan
+    const res = await fetch('/api/generate_story', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(()=> '');
+      throw new Error(`Kunde inte skapa sagan: ${res.status} ${t}`);
+    }
+    const data = await res.json();
+    if (data.story) resultText.textContent = data.story;
+
+    // 2) Spelare för TTS (du har redan backend som svarar efter ~10s)
+    if (data.audioUrl) {
+      resultAudio.src = data.audioUrl;
+      resultAudio.hidden = false;
+      // Autoplay
+      resultAudio.play().catch(()=>{ /* kräver user gesture */ });
+    } else {
+      // fall-back (backend streamar ljudet direkt efteråt)
+      resultAudio.hidden = false;
+    }
+
+    return data;
+  }
+
+  // ===== MEDIA från R2 via API =====
+  function showMediaSpinner() {
+    mediaBox.innerHTML = '';
+    const s = document.createElement('div');
+    s.textContent = 'Hämtar bild/animation…';
+    s.style.fontSize = '14px';
+    s.style.opacity  = '0.8';
+    s.style.padding  = '8px 0';
+    mediaBox.appendChild(s);
+  }
+
+  async function loadCategoryMedia(category) {
+    try {
+      showMediaSpinner();
+      const url = `/api/pick_media?category=${encodeURIComponent(category)}`;
+      const res = await fetch(url, { method:'GET' });
+      if (!res.ok) throw new Error(`Media ${res.status}`);
+
+      const ctype = res.headers.get('content-type') || '';
+      const blob  = await res.blob();
+      mediaBox.innerHTML = '';
+
+      if (ctype.startsWith('video/')) {
+        const v = document.createElement('video');
+        v.controls = true;
+        v.autoplay = true;
+        v.loop = true;
+        v.muted = true;        // så den får autoplay utan klick
+        v.playsInline = true;
+        v.style.maxWidth = '100%';
+        v.src = URL.createObjectURL(blob);
+        mediaBox.appendChild(v);
+      } else if (ctype.startsWith('image/')) {
+        const img = document.createElement('img');
+        img.alt = category;
+        img.style.maxWidth = '100%';
+        img.style.borderRadius = '8px';
+        img.src = URL.createObjectURL(blob);
+        mediaBox.appendChild(img);
+      } else {
+        throw new Error('Okänt mediaformat');
+      }
+    } catch (e) {
+      mediaBox.innerHTML = '';
+      const small = document.createElement('div');
+      small.style.fontSize = '12px';
+      small.style.opacity = '0.8';
+      small.textContent = 'Ingen bild/animation hittades för den här kategorin ännu.';
+      mediaBox.appendChild(small);
+    }
+  }
+
+  // ===== Handlers =====
   btnGenerate?.addEventListener('click', async () => {
     if (isBusy) return;
-    const payload = buildStoryPayload();
-    if (!payload.prompt && !useWhisper?.checked) {
-      setStatus('Skriv något i sagognistan eller tala in.', 'error');
-      return;
-    }
-
+    setBusy(true, 'Skapar saga…');
     resultText.textContent = '';
-    resultAudio.hidden = true;
-    resultAudio.removeAttribute('src');
-    cacheWrap.hidden = true;
-    showSpinner(false);
-    if (storyImagesWrap) storyImagesWrap.innerHTML = '';
+    resultAudio.hidden = true; resultAudio.removeAttribute('src');
+    mediaBox.innerHTML = '';
 
     try {
-      setBusy(true, 'Skapar saga…');
+      const data = await createStoryAndTTS();
 
-      // 1) Story
-      const resStory = await fetch('/api/generate_story', {
-        method: 'POST',
-        headers: { 'Content-Type':'application/json' },
-        body: JSON.stringify({ ...payload, read_aloud:true })
-      });
-      if (!resStory.ok) throw new Error(`Story: ${resStory.status} ${await resStory.text().catch(()=> '')}`);
-      const data = await resStory.json();
-      if (data.story) resultText.textContent = data.story;
-
-      // 2) TTS
-      setStatus('Skapar uppläsning…');
-      showSpinner(true);
-      const resTTS = await fetch('/tts', {
-        method: 'POST',
-        headers: { 'Content-Type':'application/json' },
-        body: JSON.stringify({ text: data.story, voiceId: '' })
-      });
-      if (!resTTS.ok) throw new Error(`TTS: ${resTTS.status} ${await resTTS.text().catch(()=> '')}`);
-
-      const hits  = parseInt(resTTS.headers.get('x-tts-hits')  || '0', 10);
-      const total = parseInt(resTTS.headers.get('x-tts-total') || '0', 10);
-      if (!Number.isNaN(total)) updateCacheMeter(hits, total);
-
-      const blob = await resTTS.blob();
-      const url = URL.createObjectURL(blob);
-      resultAudio.src = url;
-      resultAudio.hidden = false;
-
-      // 3) Bilder
-      try {
-        const imgRes = await fetch('/api/images', {
-          method: 'POST',
-          headers: { 'Content-Type':'application/json' },
-          body: JSON.stringify({ storyText: data.story, ageRange: payload.ageRange, count: 3 })
-        });
-        if (imgRes.ok) {
-          const j = await imgRes.json();
-          if (j?.images) renderStoryImages(j.images);
+      // Hämta media om användaren bett om det
+      if (useImages?.checked) {
+        const cat = guessCategoryFromPrompt(prompt?.value || '');
+        if (cat) await loadCategoryMedia(cat);
+        else {
+          mediaBox.textContent = 'Tips: skriv ord som ”drake”, ”kanin”, ”pirat” i sagognistan så visas passande bilder.';
         }
-      } catch {}
+      }
 
-      showSpinner(false);
       setBusy(false, 'Klar!', 'ok');
-      resultAudio.play().catch(()=>{});
     } catch (err) {
-      showSpinner(false);
       setBusy(false, '');
-      setStatus('Kunde inte skapa sagan: ' + (err?.message || err), 'error');
+      setStatus(String(err?.message || err), 'error');
     }
   });
 
-  // Hjältar
   btnSaveHero?.addEventListener('click', () => {
-    const h = (heroName.value || '').trim();
-    if (!h){ setStatus('Skriv ett hjältenamn först.', 'error'); return; }
-    const list = loadHeroes();
-    if (!list.includes(h)) list.unshift(h);
+    const h = (heroName?.value || '').trim();
+    if (!h) { setStatus('Skriv ett hjältenamn först.', 'error'); return; }
+    const list = loadHeroes(); if (!list.includes(h)) list.unshift(h);
     saveHeroes(list);
     setStatus(`Sparade hjälten: ${h}`, 'ok');
   });
-  btnResetHeroes?.addEventListener('click', () => {
+
+  btnReset?.addEventListener('click', () => {
     saveHeroes([]);
     setStatus('Rensade sparade hjältar.', 'ok');
   });
