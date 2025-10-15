@@ -40,7 +40,7 @@ export async function onRequestPost(ctx) {
     });
 
     // === ANTHROPIC CALL ===
-    const model = env.MODEL_CLAUDE || "claude-3-5-sonnet-20240620";
+    const model = env.MODEL_CLAUDE || "claude-3-sonnet-20240229";
     const apiKey = env.ANTHROPIC_API_KEY;
     if (!apiKey) {
       return json({ ok:false, error:"Saknar ANTHROPIC_API_KEY (Secret) i Pages → Settings → Environment variables" }, 500, headers);
