@@ -1,10 +1,11 @@
+name = "kids-bn"
 compatibility_date = "2024-10-04"
-pages_build_output_dir = "."     # <- gör att Pages accepterar wrangler.toml
+pages_build_output_dir = "."
 
 [[d1_databases]]
 binding = "BN_DB"
 database_name = "bn-db"
-database_id = "ACTUAL-D1-ID"
+database_id = "PASTE-YOUR-D1-DATABASE-ID-HERE"
 
 [[r2_buckets]]
 binding = "bn-audio"
@@ -13,5 +14,3 @@ bucket_name = "bn-audio"
 [[r2_buckets]]
 binding = "bn-images"
 bucket_name = "bn-images"
-
-migrations_dir = "migrations"
