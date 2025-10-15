@@ -1,18 +1,95 @@
-// functions/api/generate_story.js  — Golden Copy (Claude 3.5 Sonnet)
+// ============================================================================
+// BN KIDS – AUTOMATISK CLAUDE-MODELLHANTERING + SAGOGENERERING
+// ============================================================================
 
-const CORS = (origin) => ({
-  "Access-Control-Allow-Origin": origin || "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization",
-});
+// === Claude model resolver (auto-pick latest) ===============================
 
-export async function onRequestOptions(ctx) {
-  return new Response(null, { status: 204, headers: CORS(ctx.env?.BN_ALLOWED_ORIGIN) });
+const CLAUDE_DEFAULT_FALLBACK = "claude-3-5-sonnet-20240620"; // trygg reserv
+const CLAUDE_PREFER_BASENAMES = [
+  "claude-3-5-sonnet",
+  "claude-3-sonnet",
+  "claude-3-haiku"
+];
+
+// Enkel minnes-cache i Workern (överlever varma instanser)
+const MODEL_CACHE_KEY = "__BN__CLAUDE_MODEL_CACHE__";
+function getModelCache() {
+  if (!globalThis[MODEL_CACHE_KEY]) {
+    globalThis[MODEL_CACHE_KEY] = { model: null, expiresAt: 0 };
+  }
+  return globalThis[MODEL_CACHE_KEY];
 }
 
-export async function onRequestPost(ctx) {
-  const { request, env } = ctx;
-  const headers = CORS(env?.BN_ALLOWED_ORIGIN);
+// Plocka ut YYYYMMDD från modell-id (t.ex. "claude-3-5-sonnet-20240620")
+function extractDateSuffix(id) {
+  const m = id.match(/-(\d{8})$/);
+  return m ? m[1] : null;
+}
+
+// Hämta listan av modeller och välj senaste för given bas (ex: "claude-3-5-sonnet")
+async function resolveLatestClaudeModel(apiKey, baseNames = CLAUDE_PREFER_BASENAMES) {
+  const cache = getModelCache();
+  const now = Date.now();
+  if (cache.model && cache.expiresAt > now) {
+    return cache.model;
+  }
+
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/models", {
+      method: "GET",
+      headers: {
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01"
+      }
+    });
+
+    if (!res.ok) {
+      throw new Error("Model list request failed");
+    }
+
+    const payload = await res.json();
+    const all = Array.isArray(payload?.data) ? payload.data : [];
+
+    for (const base of baseNames) {
+      const candidates = all
+        .map(x => x?.id)
+        .filter(id => typeof id === "string" && id.startsWith(base + "-"))
+        .map(id => ({ id, date: extractDateSuffix(id) }))
+        .filter(x => x.date);
+
+      if (candidates.length) {
+        candidates.sort((a, b) => b.date.localeCompare(a.date));
+        const winner = candidates[0].id;
+        cache.model = winner;
+        cache.expiresAt = now + 10 * 60 * 1000;
+        return winner;
+      }
+    }
+
+    const anySonnet = all.map(x => x?.id).find(id => /^claude-3-5-sonnet-\d{8}$/.test(id || ""));
+    if (anySonnet) {
+      cache.model = anySonnet;
+      cache.expiresAt = now + 10 * 60 * 1000;
+      return anySonnet;
+    }
+
+    throw new Error("No suitable model found");
+  } catch (err) {
+    const fallback = CLAUDE_DEFAULT_FALLBACK;
+    const cache = getModelCache();
+    cache.model = fallback;
+    cache.expiresAt = now + 3 * 60 * 1000;
+    return fallback;
+  }
+}
+
+// ============================================================================
+// === SAGOGENERERING =========================================================
+// ============================================================================
+
+export async function onRequestPost(context) {
+  const { request, env } = context;
+  const headers = { "content-type": "application/json" };
 
   try {
     const body = await request.json();
@@ -22,170 +99,87 @@ export async function onRequestPost(ctx) {
       ageRange = "",
       prompt = "",
       controls = {},
-      read_aloud = true,
-      lang = env.LANG_DEFAULT || "sv"  // "sv" eller "en"
+      read_aloud = true
     } = body || {};
 
-    const { minWords = 250, maxWords = 500, tone = "barnvänlig", chapters = 1 } = controls || {};
+    const lang = env.LANG_DEFAULT || "sv";
 
-    // Bygg “säkert läge” per ålder (enkelt & tryggt)
+    // Bygg "säkert läge" per ålder
     const guard = buildGuard(ageRange, lang);
-
-    // Systeminstruktion: *hur* modellen ska skriva
     const system = buildSystemPrompt(lang);
+    const user = buildUserPrompt(lang, childName, heroName, ageRange, prompt, controls, guard);
 
-    // Userprompt: *vad* som ska skrivas (med tydliga ramar)
-    const user = buildUserPrompt({
-      lang, childName, heroName, ageRange, prompt, minWords, maxWords, tone, chapters, guard
-    });
-
-    // === ANTHROPIC CALL ===
-    const model = env.MODEL_CLAUDE || "claude-3-5-sonnet-20240620";
-    const apiKey = env.ANTHROPIC_API_KEY;
-    if (!apiKey) {
-      return json({ ok:false, error:"Saknar ANTHROPIC_API_KEY (Secret) i Pages → Settings → Environment variables" }, 500, headers);
+    // === Välj modell ===
+    const apikey = env.ANTHROPIC_API_KEY;
+    const cfg = (env.MODEL_CLAUDE || "auto").trim();
+    if (!apikey) {
+      return new Response(JSON.stringify({ ok: false, error: "Saknar ANTHROPIC_API_KEY" }), { status: 500, headers });
     }
 
+    let model;
+    if (cfg === "auto") {
+      model = await resolveLatestClaudeModel(apikey);
+    } else if (/^\w.+-\d{8}$/.test(cfg)) {
+      model = cfg;
+    } else {
+      model = await resolveLatestClaudeModel(apikey, [cfg, ...CLAUDE_PREFER_BASENAMES]);
+    }
+
+    // === ANTHROPIC CALL ===
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-api-key": apiKey,
+        "x-api-key": apikey,
         "anthropic-version": "2023-06-01"
       },
       body: JSON.stringify({
         model,
-        max_tokens: Math.max(800, Math.min(2200, Math.round(maxWords * 2.3))), // rejält utrymme
+        max_tokens: 800,
         temperature: 0.7,
         system,
-        messages: [
-          { role: "user", content: user }
-        ]
+        messages: [{ role: "user", content: user }]
       })
     });
 
     if (!res.ok) {
-      const t = await res.text().catch(()=> "");
-      return json({ ok:false, error:`Claude ${res.status}: ${t}` }, 502, headers);
+      const err = await res.text();
+      return new Response(JSON.stringify({ ok: false, error: err }), { status: 502, headers });
     }
 
     const data = await res.json();
-    const raw = (data?.content?.[0]?.text || "").trim();
+    const storyText = data?.content?.[0]?.text || "Ingen text genererades.";
 
-    // Postprocess: städa, håll inom längdkorridor
-    const story = finalizeStory(raw, { minWords, maxWords, lang });
-
-    return json({ ok:true, story, read_aloud }, 200, headers);
+    // Returnera sagan
+    return new Response(JSON.stringify({ ok: true, story: storyText, model }), {
+      status: 200,
+      headers
+    });
 
   } catch (err) {
-    return json({ ok:false, error: String(err?.message || err) }, 500, headers);
+    return new Response(JSON.stringify({ ok: false, error: err.message }), { status: 500, headers });
   }
 }
 
-/* -------- Helpers -------- */
+// ============================================================================
+// === Hjälpfunktioner (enkla placeholders, håll dina egna versioner) ==========
+// ============================================================================
 
-function json(data, status = 200, headers = {}) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { "Content-Type":"application/json; charset=utf-8", ...headers }
-  });
+function buildGuard(ageRange, lang) {
+  return {
+    ageRange,
+    lang,
+    tone: "barnvänlig"
+  };
 }
 
 function buildSystemPrompt(lang) {
-  if (lang === "en") {
-    return [
-      "You are a Swedish children's storyteller switched to ENGLISH MODE.",
-      "Write warm, imaginative, **age-appropriate** stories.",
-      "Prefer simple, musical sentences; avoid awkward calques.",
-      "No violence, horror, bullying, or adult themes.",
-      "Keep continuity, names, and settings consistent.",
-      "End cleanly without prompts or meta text."
-    ].join(" ");
-  }
-  // Swedish
-  return [
-    "Du är en barnboksberättare på **svenska**.",
-    "Skriv varmt, enkelt och musikaliskt – som en riktigt bra bilderbokstext.",
-    "Undvik \"översättningskänsla\"; skriv idiomatisk svenska.",
-    "Inga skräckinslag, våld, mobbning eller vuxna teman.",
-    "Håll koll på namn och detaljer så allt hänger ihop.",
-    "Avsluta tydligt, utan meta-texter eller instruktioner."
-  ].join(" ");
+  return `Du är en sagoberättare som skriver magiska, vänliga sagor för barn på språket "${lang}".`;
 }
 
-function buildGuard(ageRange, lang){
-  const a = (ageRange || "").trim();
-  const isTiny = (a === "1-2" || a === "3-4");
-
-  if (lang === "en") {
-    return isTiny
-      ? "Use gentle onomatopoeia (whoosh, pling) and repetition. Avoid complex time shifts."
-      : "You may add small mysteries or gentle cliffhangers for older kids, but remain kind and safe.";
-  }
-  // Swedish
-  return isTiny
-    ? "Använd milda ljudord (vissel, pling), upprepningar och tydliga bilder. Undvik hopp i tid."
-    : "För äldre barn kan du lägga in små mysterier eller lätta cliffhangers, men håll allt tryggt och snällt.";
-}
-
-function buildUserPrompt({ lang, childName, heroName, ageRange, prompt, minWords, maxWords, tone, chapters, guard }) {
-  const nameLine = childName ? (lang === "en" ? `Child's name: ${childName}.` : `Barnets namn: ${childName}.`) : "";
-  const heroLine = heroName  ? (lang === "en" ? `Hero's name: ${heroName}.`   : `Hjältens namn: ${heroName}.`)     : "";
-
-  const base = (lang === "en")
-    ? [
-        `Write a children's bedtime story in ${lang.toUpperCase()} for ages ${ageRange}.`,
-        nameLine, heroLine,
-        `User theme: ${prompt || "(free imaginative theme)"}.`,
-        `Target length: ${minWords}–${maxWords} words. Chapters: ${chapters}.`,
-        `Tone and style: ${tone}.`,
-        guard,
-        "Use short, musical sentences. Show, don't lecture. Keep Swedish cultural equivalents if relevant.",
-        "Return **only** the story text. No titles like 'Story:' or 'Once upon a time:' labels.",
-        "END_OF_STORY when finished."
-      ]
-    : [
-        `Skriv en godnattsaga på **svenska** för ålder ${ageRange}.`,
-        nameLine, heroLine,
-        `Ämne: ${prompt || "(fri fantasi)"}.`,
-        `Mål-längd: ${minWords}–${maxWords} ord. Kapitel: ${chapters}.`,
-        `Ton & stil: ${tone}.`,
-        guard,
-        "Korta, musikaliska meningar. Visa istället för att berätta rakt ut.",
-        "Svara med **endast** sagotexten, inga rubriker eller meta-rader.",
-        "Avsluta med: END_OF_STORY"
-      ];
-
-  return base.filter(Boolean).join("\n");
-}
-
-function finalizeStory(raw, { minWords, maxWords, lang }) {
-  let text = raw.replace(/\s*END_OF_STORY\s*$/i, "").trim();
-
-  // Ta bort eventuella kodblock/markeringar
-  text = text.replace(/^```[a-z]*\n?/i, "").replace(/```$/i, "").trim();
-
-  // Liten längdkontroll
-  const words = text.split(/\s+/).filter(Boolean);
-  if (words.length > maxWords + 80) {
-    // trunkera vid närmaste meningsslut
-    const sentences = text.split(/([.!?…]+)\s+/);
-    let out = "";
-    let count = 0;
-    for (let i = 0; i < sentences.length; i += 2) {
-      const s = (sentences[i] || "") + (sentences[i+1] ? sentences[i+1] + " " : " ");
-      const sc = s.split(/\s+/).filter(Boolean).length;
-      if (count + sc > maxWords) break;
-      out += s;
-      count += sc;
-    }
-    text = out.trim();
-  }
-
-  // För småbarn – lägg in mjukare radbrytningar (läsbarhet)
-  if (lang !== "en") {
-    text = text.replace(/([.!?…])\s+/g, "$1\n");
-  }
-
-  return text.trim();
+function buildUserPrompt(lang, childName, heroName, ageRange, prompt, controls, guard) {
+  return `Skriv en kort saga på ${lang} för ett barn i åldern ${ageRange}. 
+Barnets namn: ${childName || "okänt"}.
+Hjälte: ${heroName || "en snäll figur"}.
+Berättelsen ska vara ${guard.tone} och handla om: ${prompt}.`;
 }
