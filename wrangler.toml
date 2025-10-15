@@ -29,3 +29,8 @@ preview_bucket_name = "bn-audio"
 binding = "BN_IMAGES"
 bucket_name = "bn-images"
 preview_bucket_name = "bn-images"
+[vars]
+# ...dina befintliga vars...
+MODEL_CLAUDE = "claude-3-5-sonnet-20240620"
+LANG_DEFAULT = "sv"   # kan vara "sv" eller "en"
+BN_ALLOWED_ORIGIN = "https://kids-bn.pages.dev"
