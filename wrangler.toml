@@ -1,36 +1,45 @@
+# wrangler.toml — Kids-BN (stabil)
 name = "kids-bn"
 compatibility_date = "2024-10-06"
 pages_build_output_dir = "public"
 
+# -------- Gemensamma variabler (ENDA [vars]) --------
 [vars]
 APP = "kids"
 BN_ENV = "production"
+
+# CORS – din produktion
 BN_ALLOWED_ORIGIN = "https://kids-bn.pages.dev"
+
+# Bild-/röst mm (som tidigare)
 OPENAI_IMAGE_MODEL = "gpt-image-1"
 WHISPER_MODEL      = "whisper-1"
-ELEVENLABS_VOICE_ID = "aSLKtNoVBZlxQEMsnGL2"
+ELEVENLABS_VOICE_ID = "aSUkN0VZE9LpE9m9GLz7"   # byt till din röst-ID
 MERCH_API_URL = "https://api.printful.com"
 
+# Claude – *viktigt*: giltig modellsträng
+MODEL_CLAUDE = "claude-3-5-sonnet-20241022"
+# Standard-språk för API:t (kan vara "sv" eller "en")
+LANG_DEFAULT = "sv"
+
+# -------- Preview-specifika overrides --------
 [env.preview.vars]
 BN_ENV = "preview"
 BN_ALLOWED_ORIGIN = "https://*.pages.dev"
 
+# -------- D1 (SQL) --------
 [[d1_databases]]
 binding = "BN_DB"
 database_name = "bn_db"
-database_id = "567ad325-9fd0-4311-8c7e-53ce03b2b9ac"
+# OBS: byt till ditt riktiga database_id från Cloudflare D1-sidan
+database_id = "567ad325-9f60-4311-8c7e-53ce02830bac"
 
+# -------- R2 (ljud-cache) --------
 [[r2_buckets]]
 binding = "BN_AUDIOS"
 bucket_name = "bn-audio"
-preview_bucket_name = "bn-audio"
 
+# -------- R2 (bilder) --------
 [[r2_buckets]]
 binding = "BN_IMAGES"
 bucket_name = "bn-images"
-preview_bucket_name = "bn-images"
-[vars]
-# ...dina befintliga vars...
-MODEL_CLAUDE = "claude-3-5-sonnet-20240620"
-LANG_DEFAULT = "sv"   # kan vara "sv" eller "en"
-BN_ALLOWED_ORIGIN = "https://kids-bn.pages.dev"
