@@ -1,9 +1,10 @@
 compatibility_date = "2024-10-04"
+pages_build_output_dir = "."     # <- gör att Pages accepterar wrangler.toml
 
 [[d1_databases]]
 binding = "BN_DB"
 database_name = "bn-db"
-database_id = "REPLACE-WITH-YOUR-D1-DATABASE-ID"
+database_id = "ACTUAL-D1-ID"
 
 [[r2_buckets]]
 binding = "bn-audio"
