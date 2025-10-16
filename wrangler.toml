@@ -16,7 +16,7 @@ binding = "bn-images"
 bucket_name = "bn-images"
 
 [vars]
-PROVIDER = "anthropic" 
-MODEL_CLAUDE = "claude-3-haiku-20240307"
+PROVIDER = "openrouter" 
+MODEL_CLAUDE = "anthropic/claude-3-5-sonnet"
 LANG_DEFAULT = "sv"
 MERCH_APIURL = "https://api.printful.com"
