@@ -16,10 +16,19 @@ binding = "bn-images"
 bucket_name = "bn-images"
 
 [vars]
-PROVIDER = "openrouter" 
-MODEL_CLAUDE = "anthropic/claude-3-5-sonnet"
+[vars]
+# LLM (du kör Sonnet via OpenRouter i din setup)
+PROVIDER = "openrouter"
+MODEL_CLAUDE = "anthropic/claude-3.5-sonnet"
 LANG_DEFAULT = "sv"
 MERCH_APIURL = "https://api.printful.com"
 
-ELEVENLABS_VOICE_ID = "4Ct5uMEndw4cJ7q0Jx0l"
-ELEVENLABS_MODEL = "eleven_turbo_v2"
+# ElevenLabs (en röst)
+ELEVENLABS_VOICE_ID = "4Ct5uMEndw4cJ7q0Jx0l"   # <- byt ID här när du vill labba
+ELEVENLABS_MODEL    = "eleven_turbo_v2"
+
+# Svenska-förval (kan ändras via URL vid test)
+ELEVENLABS_STABILITY   = "0.25"
+ELEVENLABS_SIMILARITY  = "0.85"
+ELEVENLABS_STYLE       = "0.35"
+ELEVENLABS_SPEAKER_BOOST = "true"
