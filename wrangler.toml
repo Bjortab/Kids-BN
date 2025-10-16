@@ -5,7 +5,7 @@ pages_build_output_dir = "."
 [[d1_databases]]
 binding = "BN_DB"
 database_name = "bn-db"
-database_id = "PASTE-YOUR-D1-DATABASE-ID-HERE"
+database_id = "567ad325-9fd0-4311-8c7e-53ce03b2b9ac"
 
 [[r2_buckets]]
 binding = "bn-audio"
