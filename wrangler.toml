@@ -21,6 +21,5 @@ MODEL_CLAUDE = "anthropic/claude-3-5-sonnet"
 LANG_DEFAULT = "sv"
 MERCH_APIURL = "https://api.printful.com"
 
-[vars]
 ELEVENLABS_VOICE_ID = "ZSHzpa6aUvhjzShiBmYw"
 ELEVENLABS_MODEL = "eleven_turbo_v2"
