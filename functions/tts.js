@@ -1,165 +1,160 @@
-// functions/tts.js — v2.1 locked: sentence cache + short pause + story cache
-// R2 binding: env.BN_AUDIOS (bucket: bn-audio)
-// Secrets: ELEVENLABS_API_KEY, optional ELEVENLABS_VOICE_ID
-// Returns audio/mpeg, with headers: X-TTS-Hits, X-TTS-Total, X-TTS-Level, X-TTS-Cache
+// /functions/api/tts.js
+// BN Kids – ElevenLabs TTS med en röst, D1-cache och R2-lagring.
+//
+// ENV (wrangler.toml [vars]):
+//   ELEVENLABS_VOICE_ID  = "..."             // din röst-ID
+//   ELEVENLABS_MODEL     = "eleven_turbo_v2" (valfritt)
+//
+// SECRETS (Cloudflare):
+//   ELEVENLABS_API_KEY    = "sk-...."
+//
+// Beroenden i Cloudflare:
+//   - D1:  env.BN_DB  (tabell tts_cache, se SQL nedan)
+//   - R2:  env["bn-audio"]
 
-const PROVIDER = { ELEVEN: "elevenlabs" };
-
-const cors = (origin) => ({
-  "Access-Control-Allow-Origin": origin || "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization",
-});
-
-export const onRequestOptions = async ({ env, request }) =>
-  new Response(null, { status: 204, headers: cors(env?.BN_ALLOWED_ORIGIN || new URL(request.url).origin) });
-
-export const onRequestGet = async ({ env, request }) =>
-  new Response(JSON.stringify({ error: "Method Not Allowed" }), {
-    status: 405,
-    headers: { "Content-Type": "application/json", ...cors(env?.BN_ALLOWED_ORIGIN || new URL(request.url).origin) },
-  });
-
-// === utils ===
-const te = new TextEncoder();
-async function sha256Hex(s) {
-  const buf = await crypto.subtle.digest("SHA-256", te.encode(s));
-  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
-}
-function normalizeText(t) { return (t || "").replace(/\s+/g, " ").trim(); }
-function splitSentences(t) {
-  const clean = t.replace(/\n+/g, " ").replace(/\s+/g, " ").trim();
-  return clean.split(/(?<=[.!?…])\s+/u).map(s => s.trim()).filter(Boolean).slice(0, 120);
-}
-function concatBytes(buffers) {
-  const total = buffers.reduce((n, b) => n + b.byteLength, 0);
-  const out = new Uint8Array(total);
-  let off = 0; for (const b of buffers) { out.set(new Uint8Array(b), off); off += b.byteLength; }
-  return out.buffer;
+function cors(origin = "*") {
+  return {
+    "access-control-allow-origin": origin,
+    "access-control-allow-methods": "GET, POST, OPTIONS",
+    "access-control-allow-headers": "Content-Type, Authorization",
+  };
 }
 
-// === ElevenLabs call ===
-async function elevenlabsTTS(env, text, voiceId) {
-  const vid = voiceId || env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM";
-  const res = await fetch(
-    `https://api.elevenlabs.io/v1/text-to-speech/${vid}?output_format=mp3_44100_128`,
-    {
+export async function onRequest({ request, env }) {
+  const origin = "*";
+  if (request.method === "OPTIONS") {
+    return new Response(null, { status: 200, headers: cors(origin) });
+  }
+
+  try {
+    // ------- Inläsning -------
+    const url = new URL(request.url);
+    let text = (url.searchParams.get("q") || "").toString();
+
+    if (request.method === "POST") {
+      try {
+        const body = await request.json();
+        if (body?.text) text = String(body.text);
+      } catch { /* ignorera body-fel */ }
+    }
+
+    text = (text || "").trim();
+    if (!text) {
+      return jerr(400, "Missing text. Provide ?q=... or POST { text }.", null, origin);
+    }
+
+    // ------- Miljövariabler -------
+    const apiKey  = env.ELEVENLABS_API_KEY;
+    const voiceId = env.ELEVENLABS_VOICE_ID;
+    const modelId = env.ELEVENLABS_MODEL || "eleven_turbo_v2";
+
+    if (!apiKey || !voiceId) {
+      return jerr(500, "Missing env config", {
+        has_api_key: !!apiKey,
+        has_voice_id: !!voiceId
+      }, origin);
+    }
+
+    // ------- Cache-nyckel (text + modell + röst) -------
+    const keyHash = await sha256Hex(`${voiceId}::${modelId}::${text}`);
+    const r2Key   = `tts/${keyHash}.mp3`;
+
+    // ------- Försök hämta från cache (D1 + R2) -------
+    try {
+      const row = await env.BN_DB
+        .prepare("SELECT r2_key FROM tts_cache WHERE hash = ?")
+        .bind(keyHash)
+        .first();
+      if (row?.r2_key) {
+        const obj = await env["bn-audio"].get(row.r2_key);
+        if (obj) {
+          return new Response(obj.body, {
+            status: 200,
+            headers: { "content-type": "audio/mpeg", ...cors(origin) }
+          });
+        }
+      }
+    } catch { /* cachefel ska inte stoppa generering */ }
+
+    // ------- ElevenLabs-anrop -------
+    const resp = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
       method: "POST",
       headers: {
-        "xi-api-key": env.ELEVENLABS_API_KEY,
-        "Content-Type": "application/json",
-        "Accept": "audio/mpeg"
+        "xi-api-key": apiKey,
+        "content-type": "application/json",
       },
       body: JSON.stringify({
-        model_id: "eleven_multilingual_v2",
         text,
+        model_id: modelId,
         voice_settings: {
-          stability: 0.4,
-          similarity_boost: 0.75,
-          style: 0.15,
-          use_speaker_boost: true
+          stability: 0.5,
+          similarity_boost: 0.75
         }
       })
-    }
-  );
-  if (!res.ok) throw new Error(`ElevenLabs ${res.status}: ${await res.text().catch(()=> "")}`);
-  return await res.arrayBuffer();
-}
-
-// === silent clip (cached once) ===
-async function getSilenceClip(env, ms = 200) {
-  const key = `tts/silence/${ms}ms.mp3`;
-  const r2 = env.BN_AUDIOS;
-  const existing = await r2.get(key);
-  if (existing) return await existing.arrayBuffer();
-
-  // Minimal mp3 "tystnad" ~0.2s @ 44.1kHz mono (förkonstruerad, liten)
-  const base64Silence = "SUQzAwAAAAAAF1RTU0MAAAAAAAABAAEARKwAABCxAgAEABAAZGF0YQAAAAA=";
-  const bytes = Uint8Array.from(atob(base64Silence), c => c.charCodeAt(0)).buffer;
-  await r2.put(key, bytes, {
-    httpMetadata: { contentType: "audio/mpeg", cacheControl: "public, max-age=31536000, immutable" },
-    customMetadata: { type: "silence", ms: String(ms) }
-  });
-  return bytes;
-}
-
-// === main ===
-export const onRequestPost = async ({ env, request }) => {
-  const origin = env?.BN_ALLOWED_ORIGIN || new URL(request.url).origin;
-  try {
-    const { text, voiceId } = await request.json();
-    const t = normalizeText(text);
-    if (!t) return new Response(JSON.stringify({ error: "Missing text" }), {
-      status: 400, headers: { "Content-Type": "application/json", ...cors(origin) }
     });
 
-    if (!env?.ELEVENLABS_API_KEY || !env?.BN_AUDIOS)
-      return new Response(JSON.stringify({ error: "Missing env config" }), {
-        status: 500, headers: { "Content-Type": "application/json", ...cors(origin) }
-      });
-
-    const r2 = env.BN_AUDIOS;
-
-    // story-level hash
-    const storyKey = await sha256Hex(`v2.1|story|${voiceId || ""}|${t}`);
-    const storyObj = await r2.get(`tts/stories/${storyKey}.mp3`);
-    if (storyObj) {
-      return new Response(await storyObj.arrayBuffer(), {
-        status: 200,
-        headers: {
-          "Content-Type": "audio/mpeg",
-          "X-TTS-Cache": "HIT",
-          "X-TTS-Level": "story",
-          ...cors(origin)
-        }
-      });
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => "");
+      return jerr(502, "ElevenLabs API error", {
+        status: resp.status,
+        model: modelId,
+        body: safeParse(errText)
+      }, origin);
     }
 
-    // sentence-level
-    const sents = splitSentences(t);
-    const silence = await getSilenceClip(env);
-    const chunks = [];
-    let hit = 0;
-
-    for (const s of sents) {
-      const sid = await sha256Hex(`v2.1|sent|${voiceId || ""}|${normalizeText(s)}`);
-      const path = `tts/sentences/${sid}.mp3`;
-      const obj = await r2.get(path);
-      if (obj) {
-        hit++;
-        chunks.push(await obj.arrayBuffer());
-      } else {
-        const ab = await elevenlabsTTS(env, s, voiceId);
-        chunks.push(ab);
-        await r2.put(path, ab, {
-          httpMetadata: { contentType: "audio/mpeg", cacheControl: "public, max-age=31536000, immutable" },
-          customMetadata: { provider: PROVIDER.ELEVEN }
-        });
-      }
-      // kort paus mellan meningar
-      chunks.push(silence);
-    }
-
-    const full = concatBytes(chunks);
-    await r2.put(`tts/stories/${storyKey}.mp3`, full, {
-      httpMetadata: { contentType: "audio/mpeg", cacheControl: "public, max-age=31536000, immutable" },
-      customMetadata: { provider: PROVIDER.ELEVEN, hits: String(hit), total: String(sents.length) }
+    // ------- Lagra i R2 och uppdatera D1-cache -------
+    const audio = await resp.arrayBuffer();
+    await env["bn-audio"].put(r2Key, audio, {
+      httpMetadata: { contentType: "audio/mpeg" }
     });
 
-    return new Response(full, {
+    try {
+      await env.BN_DB
+        .prepare(`
+          INSERT INTO tts_cache (voice, phrase, hash, r2_key, bytes)
+          VALUES (?, ?, ?, ?, ?)
+          ON CONFLICT(hash) DO UPDATE
+          SET r2_key = excluded.r2_key, bytes = excluded.bytes
+        `)
+        .bind(voiceId, text, keyHash, r2Key, audio.byteLength)
+        .run();
+    } catch { /* best-effort */ }
+
+    // ------- Svara med MP3 -------
+    return new Response(audio, {
       status: 200,
-      headers: {
-        "Content-Type": "audio/mpeg",
-        "X-TTS-Level": "sentence",
-        "X-TTS-Hits": String(hit),
-        "X-TTS-Total": String(sents.length),
-        "X-TTS-Cache": hit > 0 ? "PARTIAL" : "STORE",
-        ...cors(origin)
-      }
+      headers: { "content-type": "audio/mpeg", ...cors(origin) }
     });
-  } catch (e) {
-    return new Response(JSON.stringify({ error: String(e?.message || e) }), {
-      status: 500, headers: { "Content-Type": "application/json", ...cors(origin) }
-    });
+
+  } catch (err) {
+    return jerr(500, "TTS server error", { message: String(err?.message || err) });
   }
-};
+}
+
+/* ---------- Helpers ---------- */
+async function sha256Hex(input) {
+  const data = new TextEncoder().encode(input);
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  return [...new Uint8Array(hash)].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+function safeParse(t) { try { return JSON.parse(t); } catch { return t; } }
+function jerr(status, error, extra = null, origin = "*") {
+  return new Response(JSON.stringify({ error, ...(extra ? { extra } : {}) }, null, 2), {
+    status,
+    headers: { "content-type": "application/json; charset=utf-8", ...cors(origin) }
+  });
+}
+
+/*
+SQL för D1 (om tabellen saknas):
+
+CREATE TABLE IF NOT EXISTS tts_cache (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  voice TEXT,
+  phrase TEXT,
+  hash TEXT UNIQUE,
+  r2_key TEXT,
+  bytes INTEGER,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+*/
