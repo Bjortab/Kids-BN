@@ -17,6 +17,7 @@ bucket_name = "bn-images"
 
 [vars]
 OPENAI_IMAGE_MODEL = "gpt-image-1"
+PROVIDER = "openrouter" 
 MODEL_CLAUDE = "claude-3-5-sonnet-20240620"
 LANG_DEFAULT = "sv"
 MERCH_APIURL = "https://api.printful.com"
