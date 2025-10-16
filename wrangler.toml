@@ -14,3 +14,9 @@ bucket_name = "bn-audio"
 [[r2_buckets]]
 binding = "bn-images"
 bucket_name = "bn-images"
+
+[vars]
+OPENAI_IMAGE_MODEL = "gpt-image-1"
+MODEL_CLAUDE = "claude-3.5-sonnet-20241022"
+LANG_DEFAULT = "sv"
+MERCH_APIURL = "https://api.printful.com"
