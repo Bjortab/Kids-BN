@@ -17,6 +17,6 @@ bucket_name = "bn-images"
 
 [vars]
 PROVIDER = "anthropic" 
-MODEL_CLAUDE = "claude-3-5-sonnet"
+MODEL_CLAUDE = "claude-3-sonnet"
 LANG_DEFAULT = "sv"
 MERCH_APIURL = "https://api.printful.com"
