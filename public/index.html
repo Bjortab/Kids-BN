@@ -1,192 +1,156 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="sv">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>BN’s Sagovärld – där drömmar blir berättelser</title>
-  <link rel="stylesheet" href="style.css" />
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BN’s Sagovärld — …där drömmar blir berättelser</title>
+
   <style>
-    body {
-      background-color: #0e0e0e;
-      color: #f0f0f0;
-      font-family: "Poppins", sans-serif;
-      padding: 2rem;
-      max-width: 800px;
-      margin: auto;
+    :root{
+      --bg:#0e0f12; --panel:#16181d; --text:#e8f0ff;
+      --muted:#9aa4b2; --accent:#2be28f; --accent-2:#1ea7fd;
+      --danger:#ff4d4f; --ok:#31d0aa; --line:#252a33;
+    }
+    *{ box-sizing:border-box; }
+    html,body{ height:100%; }
+    body{
+      margin:0; padding:24px; background:var(--bg); color:var(--text);
+      font: 16px/1.5 system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial;
+    }
+    .wrap{
+      max-width: 880px; margin: 0 auto;
+    }
+    h1{
+      text-align:center; margin:0 0 .25rem 0; color:#2be28f;
+      font-weight:800; letter-spacing:.3px;
+    }
+    .sub{ text-align:center; margin:0 0 18px 0; color:var(--muted); font-size:.92rem; }
+    .panel{
+      background:var(--panel); border:1px solid var(--line);
+      border-radius:12px; padding:18px; margin-bottom:16px;
     }
 
-    h1 {
-      color: #1aff80;
-      text-align: center;
-      margin-bottom: 0.25rem;
+    label{ display:block; font-size:.86rem; color:var(--muted); margin: 12px 0 6px; }
+    input[type="text"], textarea, select{
+      width:100%; background:#0f1116; color:var(--text);
+      border:1px solid var(--line); border-radius:10px; padding:12px 12px;
+      outline:none; transition:border .15s ease;
     }
-    h2 {
-      text-align: center;
-      font-size: 1rem;
-      color: #ccc;
-      margin-bottom: 2rem;
-    }
+    textarea{ min-height: 96px; resize: vertical; }
+    input:focus, textarea:focus, select:focus{ border-color:#2a8af7; }
 
-    label { display: block; margin-top: 1rem; font-weight: 500; }
-    input, select, textarea {
-      width: 100%;
-      margin-top: 0.3rem;
-      padding: 0.5rem;
-      border-radius: 6px;
-      border: none;
-      background: #222;
-      color: #fff;
-    }
-    textarea { resize: vertical; min-height: 60px; }
+    .row { display:flex; gap:12px; flex-wrap:wrap; }
+    .row > * { flex:1 1 240px; }
 
-    button {
-      margin-top: 1rem;
-      margin-right: 0.5rem;
-      padding: 0.75rem 1.2rem;
-      border: none;
-      border-radius: 6px;
-      cursor: pointer;
-      font-weight: 600;
-      color: #fff;
+    .controls{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:12px; }
+    .btn{
+      border:0; background:#232833; color:var(--text); padding:10px 14px;
+      border-radius:10px; cursor:pointer; font-weight:600; transition:.15s ease;
     }
+    .btn:disabled{ opacity:.5; cursor:not-allowed; }
+    .btn--primary{ background: var(--accent); color:#04110a; }
+    .btn--accent { background: var(--accent-2); }
+    .btn--warn{ background:#f2c230; color:#1c1500; }
+    .btn--ghost{ background:#232833; }
 
-    #btnSpeak { background-color: #0077ff; }
-    #btnSpeak.is-recording { background-color: #ff4444; animation: pulse 1s infinite; }
+    .status{ margin:10px 0 4px; min-height: 20px; font-size:.92rem; }
+    .status--ok{ color: var(--ok); }
+    .status--error{ color: var(--danger); }
 
-    #btnGenerate { background-color: #00c36d; }
-    #btnSaveHero { background-color: #ffaa00; color: #000; }
-    #btnResetHeroes { background-color: #444; }
+    .result { margin-top:10px; }
+    .result pre{
+      white-space:pre-wrap; background:#0f1116; border:1px solid var(--line);
+      padding:14px; border-radius:10px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      font-size:.94rem;
+    }
+    audio{ width:100%; margin-top:10px; }
 
-    @keyframes pulse {
-      0% { box-shadow: 0 0 0 0 rgba(255,68,68,0.7); }
-      70% { box-shadow: 0 0 0 10px rgba(255,68,68,0); }
-      100% { box-shadow: 0 0 0 0 rgba(255,68,68,0); }
+    /* Spinners & cache meter */
+    .spinner{ margin:.4rem 0; font-size:.92rem; opacity:.85; }
+    .spinner::before{
+      content:""; display:inline-block; width:14px; height:14px; margin-right:8px;
+      border:2px solid #778399; border-top-color:#fff; border-radius:50%;
+      vertical-align:-2px; animation:spin .75s linear infinite;
     }
+    @keyframes spin{ to{ transform:rotate(360deg);} }
+    .cache{ margin:.5rem 0 1rem; }
+    .cache__label{ font-size:.86rem; color:var(--muted); margin-bottom:.35rem; }
+    .cache__bar{ height:8px; background:#2a2f38; border-radius:6px; overflow:hidden; }
+    .cache__bar span{ display:block; height:100%; width:0%; background:var(--accent); transition: width .35s ease; }
 
-    .status {
-      margin-top: 1rem;
-      padding: 0.5rem;
-      font-size: 0.9rem;
-    }
-    .status--ok { color: #00ff99; }
-    .status--error { color: #ff5555; }
-
-    #ttsSpinner {
-      margin: 1rem auto;
-      width: 40px; height: 40px;
-      border: 5px solid #333;
-      border-top: 5px solid #00ff99;
-      border-radius: 50%;
-      animation: spin 1s linear infinite;
-    }
-    @keyframes spin { 100% { transform: rotate(360deg); } }
-
-    #cacheWrap {
-      margin: 1rem 0;
-      height: 18px;
-      background: #333;
-      border-radius: 10px;
-      overflow: hidden;
-      position: relative;
-    }
-    #cacheBar {
-      position: absolute;
-      left: 0; top: 0; bottom: 0;
-      background: linear-gradient(90deg, #00ff99, #00b3ff);
-      width: 0%;
-      transition: width 0.6s ease;
-    }
-    #cacheText {
-      text-align: center;
-      font-size: 0.8rem;
-      margin-top: 0.3rem;
-      color: #ccc;
-    }
-
-    #storyImages {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-      margin-top: 1rem;
-    }
-    .story-image-card {
-      background: #222;
-      border-radius: 8px;
-      overflow: hidden;
-      width: calc(33% - 6px);
-    }
-    .story-image-card img {
-      width: 100%;
-      height: auto;
-      display: block;
-    }
-
-    audio {
-      width: 100%;
-      margin-top: 1rem;
-    }
-
-    footer {
-      text-align: center;
-      font-size: 0.8rem;
-      margin-top: 2rem;
-      color: #777;
-    }
+    /* Image cards (framtidssäkert) */
+    .img-grid{ display:grid; grid-template-columns: repeat(auto-fill, minmax(180px,1fr)); gap:12px; }
+    .story-image-card{ background:#0f1116; border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+    .story-image-card img{ display:block; width:100%; height:auto; }
+    .foot{ text-align:center; color:var(--muted); font-size:.82rem; margin-top: 10px; }
   </style>
 </head>
 <body>
-  <h1>BN’s Sagovärld</h1>
-  <h2>…där drömmar blir berättelser</h2>
+  <div class="wrap">
 
-  <label for="childName">Barnets namn</label>
-  <input id="childName" placeholder="t.ex. Lisa" />
+    <h1>BN’s Sagovärld</h1>
+    <div class="sub">…där drömmar blir berättelser</div>
 
-  <label for="ageRange">Ålder</label>
-  <select id="ageRange">
-    <option value="1-2">1–2 år</option>
-    <option value="3-4">3–4 år</option>
-    <option value="5-6">5–6 år</option>
-    <option value="7-8">7–8 år</option>
-    <option value="9-10">9–10 år</option>
-    <option value="11-12">11–12 år</option>
-  </select>
+    <div class="panel">
+      <div class="row">
+        <div>
+          <label for="childName">Barnets namn</label>
+          <input id="childName" type="text" placeholder="t.ex. Lisa" />
+        </div>
+        <div>
+          <label for="ageRange">Ålder</label>
+          <select id="ageRange">
+            <option value="1-2">1–2 år</option>
+            <option value="3-4">3–4 år</option>
+            <option value="5-6" selected>5–6 år</option>
+            <option value="7-8">7–8 år</option>
+            <option value="9-10">9–10 år</option>
+            <option value="11-12">11–12 år</option>
+          </select>
+        </div>
+      </div>
 
-  <label for="prompt">Sagognista (vad ska sagan handla om?)</label>
-  <textarea id="prompt" placeholder="En liten drake som lär sig flyga…"></textarea>
+      <label for="prompt">Sagognista (vad ska sagan handla om?)</label>
+      <textarea id="prompt" placeholder="En liten drake lärde sig flyga…"></textarea>
 
-  <label><input type="checkbox" id="useWhisper" /> Använd extra exakt rösttolkning (Whisper)</label>
+      <div class="controls">
+        <label><input id="useWhisper" type="checkbox" /> Använd extra exakt rösttolkning (Whisper)</label>
+      </div>
 
-  <label for="heroName">Hjältens namn (valfritt)</label>
-  <input id="heroName" placeholder="t.ex. Drakli eller Prinsessan Nila" />
+      <label for="heroName">Hjältens namn (valfritt)</label>
+      <input id="heroName" type="text" placeholder="t.ex. Drakil eller Prinsessan Nila" />
 
-  <div>
-    <button id="btnSpeak">🎙 Tala in</button>
-    <button id="btnGenerate">✨ Skapa saga (med uppläsning)</button>
-    <button id="btnSaveHero">⭐ Spara hjälte</button>
-    <button id="btnResetHeroes">🗑 Rensa hjältar</button>
+      <div class="controls">
+        <button id="btnSpeak" class="btn btn--accent">🎙️ Tala in</button>
+        <button id="btnGenerate" class="btn btn--primary">💚 Skapa saga (med uppläsning)</button>
+        <button id="btnSaveHero" class="btn btn--warn">⭐ Spara hjälte</button>
+        <button id="btnResetHeroes" class="btn btn--ghost">🗑️ Rensa hjältar</button>
+      </div>
+
+      <div id="status" class="status"></div>
+
+      <!-- Spinners -->
+      <div id="storySpinner" class="spinner" hidden>Skapar saga …</div>
+      <div id="ttsSpinner"   class="spinner" hidden>Skapar uppläsning …</div>
+
+      <!-- Cache meter för TTS -->
+      <div id="cacheWrap" class="cache" hidden>
+        <div id="cacheText" class="cache__label">Återanvänt från minnet: 0%</div>
+        <div class="cache__bar"><span id="cacheBar"></span></div>
+      </div>
+
+      <div class="result">
+        <pre id="resultText"></pre>
+        <audio id="resultAudio" hidden controls></audio>
+      </div>
+
+      <!-- Framtida bildvisning (lämnas tom om ej i bruk) -->
+      <div id="storyImages" class="img-grid"></div>
+
+      <div class="foot">© BN — barnvänlig magi, inget konto krävs för att prova</div>
+    </div>
   </div>
 
-  <div id="status" class="status"></div>
-
-  <!-- Spinner -->
-  <div id="ttsSpinner" hidden></div>
-
-  <!-- Cachemätare -->
-  <div id="cacheWrap" hidden>
-    <div id="cacheBar"></div>
-  </div>
-  <div id="cacheText" hidden></div>
-
-  <!-- Resultat -->
-  <h3>Resultat</h3>
-  <pre id="resultText"></pre>
-  <audio id="resultAudio" hidden controls></audio>
-
-  <!-- Bilder -->
-  <div id="storyImages"></div>
-
-  <footer>© BN — barnvänlig magi, inget konto krävs för att prova</footer>
-
-  <script src="app.js"></script>
+  <script src="/app.js" defer></script>
 </body>
 </html>
