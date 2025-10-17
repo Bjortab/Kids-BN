@@ -1,67 +1,96 @@
-// functions/api/generate_story.js
-// Stabil version: OpenAI för story + strikt svenska. Endast POST. CORS OK.
+// functions/api/generate_story_v2.js
+// Ny version med genreprofiler per ålder + bildstöd
+
+// --- Importa ev helpers (om du har dem) ---
+import { splitToSentences, normalizeSentence } from "../shared/text_utils.js";  
+// (alternativ: kopiera in samma kod från tts eller shared)
 
 const ALLOWED_ORIGIN = (origin) => {
   try {
-    const o = new URL(origin || "");
-    return o.host.endsWith(".pages.dev") || o.host.endsWith("localhost") || o.host.includes("kids-bn.pages.dev");
-  } catch { return false; }
+    const u = new URL(origin || "");
+    return u.host.endsWith(".pages.dev") || u.hostname === "localhost";
+  } catch {
+    return false;
+  }
 };
-
-const cors = (origin) => ({
+const corsHeaders = (origin) => ({
   "Access-Control-Allow-Origin": ALLOWED_ORIGIN(origin) ? origin : "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization",
-  "Content-Type": "application/json; charset=utf-8",
-  "Cache-Control": "no-store"
+  "Content-Type": "application/json; charset=utf-8"
 });
 
-const mapAgeToSpec = (age) => {
+function ageProfiles(age) {
   switch (age) {
-    case "1-2":  return { min: 50,  max: 160,  tone: "mycket enkel, rytmisk, upprepningar, trygge och varm", chapters: 1 };
-    case "3-4":  return { min: 120, max: 280,  tone: "enkel, lekfull, tydlig början och slut, humor", chapters: 1 };
-    case "5-6":  return { min: 250, max: 450,  tone: "lite mer komplex, små problem som löses, fantasi", chapters: 1 };
-    case "7-8":  return { min: 400, max: 700,  tone: "äventyr, mysterium, humor, enkla cliffhangers", chapters: 2 };
-    case "9-10": return { min: 600, max: 1000, tone: "fantasy, vänskap, moraliska frågor, tydliga scener", chapters: 2 };
-    case "11-12":return { min: 900, max: 1600, tone: "djupare teman, karaktärsutveckling, längre scener", chapters: 3 };
-    default:     return { min: 250, max: 500,  tone: "enkel, lekfull, tydlig början och slut, humor", chapters: 1 };
+    case "1-2":
+      return {
+        toneHint: "mycket enkel, ljud och upprepningar",
+        promptIntro: "Pelle taxen vaknar. Vad händer?",
+        maxWords: 80, chapters: 1
+      };
+    case "3-4":
+      return {
+        toneHint: "färg, ljud, upprepningar men med liten konflikt",
+        promptIntro: "Pelle taxen hör ett konstigt ljud utanför huset...",
+        maxWords: 180, chapters: 1
+      };
+    case "5-6":
+      return {
+        toneHint: "mild spänning, hjälte, enkel konflikt",
+        promptIntro: "Pelle taxen tappade sin boll långt in i skogen.",
+        maxWords: 350, chapters: 1
+      };
+    case "7-8":
+      return {
+        toneHint: "äventyr, hinder, dialog, räddning",
+        promptIntro: "Pelle taxen måste skydda en magisk boll mot skuggvarelser.",
+        maxWords: 600, chapters: 2
+      };
+    case "9-10":
+      return {
+        toneHint: "dialog, prövningar, samarbete",
+        promptIntro: "Skogen täcks av tyst dimma, och Pelle taxen får ett viktigt uppdrag.",
+        maxWords: 900, chapters: 2
+      };
+    case "11-12":
+      return {
+        toneHint: "djupare teman, moraliska val, spänning och konsekvenser",
+        promptIntro: "En ond makt hotar jorden – Pelle taxen måste fatta svåra val.",
+        maxWords: 1400, chapters: 3
+      };
+    default:
+      return {
+        toneHint: "barnvänlig", promptIntro: "", maxWords: 400, chapters: 1
+      };
   }
-};
+}
 
-// ===== HELPER: bygger prompt =====
-function buildPrompt({ lang, childName, heroName, ageRange, prompt, controls }) {
-  const { min, max, tone, chapters } = controls || mapAgeToSpec(ageRange || "5-6");
-  const nameLine = childName ? `Huvudpersonen heter ${childName}.` : "";
-  const heroLine = heroName ? `En hjälte som kan förekomma: ${heroName}.` : "";
+function buildPromptV2({ ageRange, childName, heroName, prompt }) {
+  const prof = ageProfiles(ageRange);
+  const intro = prof.promptIntro;
+  const tone = prof.toneHint;
+
+  const nameLine = childName ? `Barnets namn: ${childName}.` : "";
+  const heroLine = heroName ? `Hjältens namn: ${heroName}.` : "";
 
   return [
     { role: "system", content:
-`Du är en barnboksförfattare. Svara **endast på svenska**.
-Skriv en helt ny, original berättelse anpassad till angiven ålder.
-Krav:
-- Språk: **svenska** (inga främmande ord, inga översättningsrester).
-- Ton: ${tone}.
-- Längd: mellan ${min} och ${max} ord (inte mindre än ${min-15}, inte mer än ${max+40}).
-- Antal kapitel/avsnitt: ${chapters} (om 1, skriv som sammanhängande text).
-- Inget våld, skräck eller vuxenteman.
-- En tydlig början, mitt och slut. En liten känslomässig båge och en vänlig avrundning.` },
+`Skriv en saga för barn i åldern ${ageRange} år.  
+Ton: ${tone}.  
+Ge hjälten ett konkret mål och en antagonist eller hinder.  
+Slutet ska variera – ibland triumf, ibland lärdom, ibland val.  
+Undvik klyschiga “alla blir lyckliga” slut.` },
     { role: "user", content:
-`Skriv en saga på svenska.
-
-Ålder: ${ageRange}
-${nameLine}
-${heroLine}
-Sagognista (ämne/idé): ${prompt || "valfritt barnvänligt äventyr"}
-
-Format:
-- Titel på första raden inom dubbla citationstecken.
-- Själva berättelsen som vanlig text (undvik Markdown-listor).
-- Håll dig inom ordlängdskraven.` }
+`${intro}  
+${nameLine}  
+${heroLine}  
+Ämne/idé: ${prompt}  
+Maximalt ${prof.maxWords} ord, ${prof.chapters} kapitel.` }
   ];
 }
 
 export async function onRequestOptions(ctx) {
-  return new Response(null, { status: 204, headers: cors(ctx.request.headers.get("origin")) });
+  return new Response(null, { status: 204, headers: corsHeaders(ctx.request.headers.get("origin")) });
 }
 
 export async function onRequestPost(ctx) {
@@ -71,22 +100,22 @@ export async function onRequestPost(ctx) {
   try {
     const body = await request.json().catch(() => ({}));
     const {
-      childName = "", heroName = "", ageRange = "5-6", prompt = "",
-      controls = null, lang = env.LANG_DEFAULT || "sv"
+      childName = "", heroName = "", ageRange = "5-6", prompt = ""
     } = body || {};
 
-    // Bygg prompt
-    const msgs = buildPrompt({ lang, childName, heroName, ageRange, prompt, controls: controls || mapAgeToSpec(ageRange) });
+    const msgs = buildPromptV2({ ageRange, childName, heroName, prompt });
 
-    const apiKey = env.OPENAI_API_KEY;          // <- lägg i Cloudflare "Environment variables"
-    const model  = "gpt-4o-mini";               // stabilt & billigt, byts senare om vi vill
-
+    // Använd samma AI-motor som du redan konfigurerat (OpenAI eller Claude fallback)
+    const apiKey = env.OPENAI_API_KEY || env.ANTHROPIC_API_KEY;
     if (!apiKey) {
-      return new Response(JSON.stringify({ ok:false, error:"Saknar OPENAI_API_KEY" }), { status: 500, headers: cors(origin) });
+      return new Response(JSON.stringify({ ok:false, error:"Inga API-nycklar konfigurerade" }),
+        { status: 500, headers: corsHeaders(origin) });
     }
 
-    // OpenAI Chat Completions (kompatibelt & enkelt)
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    // (Använd OpenAI som standard – du kan byta till Claude fallback senare)
+    const model = env.OPENAI_MODEL || "gpt-4o-mini";
+
+    const resp = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${apiKey}`,
@@ -94,30 +123,44 @@ export async function onRequestPost(ctx) {
       },
       body: JSON.stringify({
         model,
-        messages: msgs,
-        temperature: 0.7,
-        max_tokens: 1200
+        temperature: 0.8,
+        max_tokens: 1200,
+        messages: msgs
       })
     });
 
-    if (!res.ok) {
-      const errText = await res.text().catch(()=> "");
-      return new Response(JSON.stringify({ ok:false, error:`OpenAI: ${res.status} ${errText}` }),
-        { status: 502, headers: cors(origin) });
+    if (!resp.ok) {
+      const e = await resp.text().catch(()=> "");
+      return new Response(JSON.stringify({ ok:false, error:`AI: ${resp.status} ${e}` }),
+        { status: 502, headers: corsHeaders(origin) });
     }
 
-    const data = await res.json();
-    const story = (data?.choices?.[0]?.message?.content || "").trim();
+    const j = await resp.json();
+    const story = (j.choices?.[0]?.message?.content || "").trim();
 
-    // Liten sanity: säkerställ svenska tecken finns
-    if (!/[åäöÅÄÖ]/.test(story)) {
-      // Om modellen skulle råka svara på fel språk – lägg en tydlig markör (hellre än eng/rus)
-      // (Vi *ändrar inte* texten, bara markerar)
-      // Du kan kommentera bort denna om du vill.
+    // Hämta bilder via bild-API (om du har implementerat) – optional
+    let images = [];
+    try {
+      const imgRes = await fetch("/api/images", {
+        method: "POST",
+        headers: { "Content-Type":"application/json" },
+        body: JSON.stringify({ storyText: story, ageRange, count: 3 })
+      });
+      if (imgRes.ok) {
+        const imgJ = await imgRes.json();
+        images = imgJ.images || [];
+      }
+    } catch {
+      images = [];
     }
 
-    return new Response(JSON.stringify({ ok:true, story }), { status: 200, headers: cors(origin) });
+    return new Response(JSON.stringify({ ok:true, story, images }), {
+      status: 200,
+      headers: corsHeaders(origin)
+    });
   } catch (err) {
-    return new Response(JSON.stringify({ ok:false, error:String(err) }), { status: 500, headers: cors(origin) });
+    return new Response(JSON.stringify({ ok:false, error:String(err) }), {
+      status: 500, headers: corsHeaders(origin)
+    });
   }
 }
