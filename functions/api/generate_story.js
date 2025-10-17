@@ -1,8 +1,7 @@
 // functions/api/generate_story_v2.js
 // Ny version med genreprofiler per ålder + bildstöd
 
-// --- Importa ev helpers (om du har dem) ---
-import { splitToSentences, normalizeSentence } from "../shared/text_utils.js";  
+// --- Importa ev helpers (om du har dem) --- 
 // (alternativ: kopiera in samma kod från tts eller shared)
 
 const ALLOWED_ORIGIN = (origin) => {
