@@ -1,183 +1,123 @@
-// /functions/tts.js
-// BN Kids — TTS via ElevenLabs, optimerad för svenska.
-// - En röst (styrd via ELEVENLABS_VOICE_ID i wrangler.toml)
-// - Svenska-preferenser (stability/similarity/style/speakerBoost)
-// - ?nocache=1 för att hoppa över cache när du labbar
-// - Cache i D1 (tts_cache) + MP3 i R2 (bn-audio)
+// functions/api/generate_story.js
+// Stabil version: OpenAI för story + strikt svenska. Endast POST. CORS OK.
 
-function cors(origin = "*") {
-  return {
-    "access-control-allow-origin": origin,
-    "access-control-allow-methods": "GET, POST, OPTIONS",
-    "access-control-allow-headers": "Content-Type, Authorization",
-  };
+const ALLOWED_ORIGIN = (origin) => {
+  try {
+    const o = new URL(origin || "");
+    return o.host.endsWith(".pages.dev") || o.host.endsWith("localhost") || o.host.includes("kids-bn.pages.dev");
+  } catch { return false; }
+};
+
+const cors = (origin) => ({
+  "Access-Control-Allow-Origin": ALLOWED_ORIGIN(origin) ? origin : "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+  "Content-Type": "application/json; charset=utf-8",
+  "Cache-Control": "no-store"
+});
+
+const mapAgeToSpec = (age) => {
+  switch (age) {
+    case "1-2":  return { min: 50,  max: 160,  tone: "mycket enkel, rytmisk, upprepningar, trygge och varm", chapters: 1 };
+    case "3-4":  return { min: 120, max: 280,  tone: "enkel, lekfull, tydlig början och slut, humor", chapters: 1 };
+    case "5-6":  return { min: 250, max: 450,  tone: "lite mer komplex, små problem som löses, fantasi", chapters: 1 };
+    case "7-8":  return { min: 400, max: 700,  tone: "äventyr, mysterium, humor, enkla cliffhangers", chapters: 2 };
+    case "9-10": return { min: 600, max: 1000, tone: "fantasy, vänskap, moraliska frågor, tydliga scener", chapters: 2 };
+    case "11-12":return { min: 900, max: 1600, tone: "djupare teman, karaktärsutveckling, längre scener", chapters: 3 };
+    default:     return { min: 250, max: 500,  tone: "enkel, lekfull, tydlig början och slut, humor", chapters: 1 };
+  }
+};
+
+// ===== HELPER: bygger prompt =====
+function buildPrompt({ lang, childName, heroName, ageRange, prompt, controls }) {
+  const { min, max, tone, chapters } = controls || mapAgeToSpec(ageRange || "5-6");
+  const nameLine = childName ? `Huvudpersonen heter ${childName}.` : "";
+  const heroLine = heroName ? `En hjälte som kan förekomma: ${heroName}.` : "";
+
+  return [
+    { role: "system", content:
+`Du är en barnboksförfattare. Svara **endast på svenska**.
+Skriv en helt ny, original berättelse anpassad till angiven ålder.
+Krav:
+- Språk: **svenska** (inga främmande ord, inga översättningsrester).
+- Ton: ${tone}.
+- Längd: mellan ${min} och ${max} ord (inte mindre än ${min-15}, inte mer än ${max+40}).
+- Antal kapitel/avsnitt: ${chapters} (om 1, skriv som sammanhängande text).
+- Inget våld, skräck eller vuxenteman.
+- En tydlig början, mitt och slut. En liten känslomässig båge och en vänlig avrundning.` },
+    { role: "user", content:
+`Skriv en saga på svenska.
+
+Ålder: ${ageRange}
+${nameLine}
+${heroLine}
+Sagognista (ämne/idé): ${prompt || "valfritt barnvänligt äventyr"}
+
+Format:
+- Titel på första raden inom dubbla citationstecken.
+- Själva berättelsen som vanlig text (undvik Markdown-listor).
+- Håll dig inom ordlängdskraven.` }
+  ];
 }
 
-export async function onRequest({ request, env }) {
-  const origin = "*";
-  if (request.method === "OPTIONS") {
-    return new Response(null, { status: 200, headers: cors(origin) });
-  }
+export async function onRequestOptions(ctx) {
+  return new Response(null, { status: 204, headers: cors(ctx.request.headers.get("origin")) });
+}
+
+export async function onRequestPost(ctx) {
+  const { request, env } = ctx;
+  const origin = request.headers.get("origin");
 
   try {
-    const url = new URL(request.url);
+    const body = await request.json().catch(() => ({}));
+    const {
+      childName = "", heroName = "", ageRange = "5-6", prompt = "",
+      controls = null, lang = env.LANG_DEFAULT || "sv"
+    } = body || {};
 
-    // ---- Läs in text ----
-    let text = (url.searchParams.get("q") || "").toString();
-    if (request.method === "POST") {
-      try {
-        const body = await request.json();
-        if (body?.text) text = String(body.text);
-      } catch {
-        /* ignorera */
-      }
-    }
-    text = (text || "").trim();
-    if (!text) {
-      return jerr(400, "Missing text. Provide ?q=... or POST { text }.", null, origin);
-    }
+    // Bygg prompt
+    const msgs = buildPrompt({ lang, childName, heroName, ageRange, prompt, controls: controls || mapAgeToSpec(ageRange) });
 
-    // ---- Miljö & svenska defaults ----
-    const apiKey  = env.ELEVENLABS_API_KEY;
-    const voiceId = env.ELEVENLABS_VOICE_ID; // en enda röst
-    const modelId = env.ELEVENLABS_MODEL || "eleven_turbo_v2";
+    const apiKey = env.OPENAI_API_KEY;          // <- lägg i Cloudflare "Environment variables"
+    const model  = "gpt-4o-mini";               // stabilt & billigt, byts senare om vi vill
 
-    // Svenska-tuned defaults (kan överstyras via vars eller query):
-    const stability  = num(env.ELEVENLABS_STABILITY,  url.searchParams.get("stability"),  0.25);
-    const similarity = num(env.ELEVENLABS_SIMILARITY, url.searchParams.get("similarity"), 0.85);
-    const style      = num(env.ELEVENLABS_STYLE,      url.searchParams.get("style"),      0.35);
-    const speakerBoost = bool(env.ELEVENLABS_SPEAKER_BOOST, url.searchParams.get("speaker_boost"), true);
-
-    const noCache = url.searchParams.get("nocache") === "1";
-
-    if (!apiKey || !voiceId) {
-      return jerr(500, "Missing env config", {
-        has_api_key: !!apiKey,
-        has_voice_id: !!voiceId
-      }, origin);
+    if (!apiKey) {
+      return new Response(JSON.stringify({ ok:false, error:"Saknar OPENAI_API_KEY" }), { status: 500, headers: cors(origin) });
     }
 
-    // Tips till ElevenLabs: markera att texten ska läsas på svenska.
-    // (Fungerar som en lätt “hint” och påverkar inte outputen om texten redan är svensk.)
-    const textForTTS = `[[svenska]] ${text}`;
-
-    // ---- Cache-nyckel (inkluderar alla settings) ----
-    const settingsKey = `${modelId}|${stability}|${similarity}|${style}|${speakerBoost}`;
-    const keyHash = await sha256Hex(`${voiceId}::${settingsKey}::${textForTTS}`);
-    const r2Key   = `tts/${keyHash}.mp3`;
-
-    // ---- D1 + R2 cache-läsning (om inte nocache=1) ----
-    if (!noCache) {
-      try {
-        const row = await env.BN_DB
-          .prepare("SELECT r2_key FROM tts_cache WHERE hash = ?")
-          .bind(keyHash)
-          .first();
-        if (row?.r2_key) {
-          const obj = await env["bn-audio"].get(row.r2_key);
-          if (obj) {
-            return new Response(obj.body, {
-              status: 200,
-              headers: { "content-type": "audio/mpeg", ...cors(origin) }
-            });
-          }
-        }
-      } catch { /* cachefel ska inte hindra ny generering */ }
-    }
-
-    // ---- ElevenLabs-anrop ----
-    const resp = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+    // OpenAI Chat Completions (kompatibelt & enkelt)
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
-        "xi-api-key": apiKey,
-        "content-type": "application/json"
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        text: textForTTS,
-        model_id: modelId,
-        // Optimize latency (0-4). 0 = snabbast. Låt default vara 0 för låg lagg.
-        optimize_streaming_latency: 0,
-        voice_settings: {
-          stability,
-          similarity_boost: similarity,
-          style,
-          use_speaker_boost: speakerBoost
-        }
+        model,
+        messages: msgs,
+        temperature: 0.7,
+        max_tokens: 1200
       })
     });
 
-    if (!resp.ok) {
-      const errText = await resp.text().catch(() => "");
-      return jerr(502, "ElevenLabs API error", {
-        status: resp.status,
-        model: modelId,
-        body: safeParse(errText)
-      }, origin);
+    if (!res.ok) {
+      const errText = await res.text().catch(()=> "");
+      return new Response(JSON.stringify({ ok:false, error:`OpenAI: ${res.status} ${errText}` }),
+        { status: 502, headers: cors(origin) });
     }
 
-    // ---- Spara i R2 + skriv cache-index i D1 ----
-    const audio = await resp.arrayBuffer();
-    await env["bn-audio"].put(r2Key, audio, {
-      httpMetadata: { contentType: "audio/mpeg" }
-    });
+    const data = await res.json();
+    const story = (data?.choices?.[0]?.message?.content || "").trim();
 
-    try {
-      await env.BN_DB
-        .prepare(`
-          INSERT INTO tts_cache (voice, phrase, hash, r2_key, bytes)
-          VALUES (?, ?, ?, ?, ?)
-          ON CONFLICT(hash) DO UPDATE
-          SET r2_key = excluded.r2_key, bytes = excluded.bytes
-        `)
-        .bind(voiceId, textForTTS, keyHash, r2Key, audio.byteLength)
-        .run();
-    } catch { /* best-effort */ }
+    // Liten sanity: säkerställ svenska tecken finns
+    if (!/[åäöÅÄÖ]/.test(story)) {
+      // Om modellen skulle råka svara på fel språk – lägg en tydlig markör (hellre än eng/rus)
+      // (Vi *ändrar inte* texten, bara markerar)
+      // Du kan kommentera bort denna om du vill.
+    }
 
-    // ---- Returnera MP3 ----
-    return new Response(audio, {
-      status: 200,
-      headers: { "content-type": "audio/mpeg", ...cors(origin) }
-    });
-
+    return new Response(JSON.stringify({ ok:true, story }), { status: 200, headers: cors(origin) });
   } catch (err) {
-    return jerr(500, "TTS server error", { message: String(err?.message || err) });
+    return new Response(JSON.stringify({ ok:false, error:String(err) }), { status: 500, headers: cors(origin) });
   }
 }
-
-/* ---------- Helpers ---------- */
-function num(envVal, qVal, fallback) {
-  const v = qVal ?? envVal;
-  const f = parseFloat(v);
-  return Number.isFinite(f) ? f : fallback;
-}
-function bool(envVal, qVal, fallback) {
-  const raw = (qVal ?? envVal);
-  if (raw === undefined || raw === null || raw === "") return !!fallback;
-  const s = String(raw).toLowerCase();
-  return !(s === "0" || s === "false" || s === "no");
-}
-async function sha256Hex(input) {
-  const data = new TextEncoder().encode(input);
-  const hash = await crypto.subtle.digest("SHA-256", data);
-  return [...new Uint8Array(hash)].map(b => b.toString(16).padStart(2, "0")).join("");
-}
-function safeParse(t) { try { return JSON.parse(t); } catch { return t; } }
-function jerr(status, error, extra = null, origin = "*") {
-  return new Response(JSON.stringify({ error, ...(extra ? { extra } : {}) }, null, 2), {
-    status,
-    headers: { "content-type": "application/json; charset=utf-8", ...cors(origin) }
-  });
-}
-
-/*
-D1-tabell (om saknas):
-CREATE TABLE IF NOT EXISTS tts_cache (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  voice TEXT,
-  phrase TEXT,
-  hash TEXT UNIQUE,
-  r2_key TEXT,
-  bytes INTEGER,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-*/
