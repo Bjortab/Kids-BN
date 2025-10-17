@@ -1,159 +1,145 @@
 // functions/tts.js
-// 🔊 ElevenLabs TTS med per-menings-cache i R2 (BN_AUDIOS).
-// Returnerar audio/mpeg och headers: x-tts-hits / x-tts-total.
-
-const ALLOWED_ORIGIN = (origin) => {
-  try {
-    const o = new URL(origin || "");
-    return (
-      o.host.endsWith(".pages.dev") ||
-      o.hostname === "localhost" ||
-      o.host.includes("bn") ||
-      o.host.includes("kids-bn")
-    );
-  } catch { return false; }
-};
-
-const cors = (origin) => ({
-  "Access-Control-Allow-Origin": ALLOWED_ORIGIN(origin) ? origin : "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization",
-});
-
-// === Hjälpfunktioner ===
-const enc = new TextEncoder();
-
-async function sha1Hex(str) {
-  const buf = await crypto.subtle.digest("SHA-1", enc.encode(str));
-  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2,"0")).join("");
-}
-
-function normalizeSentence(s) {
-  return (s || "")
-    .replace(/\s+/g, " ")
-    .replace(/\s([,.!?…])/g, "$1")
-    .trim();
-}
-
-function splitToSentences(text) {
-  if (!text) return [];
-  const t = text.replace(/\n+/g, ". ");
-  const parts = t.split(/(?<=[.!?…])\s+/).map(s => normalizeSentence(s));
-  return parts.filter(s => s && s.replace(/[.!?…]/g,"").trim().split(/\s+/).length >= 2);
-}
-
-async function streamToArrayBuffer(stream) {
-  const reader = stream.getReader();
-  const chunks = [];
-  let total = 0;
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-    total += value.length;
-  }
-  const out = new Uint8Array(total);
-  let off = 0;
-  for (const c of chunks) { out.set(c, off); off += c.length; }
-  return out.buffer;
-}
-
-// === Huvudfunktioner ===
 export async function onRequestOptions(ctx) {
-  return new Response(null, { status: 204, headers: cors(ctx.request.headers.get("origin")) });
+  return new Response(null, {
+    status: 204,
+    headers: cors(ctx.env)
+  });
 }
 
 export async function onRequestPost(ctx) {
   const { request, env } = ctx;
-  const origin = request.headers.get("origin");
+  const baseHeaders = cors(env);
+
   try {
-    const { text = "", voiceId = "", lang = "sv" } = await request.json().catch(() => ({}));
-
-    if (!text.trim()) {
-      return new Response(JSON.stringify({ error: "Tom text" }), {
-        status: 400, headers: { ...cors(origin), "Content-Type": "application/json" }
-      });
+    const { text, voiceId } = await request.json();
+    if (!text || !text.trim()) {
+      return json({ error: "Tom text" }, 400, baseHeaders);
     }
 
-    const apiKey = env.ELEVENLABS_API_KEY;
-    const voice  = voiceId || env.ELEVENLABS_VOICE_ID;
-    if (!apiKey || !voice) {
-      return new Response(JSON.stringify({ error: "Saknar ELEVENLABS_API_KEY eller ELEVENLABS_VOICE_ID" }), {
-        status: 500, headers: { ...cors(origin), "Content-Type": "application/json" }
-      });
-    }
-    if (!env.BN_AUDIOS) {
-      return new Response(JSON.stringify({ error: "R2-binding BN_AUDIOS saknas" }), {
-        status: 500, headers: { ...cors(origin), "Content-Type": "application/json" }
-      });
-    }
-
-    // --- Dela upp i meningar och cachea ---
-    const sentences = splitToSentences(text);
-    if (!sentences.length) throw new Error("Kunde inte dela upp texten i meningar.");
-
+    // 1) dela upp i meningar (lagom långa bitar)
+    const parts = splitIntoSentences(text, 280);
+    const total = parts.length;
     let hits = 0;
-    const total = sentences.length;
-    const mp3Buffers = [];
 
-    for (const raw of sentences) {
-      const s = normalizeSentence(raw);
-      const hash = await sha1Hex(`${lang}|${voice}|${s}`);
-      const key  = `tts/v2/${voice}/${lang}/${hash}.mp3`;
+    const chunks = [];
+    for (const s of parts) {
+      const vId = voiceId || env.ELEVENLABS_VOICE_ID || "default";
+      const key = `v2/${hashStable(`${vId}::${s}`)}.mp3`;
 
-      // 1) Försök hämta från R2
-      const cached = await env.BN_AUDIOS.get(key);
-      if (cached) {
-        hits++;
-        mp3Buffers.push(await cached.arrayBuffer());
-        continue;
-      }
+      let mp3Bytes = null;
 
-      // 2) Annars generera nytt ljud hos ElevenLabs
-      const body = JSON.stringify({
-        text: s,
-        model_id: "eleven_multilingual_v2",
-        voice_settings: { stability: 0.35, similarity_boost: 0.8 }
-      });
-
-      const ttsRes = await fetch(
-        `https://api.elevenlabs.io/v1/text-to-speech/${voice}/stream`,
-        {
-          method: "POST",
-          headers: {
-            "xi-api-key": apiKey,
-            "Content-Type": "application/json"
-          },
-          body
+      // 2) försök R2 cache
+      if (env.BN_AUDIOS) {
+        const obj = await env.BN_AUDIOS.get(key);
+        if (obj) {
+          hits++;
+          mp3Bytes = new Uint8Array(await obj.arrayBuffer());
         }
-      );
-
-      if (!ttsRes.ok || !ttsRes.body) {
-        throw new Error(`TTS misslyckades: ${ttsRes.status}`);
       }
 
-      const arrBuf = await streamToArrayBuffer(ttsRes.body);
-      mp3Buffers.push(arrBuf);
+      // 3) annars ring ElevenLabs
+      if (!mp3Bytes) {
+        const xi = env.ELEVENLABS_API_KEY;
+        const voice = vId;
+        if (!xi || !voice) {
+          return json({ error: "ELEVENLABS saknar API-nyckel eller voiceId." }, 500, baseHeaders);
+        }
 
-      // Cachea till R2
-      await env.BN_AUDIOS.put(key, new Blob([arrBuf], { type: "audio/mpeg" }));
+        const body = {
+          text: s,
+          model_id: "eleven_multilingual_v2",
+          voice_settings: { stability: 0.5, similarity_boost: 0.8 },
+          optimize_streaming_latency: 2
+        };
+
+        const el = await fetch(
+          `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voice)}`,
+          {
+            method: "POST",
+            headers: {
+              "xi-api-key": xi,
+              "Content-Type": "application/json",
+              "Accept": "audio/mpeg"
+            },
+            body: JSON.stringify(body)
+          }
+        );
+
+        if (!el.ok) {
+          const t = await el.text().catch(() => "");
+          return json({ error: `ElevenLabs: ${el.status} ${t}` }, 502, baseHeaders);
+        }
+        mp3Bytes = new Uint8Array(await el.arrayBuffer());
+
+        // 4) spara i R2 (om finns)
+        if (env.BN_AUDIOS) {
+          await env.BN_AUDIOS.put(key, mp3Bytes, {
+            httpMetadata: { contentType: "audio/mpeg" }
+          });
+        }
+      }
+
+      chunks.push(mp3Bytes);
     }
 
-    // Slå ihop allt ljud
-    const finalBlob = new Blob(mp3Buffers, { type: "audio/mpeg" });
-    return new Response(finalBlob, {
+    const merged = concatUint8Arrays(chunks);
+    const out = new Response(merged, {
       status: 200,
       headers: {
-        ...cors(origin),
-        "Content-Type": "audio/mpeg",
+        ...baseHeaders,
+        "content-type": "audio/mpeg",
         "x-tts-hits": String(hits),
         "x-tts-total": String(total)
       }
     });
-
+    return out;
   } catch (err) {
-    return new Response(JSON.stringify({ error: String(err) }), {
-      status: 500, headers: { ...cors(origin), "Content-Type": "application/json" }
-    });
+    return json({ error: String(err?.message || err) }, 500, baseHeaders);
   }
+}
+
+/* ---------- helpers ---------- */
+function cors(env) {
+  return {
+    "access-control-allow-origin": env.BN_ALLOWED_ORIGIN || "*",
+    "access-control-allow-methods": "POST, OPTIONS",
+    "access-control-allow-headers": "Content-Type, Authorization"
+  };
+}
+function json(obj, status = 200, headers = {}) {
+  return new Response(JSON.stringify(obj), {
+    status,
+    headers: { "content-type": "application/json", ...headers }
+  });
+}
+function splitIntoSentences(text, maxLen = 280) {
+  const raw = text.replace(/\r/g, "").split(/(?<=[\.\!\?])\s+/);
+  const out = [];
+  let buf = "";
+  for (const part of raw) {
+    if ((buf + " " + part).trim().length > maxLen && buf) {
+      out.push(buf.trim());
+      buf = part;
+    } else {
+      buf = (buf ? buf + " " : "") + part;
+    }
+  }
+  if (buf.trim()) out.push(buf.trim());
+  return out.filter(Boolean);
+}
+function hashStable(s) {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return ("00000000" + (h >>> 0).toString(16)).slice(-8);
+}
+function concatUint8Arrays(chunks) {
+  let total = 0;
+  for (const c of chunks) total += c.length;
+  const out = new Uint8Array(total);
+  let o = 0;
+  for (const c of chunks) { out.set(c, o); o += c.length; }
+  return out;
 }
