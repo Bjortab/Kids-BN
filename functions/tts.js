@@ -1,48 +1,47 @@
 // functions/tts.js
-// TTS med per-menings-cache i R2 (BN_AUDIOS). Returnerar audio/mpeg.
-// Headers: x-tts-hits, x-tts-total (för din mätare i UI).
+// 🔊 ElevenLabs TTS med per-menings-cache i R2 (BN_AUDIOS).
+// Returnerar audio/mpeg och headers: x-tts-hits / x-tts-total.
 
-/** CORS **/
 const ALLOWED_ORIGIN = (origin) => {
   try {
     const o = new URL(origin || "");
     return (
       o.host.endsWith(".pages.dev") ||
-      o.host.includes("kids-bn.pages.dev") ||
-      o.hostname === "localhost"
+      o.hostname === "localhost" ||
+      o.host.includes("bn") ||
+      o.host.includes("kids-bn")
     );
   } catch { return false; }
 };
+
 const cors = (origin) => ({
   "Access-Control-Allow-Origin": ALLOWED_ORIGIN(origin) ? origin : "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization",
 });
 
-/** Små helpers **/
+// === Hjälpfunktioner ===
 const enc = new TextEncoder();
+
 async function sha1Hex(str) {
   const buf = await crypto.subtle.digest("SHA-1", enc.encode(str));
   return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2,"0")).join("");
 }
+
 function normalizeSentence(s) {
   return (s || "")
     .replace(/\s+/g, " ")
     .replace(/\s([,.!?…])/g, "$1")
     .trim();
 }
-/** Delar svensk text till meningar */
+
 function splitToSentences(text) {
   if (!text) return [];
-  // Ersätt radbrytningar med punkt (för att få med korta rader)
   const t = text.replace(/\n+/g, ". ");
-  // Dela på punkt, utrop, fråga, ellipsis – behåll tecken
   const parts = t.split(/(?<=[.!?…])\s+/).map(s => normalizeSentence(s));
-  // Filtrera bort väldigt korta "meningar"
   return parts.filter(s => s && s.replace(/[.!?…]/g,"").trim().split(/\s+/).length >= 2);
 }
 
-/** Läser hela ReadableStream till ArrayBuffer */
 async function streamToArrayBuffer(stream) {
   const reader = stream.getReader();
   const chunks = [];
@@ -59,6 +58,7 @@ async function streamToArrayBuffer(stream) {
   return out.buffer;
 }
 
+// === Huvudfunktioner ===
 export async function onRequestOptions(ctx) {
   return new Response(null, { status: 204, headers: cors(ctx.request.headers.get("origin")) });
 }
@@ -66,12 +66,10 @@ export async function onRequestOptions(ctx) {
 export async function onRequestPost(ctx) {
   const { request, env } = ctx;
   const origin = request.headers.get("origin");
-
   try {
-    const { text = "", voiceId = "", lang = env.LANG_DEFAULT || "sv" } =
-      await request.json().catch(() => ({}));
+    const { text = "", voiceId = "", lang = "sv" } = await request.json().catch(() => ({}));
 
-    if (!text?.trim()) {
+    if (!text.trim()) {
       return new Response(JSON.stringify({ error: "Tom text" }), {
         status: 400, headers: { ...cors(origin), "Content-Type": "application/json" }
       });
@@ -90,12 +88,9 @@ export async function onRequestPost(ctx) {
       });
     }
 
+    // --- Dela upp i meningar och cachea ---
     const sentences = splitToSentences(text);
-    if (!sentences.length) {
-      return new Response(JSON.stringify({ error: "Kunde inte dela upp texten i meningar" }), {
-        status: 400, headers: { ...cors(origin), "Content-Type": "application/json" }
-      });
-    }
+    if (!sentences.length) throw new Error("Kunde inte dela upp texten i meningar.");
 
     let hits = 0;
     const total = sentences.length;
@@ -106,7 +101,7 @@ export async function onRequestPost(ctx) {
       const hash = await sha1Hex(`${lang}|${voice}|${s}`);
       const key  = `tts/v2/${voice}/${lang}/${hash}.mp3`;
 
-      // 1) Försök hämta från cache (R2)
+      // 1) Försök hämta från R2
       const cached = await env.BN_AUDIOS.get(key);
       if (cached) {
         hits++;
@@ -114,57 +109,48 @@ export async function onRequestPost(ctx) {
         continue;
       }
 
-      // 2) Annars hämta från ElevenLabs (per mening)
+      // 2) Annars generera nytt ljud hos ElevenLabs
       const body = JSON.stringify({
         text: s,
         model_id: "eleven_multilingual_v2",
-        voice_settings: { stability: 0.35, similarity_boost: 0.8 },
+        voice_settings: { stability: 0.35, similarity_boost: 0.8 }
       });
 
-      const ttsRes = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voice}/stream`, {
-        method: "POST",
-        headers: {
-          "xi-api-key": apiKey,
-          "Content-Type": "application/json",
-          "Accept": "audio/mpeg",
-        },
-        body,
-      });
+      const ttsRes = await fetch(
+        `https://api.elevenlabs.io/v1/text-to-speech/${voice}/stream`,
+        {
+          method: "POST",
+          headers: {
+            "xi-api-key": apiKey,
+            "Content-Type": "application/json"
+          },
+          body
+        }
+      );
 
       if (!ttsRes.ok || !ttsRes.body) {
-        const errTxt = await ttsRes.text().catch(() => "");
-        return new Response(JSON.stringify({ error: `ElevenLabs: ${ttsRes.status} ${errTxt}` }), {
-          status: 502, headers: { ...cors(origin), "Content-Type": "application/json" }
-        });
+        throw new Error(`TTS misslyckades: ${ttsRes.status}`);
       }
 
-      const ab = await streamToArrayBuffer(ttsRes.body);
-      mp3Buffers.push(ab);
+      const arrBuf = await streamToArrayBuffer(ttsRes.body);
+      mp3Buffers.push(arrBuf);
 
-      // 3) Spara i R2 för återanvändning
-      await env.BN_AUDIOS.put(key, ab, {
-        httpMetadata: { contentType: "audio/mpeg" }
-      });
+      // Cachea till R2
+      await env.BN_AUDIOS.put(key, new Blob([arrBuf], { type: "audio/mpeg" }));
     }
 
-    // Slå ihop alla MP3-bitar till en fil (binär konkatenation)
-    const totalBytes = mp3Buffers.reduce((a, b) => a + b.byteLength, 0);
-    const out = new Uint8Array(totalBytes);
-    let offset = 0;
-    for (const ab of mp3Buffers) {
-      out.set(new Uint8Array(ab), offset);
-      offset += ab.byteLength;
-    }
-
-    return new Response(out, {
+    // Slå ihop allt ljud
+    const finalBlob = new Blob(mp3Buffers, { type: "audio/mpeg" });
+    return new Response(finalBlob, {
       status: 200,
       headers: {
         ...cors(origin),
         "Content-Type": "audio/mpeg",
         "x-tts-hits": String(hits),
-        "x-tts-total": String(total),
+        "x-tts-total": String(total)
       }
     });
+
   } catch (err) {
     return new Response(JSON.stringify({ error: String(err) }), {
       status: 500, headers: { ...cors(origin), "Content-Type": "application/json" }
