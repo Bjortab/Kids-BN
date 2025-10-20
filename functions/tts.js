@@ -1,30 +1,31 @@
 // functions/tts.js
-// BN — TTS med robust R2-binding + hel-berättelse-cache i R2
+// BN — TTS med robust R2-binding + hel-berättelse-cache i R2 + text-normalisering
 
 export async function onRequestPost({ request, env }) {
   try {
     // ======= 1) Läs input =======
     const body = await request.json().catch(() => ({}));
-    const text = (body?.text || '').trim();
+    const rawText = (body?.text || '').trim();
     const reqVoiceId = (body?.voiceId || '').trim();
-    if (!text) {
-      return new Response(JSON.stringify({ ok: false, error: 'Ingen text skickades.' }), { status: 400 });
+    if (!rawText) {
+      return json({ ok: false, error: 'Ingen text skickades.' }, 400);
     }
 
     // ======= 2) Hämta ElevenLabs-credentials =======
-    const EL_API = env.ELEVENLABS_API_KEY || env.EL_API || env.ELEVEN_API_KEY;
-    const defaultVoice = env.ELEVENLABS_VOICE_ID || env.EL_VOICE_ID || '';
-    const voiceId = reqVoiceId || defaultVoice || 'Hyidyy6OA9R3GpDKGwoZ'; // fallback-röst (Alloy)
+    const EL_API =
+      env.ELEVENLABS_API_KEY || env.EL_API || env.ELEVEN_API_KEY;
+    const defaultVoice =
+      env.ELEVENLABS_VOICE_ID || env.EL_VOICE_ID || '';
+    const voiceId = reqVoiceId || defaultVoice || '21m00Tcm4TlvDq8ikWAM'; // fallback
 
     if (!EL_API) {
-      return new Response(JSON.stringify({
-        ok: false,
-        error: 'Saknar ElevenLabs API-nyckel (ELEVENLABS_API_KEY).'
-      }), { status: 500 });
+      return json({ ok: false, error: 'Saknar ElevenLabs API-nyckel (ELEVENLABS_API_KEY).' }, 500);
+    }
+    if (!voiceId) {
+      return json({ ok: false, error: 'Saknar röst-id. Sätt ELEVENLABS_VOICE_ID eller skicka voiceId i kroppen.' }, 400);
     }
 
     // ======= 3) R2-binding: hitta bucketen robust =======
-    // Vi accepterar både nya och gamla namn.
     const audioBucket =
       env.BN_AUDIOS ??
       env['bn-audio'] ??
@@ -32,22 +33,20 @@ export async function onRequestPost({ request, env }) {
       env.AUDIO_BUCKET ??
       null;
 
-    // Hjälptext om binding saknas (listan gör felsökning enkel)
     if (!audioBucket || typeof audioBucket.get !== 'function') {
       const keys = Object.keys(env || {}).sort();
-      return new Response(JSON.stringify({
+      return json({
         ok: false,
         error: 'R2-binding för ljud saknas. Förväntade t.ex. BN_AUDIOS eller "bn-audio".',
-        env_keys_preview: keys.slice(0, 50) // för att inte spamma
-      }), { status: 500 });
+        env_keys_preview: keys.slice(0, 60)
+      }, 500);
     }
 
-    // ======= 4) Nyckel för cache (hela sagan) =======
     const lang = (env.LANG_DEFAULT || 'sv').toLowerCase();
+    const text = normalizeText(rawText); // 🔑 bättre cache-träffar
     const key = await buildCacheKey({ text, voiceId, lang });
 
-    // ======= 5) Cache: HEAD/GET från R2 =======
-    let cacheHit = false;
+    // ======= 4) Cache: HEAD/GET från R2 =======
     try {
       const head = await audioBucket.head(key);
       if (head) {
@@ -64,60 +63,72 @@ export async function onRequestPost({ request, env }) {
           });
         }
       }
-    } catch (e) {
-      // Fortsätt – cache miss eller HEAD/GET inte stött i lokalt emu
+    } catch (_) {
+      // Ignorera, behandla som miss
     }
 
-    // ======= 6) Generera TTS från ElevenLabs =======
-    const audioBuffer = await elevenlabsTTS({ apiKey: EL_API, text, voiceId, lang });
+    // ======= 5) Generera TTS från ElevenLabs =======
+    const audioBuffer = await elevenlabsTTS({ apiKey: EL_API, text, voiceId });
 
-    // ======= 7) Spara i R2 (cache write) =======
+    // ======= 6) Spara i R2 (cache write) =======
     try {
       await audioBucket.put(key, audioBuffer, {
         httpMetadata: { contentType: 'audio/mpeg' }
       });
     } catch (_) {
-      // Om put misslyckas vill vi ändå leverera ljudet
+      // leverera ändå
     }
 
-    cacheHit = false;
     return new Response(audioBuffer, {
       status: 200,
       headers: {
         'content-type': 'audio/mpeg',
-        'x-tts-cache': cacheHit ? 'HIT' : 'MISS',
+        'x-tts-cache': 'MISS',
         'x-tts-key': key
       }
     });
   } catch (err) {
-    return new Response(JSON.stringify({
-      ok: false,
-      error: err?.message || String(err)
-    }), { status: 500 });
+    return json({ ok: false, error: err?.message || String(err) }, 500);
   }
 }
 
 // ================== Hjälpfunktioner ==================
 
-async function buildCacheKey({ text, voiceId, lang }) {
-  const enc = new TextEncoder();
-  const data = enc.encode([lang, voiceId, text].join('||'));
-  const hash = await crypto.subtle.digest('SHA-256', data);
-  const hex = [...new Uint8Array(hash)].map(b => b.toString(16).padStart(2, '0')).join('');
-  // Kortar key lite för läsbarhet
-  return `tts/${lang}/${voiceId}/${hex.slice(0, 16)}.mp3`;
+function json(obj, status = 200) {
+  return new Response(JSON.stringify(obj), {
+    status,
+    headers: { 'content-type': 'application/json; charset=utf-8' }
+  });
 }
 
-async function elevenlabsTTS({ apiKey, text, voiceId, lang }) {
-  // Svenska röstning: välj `voice_settings` så det inte går långsamt eller blir ”ryska”
-  // Pitch/tempo justeras mild för svenska.
+function normalizeText(raw) {
+  // Ta bort [BYT SIDA], rubrikmarkörer, extra whitespace, normalisera citat
+  return String(raw || '')
+    .replace(/\[BYT SIDA\]/gi, '')
+    .replace(/^#+\s*/gm, '')
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+async function buildCacheKey({ text, voiceId, lang }) {
+  const enc = new TextEncoder();
+  const data = enc.encode([lang.toLowerCase(), voiceId, text].join('||'));
+  const hash = await crypto.subtle.digest('SHA-256', data);
+  const hex = [...new Uint8Array(hash)].map(b => b.toString(16).padStart(2, '0')).join('');
+  return `tts/${lang}/${voiceId}/${hex.slice(0, 24)}.mp3`;
+}
+
+async function elevenlabsTTS({ apiKey, text, voiceId }) {
   const payload = {
-    text,
-    model_id: 'eleven_multilingual_v2', // säker för SV
+    text, // vi skickar ren text, svensk tolkning hanteras av multilingual v2
+    model_id: 'eleven_multilingual_v2',
     voice_settings: {
       stability: 0.5,
       similarity_boost: 0.75,
-      style: 0.3,
+      style: 0.25,
       use_speaker_boost: true
     }
   };
