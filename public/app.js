@@ -1,33 +1,33 @@
-// public/app.js  (hel fil)
-
 (() => {
   const $ = sel => document.querySelector(sel);
 
-  // Inputs/knappar
-  const childName = $('#childName');
-  const ageRange  = $('#ageRange');
-  const prompt    = $('#prompt');
-  const heroName  = $('#heroName');
-  const useWhisper= $('#useWhisper');
+  // ----- UI refs -----
+  const childName      = $('#childName');
+  const ageRange       = $('#ageRange');
+  const prompt         = $('#prompt');
+  const heroName       = $('#heroName');
+  const voiceIdInput   = $('#voiceId');           // nytt: byta ElevenLabs-röst
+  const useWhisper     = $('#useWhisper');
 
-  const btnSpeak     = $('#btnSpeak');
-  const btnGenerate  = $('#btnGenerate');
-  const btnSaveHero  = $('#btnSaveHero');
+  const btnSpeak       = $('#btnSpeak');
+  const btnGenerate    = $('#btnGenerate');
+  const btnSaveHero    = $('#btnSaveHero');
   const btnResetHeroes = $('#btnResetHeroes');
 
-  // Status/UI
-  const statusEl   = $('#status');
-  const resultText = $('#resultText');
-  const resultAudio= $('#resultAudio');
+  const statusEl       = $('#status');
+  const resultText     = $('#resultText');
+  const resultAudio    = $('#resultAudio');
 
   // Spinner + cache-meter
-  const ttsSpinner = $('#ttsSpinner');
-  const cacheWrap  = $('#cacheWrap');
-  const cacheBar   = $('#cacheBar');
-  const cacheText  = $('#cacheText');
+  const ttsSpinner     = $('#ttsSpinner');
+  const cacheWrap      = $('#cacheWrap');
+  const cacheBar       = $('#cacheBar');
+  const cacheText      = $('#cacheText');
 
+  // Bild-container
   const storyImagesWrap = $('#storyImages');
 
+  // ----- Busy/Status helpers -----
   let isBusy = false;
   const setBusy = (v, msg = '') => {
     isBusy = v;
@@ -42,23 +42,14 @@
   };
 
   function showSpinner(show){ if(ttsSpinner) ttsSpinner.hidden = !show; }
-  function updateCacheMeterFromHeader(h) {
+  function updateCacheMeter(hits, total){
     if (!cacheWrap || !cacheBar || !cacheText) return;
-    const flag = (h.get('x-tts-cache') || '').toUpperCase(); // HIT / MISS / HIT_FUZZY_92%
-    let pct = 0;
-    if (flag.startsWith('HIT_FUZZY_')) {
-      const m = flag.match(/HIT_FUZZY_(\d+)%/);
-      pct = m ? parseInt(m[1],10) : 75;
-    } else if (flag === 'HIT') {
-      pct = 100;
-    } else if (flag === 'MISS') {
-      pct = 0;
-    }
+    const ratio = total > 0 ? Math.max(0, Math.min(1, hits/total)) : 0;
+    const pct = Math.round(ratio * 100);
     cacheBar.style.width = `${pct}%`;
-    cacheText.textContent = `TTS-cache: ${flag || '—'}`;
+    cacheText.textContent = `Återanvänt från minnet: ${pct}%`;
     cacheWrap.hidden = false;
   }
-
   function renderStoryImages(images){
     if (!storyImagesWrap) return;
     storyImagesWrap.innerHTML = '';
@@ -70,55 +61,110 @@
     });
   }
 
-  // Hjälte-lokalt
+  // ----- Init: se till att inget “står och jobbar” vid reload -----
+  setBusy(false, '');
+  showSpinner(false);
+  setStatus('');
+  if (cacheWrap) cacheWrap.hidden = true;
+
+  // ----- Hjältar i localStorage -----
   const heroKey = 'bn_heroes_v1';
   const loadHeroes = () => { try { return JSON.parse(localStorage.getItem(heroKey) || '[]'); } catch { return []; } };
   const saveHeroes = (list) => localStorage.setItem(heroKey, JSON.stringify(list.slice(0, 50)));
 
-  // Ålderskontroller (oförändrat, men du kan finjustera längder/toner senare)
+  // ----- VoiceID i localStorage (så du slipper klistra varje gång) -----
+  const voiceKey = 'bn_voice_id';
+  try {
+    const savedVoice = localStorage.getItem(voiceKey);
+    if (savedVoice && voiceIdInput) voiceIdInput.value = savedVoice;
+    voiceIdInput?.addEventListener('input', () => {
+      localStorage.setItem(voiceKey, (voiceIdInput.value || '').trim());
+    });
+  } catch {}
+
+  // ----- Åldersstyrning (låst) -----
+  // Viktigt: 1–2 år = ULTRAKORT, ca 60–90 TECKEN. Vi skickar min/maxChars + stilhint till backend via controls.
   const ageToControls = (age) => {
     switch (age) {
-      case '1-2':  return { minWords: 40,  maxWords: 120,  tone:'bilderbok; upprepning; byt sida; ljudord', chapters:1 };
-      case '3-4':  return { minWords: 120, maxWords: 260,  tone:'enkel röd tråd, humor, tryggt',                chapters:1 };
-      case '5-6':  return { minWords: 220, maxWords: 450,  tone:'problem–lösning, lekfullt, mod',               chapters:1 };
-      case '7-8':  return { minWords: 400, maxWords: 700,  tone:'äventyr, mysterium, cliffhangers',            chapters:2 };
-      case '9-10': return { minWords: 600, maxWords: 1000, tone:'fantasy/vänskap/motgångar',                   chapters:2 };
-      case '11-12':return { minWords: 900, maxWords: 1600, tone:'tematik, val, konsekvens; ingen harmlös moralplåsterfinal', chapters:3 };
-      default:     return { minWords: 250, maxWords: 500,  tone:'barnvänlig',                                  chapters:1 };
+      case '1-2':
+        return {
+          minChars: 60,  maxChars: 90,   // ~75 tecken (låst)
+          minWords:  8,  maxWords: 20,   // endast hints
+          chapters:  1,
+          pageBreakTag: '[BYT SIDA]',
+          styleHint: 'pekbok; ljudord; enkla tvåordsmeningar; varje mening kan stå på egen sida; inga långa satser'
+        };
+      case '3-4':
+        return {
+          minWords: 80,  maxWords: 160,
+          chapters: 1,
+          styleHint: 'korta meningar; igenkänning; humor; tydlig början-slut; gärna 3–5 scener'
+        };
+      case '5-6':
+        return {
+          minWords: 180, maxWords: 320,
+          chapters: 1,
+          styleHint: 'problem-lösning; varm ton; enkla cliffhangers men naturligt slut'
+        };
+      case '7-8':
+        return {
+          minWords: 350, maxWords: 600,
+          chapters: 2,
+          styleHint: 'äventyr/mysterium; tydliga val; varierade scener; naturligt slut (ingen mallfras)'
+        };
+      case '9-10':
+        return {
+          minWords: 500, maxWords: 900,
+          chapters: 2,
+          styleHint: 'kapitelkänsla; uppoffring/strategi; inga klyschiga slutformuleringar'
+        };
+      case '11-12':
+        return {
+          minWords: 800, maxWords: 1400,
+          chapters: 3,
+          styleHint: 'tonårsnära röst; taktiska val; konsekvenser; inget barnsligt språk; naturligt slut'
+        };
+      default:
+        return {
+          minWords: 250, maxWords: 500,
+          chapters: 1,
+          styleHint: 'barnvänlig; naturligt avslut'
+        };
     }
   };
 
-  // Din befintliga payload-byggare
   const buildStoryPayload = () => {
     const age = ageRange.value;
     return {
       childName: (childName.value || '').trim(),
-      heroName:  (heroName.value  || '').trim(),
+      heroName:  (heroName.value || '').trim(),
       ageRange:  age,
-      prompt:    (prompt.value    || '').trim(),
+      prompt:    (prompt.value || '').trim(),
       controls:  ageToControls(age)
     };
   };
 
-  // === Generera saga + TTS + (ev. bilder) ===
+  // ====== GENERATE (story + TTS + images) ======
   btnGenerate?.addEventListener('click', async () => {
     if (isBusy) return;
     const payload = buildStoryPayload();
     if (!payload.prompt && !useWhisper?.checked) {
-      setStatus('Skriv något i sagognistan eller tala in.', 'error'); return;
+      setStatus('Skriv något i sagognistan eller tala in.', 'error');
+      return;
     }
 
+    // reset UI
     resultText.textContent = '';
     resultAudio.hidden = true;
     resultAudio.removeAttribute('src');
-    cacheWrap.hidden = true;
+    if (cacheWrap) cacheWrap.hidden = true;
     showSpinner(false);
     if (storyImagesWrap) storyImagesWrap.innerHTML = '';
 
     try {
       setBusy(true, 'Skapar saga…');
 
-      // 1) Story
+      // 1) STORY
       const resStory = await fetch('/api/generate_story', {
         method: 'POST',
         headers: { 'Content-Type':'application/json' },
@@ -128,32 +174,31 @@
       const data = await resStory.json();
       if (data.story) resultText.textContent = data.story;
 
-      // 2) TTS (med cache-headrar)
+      // 2) TTS (POST – säkert)
       setStatus('Skapar uppläsning…');
       showSpinner(true);
-      const ttsBody = {
-        text: data.story,
-        // Byt röst genom att ändra detta värde eller ha en select i UI:
-        voiceId: '',           // tom = använd serverns default (ELEVENLABS_VOICE_ID)
-        model:   'elevenlabs-v1',
-        lang:    'sv'
-      };
+      const voiceId = (voiceIdInput?.value || '').trim();
       const resTTS = await fetch('/tts', {
         method: 'POST',
         headers: { 'Content-Type':'application/json' },
-        body: JSON.stringify(ttsBody)
+        body: JSON.stringify({ text: data.story, voiceId })
       });
-      if (!resTTS.ok) throw new Error(`TTS: ${resTTS.status} ${await resTTS.text().catch(()=> '')}`);
+      if (!resTTS.ok) {
+        showSpinner(false);
+        throw new Error(`TTS: ${resTTS.status} ${await resTTS.text().catch(()=> '')}`);
+      }
 
-      // Läs cache-headrar och visa mätare
-      updateCacheMeterFromHeader(resTTS.headers);
+      // cache-meter
+      const hits  = parseInt(resTTS.headers.get('x-tts-hits')  || '0', 10);
+      const total = parseInt(resTTS.headers.get('x-tts-total') || '0', 10);
+      if (!Number.isNaN(total)) updateCacheMeter(hits, total);
 
       const blob = await resTTS.blob();
       const url = URL.createObjectURL(blob);
       resultAudio.src = url;
       resultAudio.hidden = false;
 
-      // 3) (valfritt) bilder, lämnar som tidigare
+      // 3) BILDER (om service finns – tyst fel)
       try {
         const imgRes = await fetch('/api/images', {
           method: 'POST',
@@ -176,7 +221,7 @@
     }
   });
 
-  // Hjältar (oförändrat)
+  // ====== Hjältar (spara/rensa) ======
   btnSaveHero?.addEventListener('click', () => {
     const h = (heroName.value || '').trim();
     if (!h){ setStatus('Skriv ett hjältenamn först.', 'error'); return; }
@@ -190,5 +235,4 @@
     setStatus('Rensade sparade hjältar.', 'ok');
   });
 
-  setStatus('');
 })();
