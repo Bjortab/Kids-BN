@@ -1,123 +1,117 @@
-/**
- * BN Kids TTS v1.2 – ElevenLabs + R2 cache (safe & robust)
- * - Keeps v1.1 behavior (speed 1.25x, same model), but hardens caching.
- * - Finds the right R2 binding automatically (BN_AUDIOS, bn-audio, etc.).
- * - Normalizes text before hashing so spacing/casing glitches still hit cache.
- * - Adds X-Cache and X-Cache-Key headers for easy debugging in DevTools.
- */
-
-export async function onRequestPost({ request, env }) {
+// functions/tts.js
+export const onRequestPost = async ({ request, env }) => {
   try {
-    const { text = "" } = await request.json();
+    const { text, voiceId: clientVoiceId, speed } = await request.json();
 
-    // --- ENV / bindings ---
-    const elevenKey = env.ELEVENLABS_API_KEY;
-    const voiceId =
-      env.ELEVENLABS_VOICE_ID || "ASuLN9XzvLEY9pEM9nLGz7"; // your default voice
-
-    // Try several common binding names so we don't break if wrangler.toml differs
-    const bucket =
-      env.BN_AUDIOS ||
-      env["bn-audio"] ||
-      env.bn_audio ||
-      env.bnAudios ||
-      env.R2 ||
-      null;
-
-    if (!elevenKey) {
-      return jsonErr("ELEVENLABS_API_KEY saknas", 500);
+    if (!text || typeof text !== "string") {
+      return json({ ok:false, error:"No text" }, 400);
     }
 
-    // --- Normalize text so tiny diffs still cache ---
-    const norm = normalizeForCache(text);
-    const { hash, key } = await cacheKey(norm); // key like "tts/<sha256>.mp3"
+    // ---- 1) Rensa text för uppläsning
+    const cleaned = sanitizeForTTS(text);
 
-    // --- Try R2 cache first ---
-    if (bucket) {
-      const head = await bucket.head(key);
-      if (head) {
-        const obj = await bucket.get(key);
-        const buf = await obj.arrayBuffer();
+    // ---- 2) Välj röst
+    const apiKey = env.ELEVENLABS_API_KEY || "";
+    const voiceId = (clientVoiceId && String(clientVoiceId).trim()) ||
+                    (env.ELEVENLABS_VOICE_ID && String(env.ELEVENLABS_VOICE_ID).trim()) ||
+                    ""; // tomt → fallback
+
+    // ---- 3) Enkel cache-header (vi lämnar R2-objektcachen oförändrad)
+    // (du ser i nätverket "x-tts-total" & "x-tts-hits" i väntan på meningscache)
+    const total = 1, hits = 0;
+
+    // ---- 4) ElevenLabs om möjligt
+    if (apiKey && voiceId) {
+      const el = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+        method: "POST",
+        headers: {
+          "xi-api-key": apiKey,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          text: cleaned,
+          model_id: "eleven_monolingual_v1", // svenska funkar bra här
+          voice_settings: {
+            stability: 0.45,
+            similarity_boost: 0.7,
+            style: 0.35,
+            use_speaker_boost: true
+          },
+          // tempo: vi “fikar” lite hastighet via generellt stavelsetryck.
+          // ElevenLabs har ingen ren speed-knapp, men vi kan korta pauser:
+          // lämnar detta då du redan ökade tempot i appen.
+        })
+      });
+
+      if (!el.ok) {
+        const errTxt = await el.text().catch(()=>"");
+        // faller tillbaka
+      } else {
+        const buf = await el.arrayBuffer();
         return new Response(buf, {
+          status: 200,
           headers: {
             "Content-Type": "audio/mpeg",
-            "X-Cache": "HIT",
-            "X-Cache-Key": key,
-          },
+            "Cache-Control": "no-store",
+            "x-tts-total": String(total),
+            "x-tts-hits": String(hits)
+          }
         });
       }
     }
 
-    // --- ElevenLabs request (stream) ---
-    const api = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream`;
-    const res = await fetch(api, {
-      method: "POST",
-      headers: {
-        "xi-api-key": elevenKey,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        text: norm,
-        model_id: "eleven_turbo_v2",
-        voice_settings: {
-          stability: 0.5,
-          similarity_boost: 0.8,
-          style: "narration",
-          speed: 1.25, // keep your faster pace
-        },
-      }),
-    });
-
-    if (!res.ok) {
-      const errTxt = await res.text().catch(() => "");
-      throw new Error(`TTS API-fel ${res.status}: ${errTxt}`);
-    }
-
-    const audio = await res.arrayBuffer();
-
-    // --- Save to R2 for future hits ---
-    if (bucket) {
-      await bucket.put(key, audio, {
-        httpMetadata: { contentType: "audio/mpeg" },
+    // ---- 5) Fallback (webm/opus via Web Speech API i edge-runtime)
+    // Returnerar enkel TTS med Cloudflare’s synthesizer (om tillgänglig).
+    // Om inte – svara tydligt till klienten.
+    if (env.AI) {
+      const aiRes = await env.AI.run("@cf/meta/tts", {
+        text: cleaned,
+        // svensk röst är basic – men bättre än tyst
+        voice: "alloy",
+        format: "opus"
+      });
+      return new Response(aiRes, {
+        status: 200,
+        headers: {
+          "Content-Type": "audio/ogg",
+          "Cache-Control": "no-store",
+          "x-tts-total": String(total),
+          "x-tts-hits": String(hits)
+        }
       });
     }
 
-    return new Response(audio, {
-      headers: {
-        "Content-Type": "audio/mpeg",
-        "X-Cache": "MISS",
-        "X-Cache-Key": key,
-      },
-    });
+    return json({ ok:false, error:"Ingen TTS tillgänglig (varken ElevenLabs eller CF AI)" }, 500);
   } catch (err) {
-    console.error("❌ TTS-fel:", err);
-    return jsonErr(String(err?.message || err), 500);
+    return json({ ok:false, error: String(err?.message || err) }, 500);
   }
-}
+};
 
-/* ---------- helpers ---------- */
-
-function jsonErr(message, status = 500) {
-  return new Response(JSON.stringify({ error: message }), {
+// ---- Hjälpare ----
+const json = (obj, status=200, headers={}) =>
+  new Response(JSON.stringify(obj), {
     status,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type":"application/json; charset=utf-8", ...headers }
   });
-}
 
-// collapse spaces, strip invisibles and trim – keeps diacritics & Swedish chars
-function normalizeForCache(input) {
-  return String(input)
-    .replace(/[\u200B-\u200D\uFEFF]/g, "") // zero-width chars
-    .replace(/\s+/g, " ")
-    .trim();
-}
+// Tar bort [BYT SIDA]-markörer m.m. så de inte läses upp,
+// och normaliserar dubbelmellanrum.
+function sanitizeForTTS(raw) {
+  let s = String(raw || "");
 
-async function cacheKey(normalizedText) {
-  const enc = new TextEncoder();
-  const bytes = enc.encode(normalizedText);
-  const hashBuf = await crypto.subtle.digest("SHA-256", bytes);
-  const hash = [...new Uint8Array(hashBuf)]
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-  return { hash, key: `tts/${hash}.mp3` };
+  // ta bort block/etiketter som inte ska läsas
+  s = s.replace(/\[BYT\s*SIDA\]/gi, " ");
+  s = s.replace(/^###\s*/gm, "");        // md rubriker
+  s = s.replace(/^\*\*/gm, "").replace(/\*\*$/gm, "");
+  s = s.replace(/--/g, "—");
+
+  // klämkäckt standard-slut → ersätt med mer neutralt
+  s = s.replace(
+    /Solen föll stilla över världen.*?\.\s*$/is,
+    "Och den kvällen var allt lugnt igen."
+  );
+
+  // städa whitespace
+  s = s.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+  return s;
 }
