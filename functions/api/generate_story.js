@@ -28,7 +28,7 @@ function profile(age) {
   switch (age) {
     case "1-2":
       return {
-        maxWords: 100,
+        maxWords: 65,
         chapters: 1,
         style: `Skriv som en bilderbok för 1–2 år: mycket enkla meningar, ljudord, upprepningar och trygghet.
 Använd “BYT SIDA” för att markera sidbrytningar (t.ex. “Pelle vaknar. BYT SIDA Pelle äter. BYT SIDA …”).
