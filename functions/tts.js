@@ -1,117 +1,140 @@
 // functions/tts.js
+// POST /tts  -> body: { text, voiceId?, speed? }
+// - Tvingar ElevenLabs "eleven_multilingual_v2"
+// - SSML lang="sv-SE" om LANG_DEFAULT=sv
+// - Cacha HELA sagans mp3 i R2 (BN_AUDIOS)
+// - Sätter x-tts-cache: hit|miss och x-tts-total/hits (enkel signal)
+
 export const onRequestPost = async ({ request, env }) => {
   try {
-    const { text, voiceId: clientVoiceId, speed } = await request.json();
+    const { ELEVEN_API_KEY, ELEVEN_VOICE_ID, LANG_DEFAULT } = env;
+    if (!ELEVEN_API_KEY) return j({ ok:false, error:"Saknar ELEVEN_API_KEY" }, 500);
+    const body = await request.json().catch(()=> ({}));
+    let { text = "", voiceId = "", speed } = body || {};
+    voiceId = (voiceId || ELEVEN_VOICE_ID || "").trim();
 
-    if (!text || typeof text !== "string") {
-      return json({ ok:false, error:"No text" }, 400);
-    }
+    // Minimalt skydd
+    text = (text || "").toString().trim();
+    if (!text) return j({ ok:false, error:"Tom text" }, 400);
+    if (!voiceId) return j({ ok:false, error:"Saknar voiceId" }, 400);
 
-    // ---- 1) Rensa text för uppläsning
-    const cleaned = sanitizeForTTS(text);
+    // 1) Normalisera text (ta bort [BYT SIDA] osv som kan störa språkdetektion)
+    const cleaned = normalizeText(text);
 
-    // ---- 2) Välj röst
-    const apiKey = env.ELEVENLABS_API_KEY || "";
-    const voiceId = (clientVoiceId && String(clientVoiceId).trim()) ||
-                    (env.ELEVENLABS_VOICE_ID && String(env.ELEVENLABS_VOICE_ID).trim()) ||
-                    ""; // tomt → fallback
+    // 2) SSML med språk-hint (sv default)
+    const lang = (LANG_DEFAULT || "sv").toLowerCase().startsWith("sv") ? "sv-SE" : "en-US";
+    const ssml = `<speak><lang xml:lang="${lang}">${escapeXml(cleaned)}</lang></speak>`;
 
-    // ---- 3) Enkel cache-header (vi lämnar R2-objektcachen oförändrad)
-    // (du ser i nätverket "x-tts-total" & "x-tts-hits" i väntan på meningscache)
-    const total = 1, hits = 0;
+    // 3) Cache-nyckel (hela sagan)
+    const cacheKey = await sha1(`${voiceId}|eleven_multilingual_v2|${lang}|${cleaned}`);
+    const keyPath  = `stories/${cacheKey}.mp3`;
 
-    // ---- 4) ElevenLabs om möjligt
-    if (apiKey && voiceId) {
-      const el = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
-        method: "POST",
-        headers: {
-          "xi-api-key": apiKey,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          text: cleaned,
-          model_id: "eleven_monolingual_v1", // svenska funkar bra här
-          voice_settings: {
-            stability: 0.45,
-            similarity_boost: 0.7,
-            style: 0.35,
-            use_speaker_boost: true
-          },
-          // tempo: vi “fikar” lite hastighet via generellt stavelsetryck.
-          // ElevenLabs har ingen ren speed-knapp, men vi kan korta pauser:
-          // lämnar detta då du redan ökade tempot i appen.
-        })
-      });
-
-      if (!el.ok) {
-        const errTxt = await el.text().catch(()=>"");
-        // faller tillbaka
-      } else {
-        const buf = await el.arrayBuffer();
-        return new Response(buf, {
-          status: 200,
-          headers: {
-            "Content-Type": "audio/mpeg",
-            "Cache-Control": "no-store",
-            "x-tts-total": String(total),
-            "x-tts-hits": String(hits)
-          }
-        });
-      }
-    }
-
-    // ---- 5) Fallback (webm/opus via Web Speech API i edge-runtime)
-    // Returnerar enkel TTS med Cloudflare’s synthesizer (om tillgänglig).
-    // Om inte – svara tydligt till klienten.
-    if (env.AI) {
-      const aiRes = await env.AI.run("@cf/meta/tts", {
-        text: cleaned,
-        // svensk röst är basic – men bättre än tyst
-        voice: "alloy",
-        format: "opus"
-      });
-      return new Response(aiRes, {
+    // 3a) R2: finns redan?
+    let cacheHit = false;
+    let mp3Obj = await env.BN_AUDIOS.get(keyPath);
+    if (mp3Obj) {
+      cacheHit = true;
+      const arr = await mp3Obj.arrayBuffer();
+      return new Response(arr, {
         status: 200,
         headers: {
-          "Content-Type": "audio/ogg",
-          "Cache-Control": "no-store",
-          "x-tts-total": String(total),
-          "x-tts-hits": String(hits)
+          "Content-Type": "audio/mpeg",
+          "Cache-Control": "public, max-age=31536000, immutable",
+          "x-tts-cache": "hit",
+          "x-tts-total": "1",
+          "x-tts-hits": "1"
         }
       });
     }
 
-    return json({ ok:false, error:"Ingen TTS tillgänglig (varken ElevenLabs eller CF AI)" }, 500);
-  } catch (err) {
-    return json({ ok:false, error: String(err?.message || err) }, 500);
+    // 4) ElevenLabs-anrop
+    const reqPayload = {
+      model_id: "eleven_multilingual_v2",
+      // text eller SSML: använd "use_ssml": true enligt nya API, men bakåtkomp:
+      // Om ditt konto behöver fältet:
+      // "use_ssml": true,
+      text: ssml,
+      voice_settings: {
+        stability: 0.5,
+        similarity_boost: 0.6,
+        style: 0.2,
+        use_speaker_boost: true
+      },
+      // output-format
+      output_format: "mp3_44100_128"
+    };
+
+    // Notera: vissa konton har "voice_speed" (0.5–2.0). Använd om tillgängligt:
+    if (typeof speed === "number" && speed > 0 && speed !== 1) {
+      reqPayload.voice_speed = Math.max(0.5, Math.min(2.0, speed));
+    }
+
+    const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}`;
+    const r = await fetch(url, {
+      method: "POST",
+      headers: {
+        "xi-api-key": ELEVEN_API_KEY,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(reqPayload)
+    });
+
+    if (!r.ok) {
+      const errTxt = await r.text().catch(()=> "");
+      // Om fel → skicka tydligt svar så vi ser i Network
+      return j({ ok:false, error:`ElevenLabs ${r.status}: ${errTxt}` }, 502);
+    }
+
+    const mp3 = await r.arrayBuffer();
+
+    // 5) Spara i R2
+    await env.BN_AUDIOS.put(keyPath, mp3, {
+      httpMetadata: { contentType: "audio/mpeg", cacheControl: "public, max-age=31536000, immutable" }
+    });
+
+    return new Response(mp3, {
+      status: 200,
+      headers: {
+        "Content-Type": "audio/mpeg",
+        "Cache-Control": "public, max-age=31536000, immutable",
+        "x-tts-cache": cacheHit ? "hit" : "miss",
+        "x-tts-total": "1",
+        "x-tts-hits": cacheHit ? "1" : "0"
+      }
+    });
+  } catch (e) {
+    return j({ ok:false, error: String(e?.message || e) }, 500);
   }
 };
 
-// ---- Hjälpare ----
-const json = (obj, status=200, headers={}) =>
+// ---------------- helpers ----------------
+
+const j = (obj, status=200, headers={}) =>
   new Response(JSON.stringify(obj), {
     status,
     headers: { "Content-Type":"application/json; charset=utf-8", ...headers }
   });
 
-// Tar bort [BYT SIDA]-markörer m.m. så de inte läses upp,
-// och normaliserar dubbelmellanrum.
-function sanitizeForTTS(raw) {
-  let s = String(raw || "");
+function normalizeText(t) {
+  // Ta bort stage directions / BYT SIDA-markörer etc som kan störa
+  return t
+    .replace(/\[BYT SIDA\]/gi, "")
+    .replace(/^\s*Kapitel\s+\d+:\s*/gmi, "") // TTS behöver inte rubriker varje gång
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
 
-  // ta bort block/etiketter som inte ska läsas
-  s = s.replace(/\[BYT\s*SIDA\]/gi, " ");
-  s = s.replace(/^###\s*/gm, "");        // md rubriker
-  s = s.replace(/^\*\*/gm, "").replace(/\*\*$/gm, "");
-  s = s.replace(/--/g, "—");
+function escapeXml(s) {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
 
-  // klämkäckt standard-slut → ersätt med mer neutralt
-  s = s.replace(
-    /Solen föll stilla över världen.*?\.\s*$/is,
-    "Och den kvällen var allt lugnt igen."
-  );
-
-  // städa whitespace
-  s = s.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
-  return s;
+async function sha1(s) {
+  const enc = new TextEncoder().encode(s);
+  const buf = await crypto.subtle.digest("SHA-1", enc);
+  const bytes = Array.from(new Uint8Array(buf));
+  return bytes.map(b => b.toString(16).padStart(2, "0")).join("");
 }
