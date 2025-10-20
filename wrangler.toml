@@ -1,34 +1,48 @@
+# wrangler.toml — Kids-BN (stabil)
 name = "kids-bn"
-compatibility_date = "2024-10-04"
-pages_build_output_dir = "."
+compatibility_date = "2024-10-06"
+pages_build_output_dir = "public"
 
-[[d1_databases]]
-binding = "BN_DB"
-database_name = "bn-db"
-database_id = "567ad325-9fd0-4311-8c7e-53ce03b2b9ac"
-
-[[r2_buckets]]
-binding = "bn-audio"
-bucket_name = "bn-audio"
-
-[[r2_buckets]]
-binding = "bn-images"
-bucket_name = "bn-images"
-
+# ===== Gemensamma variabler (ENDA [vars]) =====
 [vars]
-[vars]
-# LLM (du kör Sonnet via OpenRouter i din setup)
-PROVIDER = "openrouter"
-MODEL_CLAUDE = "anthropic/claude-3.5-sonnet"
+APP = "kids"
+BN_ENV = "production"
+# Din egen domän om/ när du ansluter – just nu pages-dev:
+BN_ALLOWED_ORIGIN = "https://kids-bn.pages.dev"
+
+# Bild / (ev) whisper (om du använder dem)
+OPENAI_IMAGE_MODEL = "gpt-image-1"
+WHISPER_MODEL = "whisper-1"
+
+# ElevenLabs – byt till din röst-ID
+ELEVENLABS_VOICE_ID = "SÄTT_DIN_RÖST_ID_HÄR"
+MERCH_API_URL = "https://api.printful.com"
+
+# Claude (sagor) – automatisk modell (vår kod väljer rätt modell)
+MODEL_CLAUDE = "auto"
+# Standardspråk för sagor (“sv” eller “en”)
 LANG_DEFAULT = "sv"
-MERCH_APIURL = "https://api.printful.com"
 
-# ElevenLabs (en röst)
-ELEVENLABS_VOICE_ID = "4Ct5uMEndw4cJ7q0Jx0l"   # <- byt ID här när du vill labba
-ELEVENLABS_MODEL    = "eleven_turbo_v2"
+# ===== Preview-miljö (engångs override) =====
+[env.preview.vars]
+BN_ENV = "preview"
+BN_ALLOWED_ORIGIN = "https://*.pages.dev"
 
-# Svenska-förval (kan ändras via URL vid test)
-ELEVENLABS_STABILITY   = "0.25"
-ELEVENLABS_SIMILARITY  = "0.85"
-ELEVENLABS_STYLE       = "0.35"
-ELEVENLABS_SPEAKER_BOOST = "true"
+# ===== D1 (SQL) =====
+[[d1_databases]]
+binding      = "BN_DB"
+database_name = "bn_db"
+# byt till ditt riktiga ID (finns i Cloudflare på D1)
+database_id  = "SÄTT_DITT_D1_ID_HÄR"
+
+# ===== R2 (ljudcache) =====
+[[r2_buckets]]
+binding             = "BN_AUDIO"
+bucket_name         = "bn-audio"
+preview_bucket_name = "bn-audio"
+
+# ===== R2 (bilder) =====
+[[r2_buckets]]
+binding             = "BN_IMAGES"
+bucket_name         = "bn-images"
+preview_bucket_name = "bn-images"
