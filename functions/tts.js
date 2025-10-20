@@ -14,7 +14,7 @@ export async function onRequestPost({ request, env }) {
     // ======= 2) Hämta ElevenLabs-credentials =======
     const EL_API = env.ELEVENLABS_API_KEY || env.EL_API || env.ELEVEN_API_KEY;
     const defaultVoice = env.ELEVENLABS_VOICE_ID || env.EL_VOICE_ID || '';
-    const voiceId = reqVoiceId || defaultVoice || '21m00Tcm4TlvDq8ikWAM'; // fallback-röst (Alloy)
+    const voiceId = reqVoiceId || defaultVoice || 'Hyidyy6OA9R3GpDKGwoZ'; // fallback-röst (Alloy)
 
     if (!EL_API) {
       return new Response(JSON.stringify({
