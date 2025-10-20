@@ -1,72 +1,63 @@
 // functions/api/whisper_transcribe.js
-// Tar emot RAW audio/webm (ingen multipart på klienten), skickar vidare till OpenAI Whisper.
-// Returnerar JSON: { ok:true, text:"..." } eller fel.
+// POST /api/whisper_transcribe   (body: audio/webm)
+// Returnerar: { ok:true, text:"..." }
+// OPTIONS hanteras för att undvika 405 preflight
 
-const DEFAULT_MODEL = "whisper-1"; // eller "gpt-4o-transcribe" om du använder den
+const ORIGIN = "*"; // sätt din domän i prod
 
-function allowOrigin(origin) {
-  try {
-    const u = new URL(origin || "");
-    return u.hostname === "localhost" || u.host.endsWith(".pages.dev");
-  } catch { return false; }
-}
-function corsHeaders(origin) {
-  return {
-    "Access-Control-Allow-Origin": allowOrigin(origin) ? origin : "*",
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
-    "Content-Type": "application/json; charset=utf-8",
-  };
-}
+export const onRequestOptions = async () =>
+  new Response(null, { status: 204, headers: cors() });
 
-export async function onRequestOptions({ request }) {
-  return new Response(null, { status: 204, headers: corsHeaders(request.headers.get("origin")) });
-}
+export const onRequestGet = async () =>
+  new Response(JSON.stringify({ ok:false, error:"Use POST" }), {
+    status: 405,
+    headers: { "Content-Type":"application/json", ...cors() }
+  });
 
-export async function onRequestPost({ request, env }) {
-  const headers = corsHeaders(request.headers.get("origin"));
+export const onRequestPost = async ({ request, env }) => {
   try {
     const apiKey = env.OPENAI_API_KEY;
-    if (!apiKey) {
-      return new Response(JSON.stringify({ ok:false, error:"OPENAI_API_KEY saknas" }), { status: 500, headers });
-    }
+    const model  = env.WHISPER_MODEL || "whisper-1";
+    if (!apiKey) return json({ ok:false, error:"Saknar OPENAI_API_KEY" }, 500);
 
-    // Din front-end skickar rå webm
-    const ctype = (request.headers.get("content-type") || "").toLowerCase();
-    if (!ctype.includes("audio/")) {
-      return new Response(JSON.stringify({ ok:false, error:"Förväntade audio/* i Content-Type" }), { status: 400, headers });
-    }
+    const ct = request.headers.get("Content-Type") || "";
+    if (!ct.includes("audio/")) return json({ ok:false, error:"Förväntade audio/*" }, 400);
 
-    // Läs rå kropp som blob
-    const audioBlob = await request.blob();
-    if (!audioBlob || !audioBlob.size) {
-      return new Response(JSON.stringify({ ok:false, error:"Tom ljudkropp" }), { status: 400, headers });
-    }
+    const buf = await request.arrayBuffer();
+    const blob = new Blob([buf], { type: ct });
 
-    // Bygg multipart till OpenAI
-    const form = new FormData();
-    // filnamn: viktigt för OpenAI
-    form.append("file", audioBlob, "speech.webm");
-    form.append("model", env.WHISPER_MODEL || DEFAULT_MODEL);
-    // valfritt språk
-    form.append("language", "sv");
+    const fd = new FormData();
+    fd.append("file", blob, "speech.webm");
+    fd.append("model", model);
+    fd.append("language", "sv");
 
-    const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+    const r = await fetch("https://api.openai.com/v1/audio/transcriptions", {
       method: "POST",
-      headers: { "Authorization": `Bearer ${apiKey}` },
-      body: form,
+      headers: { Authorization: `Bearer ${apiKey}` },
+      body: fd
     });
 
-    if (!res.ok) {
-      const txt = await res.text().catch(()=> "");
-      return new Response(JSON.stringify({ ok:false, error:`OpenAI ${res.status}`, detail: txt }), { status: 502, headers });
+    if (!r.ok) {
+      const t = await r.text().catch(()=> "");
+      return json({ ok:false, error:`Whisper ${r.status}: ${t}` }, 502);
     }
-
-    const data = await res.json();
-    const text = (data.text || "").trim();
-    return new Response(JSON.stringify({ ok:true, text }), { status: 200, headers });
-
-  } catch (err) {
-    return new Response(JSON.stringify({ ok:false, error: String(err?.message || err) }), { status: 500, headers });
+    const data = await r.json();
+    return json({ ok:true, text: (data.text||"").trim() }, 200);
+  } catch (e) {
+    return json({ ok:false, error: String(e?.message || e) }, 500);
   }
+};
+
+function cors() {
+  return {
+    "Access-Control-Allow-Origin": ORIGIN,
+    "Access-Control-Allow-Methods": "POST,OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type,Authorization"
+  };
+}
+function json(obj, status=200) {
+  return new Response(JSON.stringify(obj), {
+    status,
+    headers: { "Content-Type":"application/json; charset=utf-8", ...cors() }
+  });
 }
