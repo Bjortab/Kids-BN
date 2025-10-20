@@ -46,11 +46,10 @@
     #cacheBarBox{flex:1; height:8px; background:#1a2030; border-radius:99px; overflow:hidden}
     #cacheBar{width:0%; height:100%; background:#2fff9e}
     #cacheText{font-size:12px; color:var(--muted)}
-    /* Bildkort */
+    /* Bilder */
     #storyImages{display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px; margin-top:12px}
     .story-image-card{background:#10131a; border:1px solid #2a3244; border-radius:8px; padding:6px}
     .story-image-card img{width:100%; height:auto; display:block; border-radius:6px}
-    /* “Tala in” indikatorer */
     #recBadge{display:none; margin-left:8px; font-size:12px; color:#ff6969}
   </style>
 </head>
@@ -94,6 +93,13 @@
         </div>
       </div>
 
+      <div class="row">
+        <div>
+          <label>ElevenLabs Voice ID (valfritt)</label>
+          <input id="voiceId" type="text" placeholder="Klistra in röst-ID här för att byta röst" />
+        </div>
+      </div>
+
       <div class="btns">
         <button id="btnSpeak" class="btn-ghost">🎙️ Tala in <span id="recBadge">• REC</span></button>
         <button id="btnGenerate" class="btn-primary">✨ Skapa saga (med uppläsning)</button>
@@ -103,19 +109,16 @@
 
       <div id="status" class="status"></div>
 
-      <!-- Spinner för TTS/story -->
       <div id="ttsSpinner" hidden>
         <div class="dot"></div><div class="dot"></div><div class="dot"></div>
         <span id="spinnerText" class="status">Arbetar…</span>
       </div>
 
-      <!-- Cache-mätare -->
       <div id="cacheWrap">
         <div id="cacheBarBox"><div id="cacheBar"></div></div>
         <div id="cacheText">Cache: –</div>
       </div>
 
-      <!-- Resultat -->
       <div class="section">
         <h3>Resultat</h3>
         <div id="resultText"></div>
