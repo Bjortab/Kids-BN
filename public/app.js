@@ -1,130 +1,286 @@
-<!doctype html>
-<html lang="sv">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>BN’s Sagovärld</title>
-  <style>
-    :root{
-      --bg:#0f1115; --panel:#1b1f2a; --txt:#e7eef7; --muted:#9fb0c3;
-      --accent:#19d17f; --warn:#ffb200; --err:#ff5d5d;
+(() => {
+  const $ = (s) => document.querySelector(s);
+
+  // Fält
+  const childName = $('#childName');
+  const ageRange  = $('#ageRange');
+  const prompt    = $('#prompt');
+  const heroName  = $('#heroName');
+  const useWhisper= $('#useWhisper');
+  const voiceIdEl = $('#voiceId');
+
+  // Knappar
+  const btnSpeak      = $('#btnSpeak');
+  const btnGenerate   = $('#btnGenerate');
+  const btnSaveHero   = $('#btnSaveHero');
+  const btnResetHeroes= $('#btnResetHeroes');
+
+  // UI
+  const statusEl   = $('#status');
+  const resultText = $('#resultText');
+  const resultAudio= $('#resultAudio');
+
+  const ttsSpinner = $('#ttsSpinner');
+  const spinnerText= $('#spinnerText');
+
+  const cacheWrap  = $('#cacheWrap');
+  const cacheBar   = $('#cacheBar');
+  const cacheText  = $('#cacheText');
+
+  const storyImagesWrap = $('#storyImages');
+  const recBadge = $('#recBadge');
+
+  // ====== Hjälp ======
+  let isBusy = false;
+  const setBusy = (v, msg='') => {
+    isBusy = v;
+    [btnSpeak, btnGenerate, btnSaveHero, btnResetHeroes].forEach(b => b && (b.disabled = v));
+    setStatus(msg);
+  };
+  const setStatus = (msg, type='') => {
+    if (!statusEl) return;
+    statusEl.textContent = msg || '';
+    statusEl.classList.remove('status--ok','status--error');
+    if (type) statusEl.classList.add(`status--${type}`);
+  };
+  function showSpinner(show, txt){
+    if (!ttsSpinner) return;
+    ttsSpinner.hidden = !show;
+    if (typeof txt === 'string') spinnerText.textContent = txt;
+  }
+  function updateCacheMeter(flag){
+    cacheWrap.style.display = 'flex';
+    if (flag === 'HIT') {
+      cacheBar.style.width = '100%';
+      cacheBar.style.background = '#2fff9e';
+      cacheText.textContent = 'Cache: Återanvänd (HIT)';
+    } else if (flag === 'MISS') {
+      cacheBar.style.width = '20%';
+      cacheBar.style.background = '#ff6969';
+      cacheText.textContent = 'Cache: Ny generering (MISS)';
+    } else {
+      cacheBar.style.width = '0%';
+      cacheText.textContent = 'Cache: –';
     }
-    *{box-sizing:border-box}
-    body{margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial; background:var(--bg); color:var(--txt)}
-    .wrap{max-width:980px; margin:40px auto; padding:0 16px}
-    h1{color:#2fff9e; text-align:center; margin:0 0 8px}
-    h2{color:var(--muted); text-align:center; margin:0 0 24px; font-weight:500}
-    .panel{background:var(--panel); padding:18px; border-radius:10px; box-shadow:0 0 0 1px rgba(255,255,255,.03) inset}
-    label{display:block; font-size:14px; color:var(--muted); margin:10px 0 6px}
-    input[type=text], select, textarea{
-      width:100%; padding:10px 12px; border-radius:8px; border:1px solid #2a3244;
-      background:#12141b; color:var(--txt); outline:none;
+  }
+  function renderStoryImages(images){
+    storyImagesWrap.innerHTML = '';
+    (images || []).forEach(img => {
+      const card = document.createElement('div');
+      card.className = 'story-image-card';
+      card.innerHTML = `<img src="${img.url}" alt="${(img.tags||[]).slice(0,2).join(', ')}" />`;
+      storyImagesWrap.appendChild(card);
+    });
+  }
+
+  // ====== Ålderskontroller ======
+  const ageToControls = (age) => {
+    switch (age) {
+      case '1–2 år':  return { minWords: 50,  maxWords: 160,  tone:'bilderbok, rim, färger, ljud och upprepningar', chapters:1 };
+      case '3–4 år':  return { minWords: 120, maxWords: 280,  tone:'enkel handling med tydlig början och slut; humor och igenkänning', chapters:1 };
+      case '5–6 år':  return { minWords: 250, maxWords: 450,  tone:'lite mer komplexa berättelser med problem som löses; korta kapitel', chapters:1 };
+      case '7–8 år':  return { minWords: 400, maxWords: 700,  tone:'äventyr och mysterier, humor; introducera serier och cliffhangers', chapters:2 };
+      case '9–10 år': return { minWords: 600, maxWords: 1000, tone:'fantasy/vänskap/moralfrågor; kapitelberättelse, 2–3 sidor', chapters:2 };
+      case '11–12 år':return { minWords: 900, maxWords: 1600, tone:'djupare teman och karaktärsutveckling; kapitel', chapters:3 };
+      default:        return { minWords: 250, maxWords: 500,  tone:'barnvänlig', chapters:1 };
     }
-    textarea{min-height:84px; resize:vertical}
-    .row{display:flex; gap:10px; flex-wrap:wrap}
-    .row > div{flex:1 1 260px}
-    .btns{display:flex; gap:10px; flex-wrap:wrap; margin-top:12px}
-    button{
-      border:0; padding:10px 14px; border-radius:8px; cursor:pointer; font-weight:600;
-      background:#2a3244; color:#fff;
+  };
+
+  const buildStoryPayload = () => {
+    const age = ageRange.value;
+    return {
+      childName: (childName.value || '').trim(),
+      heroName:  (heroName.value || '').trim(),
+      ageRange:  age,
+      prompt:    (prompt.value || '').trim(),
+      controls:  ageToControls(age)
+    };
+  };
+
+  // ====== GENERERA SAGA + TTS + BILDER ======
+  btnGenerate?.addEventListener('click', async () => {
+    if (isBusy) return;
+
+    const payload = buildStoryPayload();
+    if (!payload.prompt && !useWhisper?.checked) {
+      setStatus('Skriv något i sagognistan eller tala in.', 'error');
+      return;
     }
-    .btn-primary{background:var(--accent); color:#042b17}
-    .btn-warn{background:var(--warn); color:#2b1a00}
-    .btn-ghost{background:#232a3a}
-    .status{margin-top:10px; font-size:14px; color:var(--muted)}
-    .status--ok{color:var(--accent)} .status--error{color:var(--err)}
-    #resultText{white-space:pre-wrap; line-height:1.6}
-    #resultAudio{width:100%; margin-top:10px}
-    .section{margin-top:18px}
-    /* Spinner */
-    #ttsSpinner{display:flex; align-items:center; gap:10px; margin-top:10px}
-    .dot{width:8px; height:8px; border-radius:50%; background:var(--accent); animation:b 1s infinite alternate}
-    .dot:nth-child(2){animation-delay:.2s}.dot:nth-child(3){animation-delay:.4s}
-    @keyframes b{from{opacity:.3; transform:translateY(0)} to{opacity:1; transform:translateY(-5px)}}
-    /* Cache meter */
-    #cacheWrap{display:none; align-items:center; gap:10px; margin-top:8px}
-    #cacheBarBox{flex:1; height:8px; background:#1a2030; border-radius:99px; overflow:hidden}
-    #cacheBar{width:0%; height:100%; background:#2fff9e}
-    #cacheText{font-size:12px; color:var(--muted)}
-    /* Bildkort */
-    #storyImages{display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px; margin-top:12px}
-    .story-image-card{background:#10131a; border:1px solid #2a3244; border-radius:8px; padding:6px}
-    .story-image-card img{width:100%; height:auto; display:block; border-radius:6px}
-    /* “Tala in” indikatorer */
-    #recBadge{display:none; margin-left:8px; font-size:12px; color:#ff6969}
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <h1>BN’s Sagovärld</h1>
-    <h2>…där drömmar blir berättelser</h2>
 
-    <div class="panel">
-      <div class="row">
-        <div>
-          <label>Barnets namn</label>
-          <input id="childName" type="text" placeholder="t.ex. Lisa" />
-        </div>
-        <div>
-          <label>Ålder</label>
-          <select id="ageRange">
-            <option>1–2 år</option>
-            <option>3–4 år</option>
-            <option>5–6 år</option>
-            <option>7–8 år</option>
-            <option>9–10 år</option>
-            <option>11–12 år</option>
-          </select>
-        </div>
-      </div>
+    resultText.textContent = '';
+    resultAudio.hidden = true;
+    resultAudio.removeAttribute('src');
+    cacheWrap.style.display = 'none';
+    storyImagesWrap.innerHTML = '';
 
-      <label>Sagognista (vad ska sagan handla om?)</label>
-      <textarea id="prompt" placeholder="t.ex. En liten drake som lär sig flyga."></textarea>
+    try {
+      setBusy(true, 'Skapar saga…');
+      showSpinner(true, 'Skapar saga…');
 
-      <div class="row">
-        <div>
-          <label>
-            <input id="useWhisper" type="checkbox" />
-            Använd extra exakt rösttolkning (Whisper)
-          </label>
-        </div>
-        <div>
-          <label>Hjältens namn (valfritt)</label>
-          <input id="heroName" type="text" placeholder="t.ex. Draki eller Prinsessan Nila" />
-        </div>
-      </div>
+      // 1) Story
+      const resStory = await fetch('/api/generate_story', {
+        method: 'POST',
+        headers: { 'Content-Type':'application/json' },
+        body: JSON.stringify({ ...payload, read_aloud:true })
+      });
+      if (!resStory.ok) throw new Error(`Story: ${resStory.status} ${await resStory.text().catch(()=> '')}`);
+      const data = await resStory.json();
+      if (data.story) resultText.textContent = data.story;
 
-      <div class="btns">
-        <button id="btnSpeak" class="btn-ghost">🎙️ Tala in <span id="recBadge">• REC</span></button>
-        <button id="btnGenerate" class="btn-primary">✨ Skapa saga (med uppläsning)</button>
-        <button id="btnSaveHero" class="btn-warn">⭐ Spara hjälte</button>
-        <button id="btnResetHeroes" class="btn-ghost">🧹 Rensa hjältar</button>
-      </div>
+      // 2) TTS (skicka ev. voiceId)
+      setStatus('Skapar uppläsning…');
+      showSpinner(true, 'Skapar uppläsning…');
 
-      <div id="status" class="status"></div>
+      const chosenVoiceId = (voiceIdEl?.value || '').trim();
+      const resTTS = await fetch('/tts', {
+        method: 'POST',
+        headers: { 'Content-Type':'application/json' },
+        body: JSON.stringify({ text: data.story, voiceId: chosenVoiceId })
+      });
+      if (!resTTS.ok) throw new Error(`TTS: ${resTTS.status} ${await resTTS.text().catch(()=> '')}`);
 
-      <!-- Spinner för TTS/story -->
-      <div id="ttsSpinner" hidden>
-        <div class="dot"></div><div class="dot"></div><div class="dot"></div>
-        <span id="spinnerText" class="status">Arbetar…</span>
-      </div>
+      updateCacheMeter(resTTS.headers.get('x-tts-cache') || '');
 
-      <!-- Cache-mätare -->
-      <div id="cacheWrap">
-        <div id="cacheBarBox"><div id="cacheBar"></div></div>
-        <div id="cacheText">Cache: –</div>
-      </div>
+      const blob = await resTTS.blob();
+      const url = URL.createObjectURL(blob);
+      resultAudio.src = url;
+      resultAudio.hidden = false;
 
-      <!-- Resultat -->
-      <div class="section">
-        <h3>Resultat</h3>
-        <div id="resultText"></div>
-        <audio id="resultAudio" controls hidden></audio>
-        <div id="storyImages"></div>
-      </div>
-    </div>
-  </div>
+      // 3) Bilder (om backenden stöder /api/images)
+      try {
+        const imgRes = await fetch('/api/images', {
+          method: 'POST',
+          headers: { 'Content-Type':'application/json' },
+          body: JSON.stringify({ storyText: data.story, ageRange: payload.ageRange, count: 3 })
+        });
+        if (imgRes.ok) {
+          const j = await imgRes.json();
+          if (j?.images) renderStoryImages(j.images);
+        }
+      } catch {}
 
-  <script src="/app.js" defer></script>
-</body>
-</html>
+      showSpinner(false);
+      setBusy(false, 'Klar!', 'ok');
+      resultAudio.play().catch(()=>{});
+    } catch (err) {
+      showSpinner(false);
+      setBusy(false, '');
+      setStatus('Kunde inte skapa sagan: ' + (err?.message || err), 'error');
+    }
+  });
+
+  // ====== Hjältar (lokalt minne) ======
+  const heroKey = 'bn_heroes_v1';
+  const loadHeroes = () => { try { return JSON.parse(localStorage.getItem(heroKey) || '[]'); } catch { return []; } };
+  const saveHeroes = (list) => localStorage.setItem(heroKey, JSON.stringify(list.slice(0, 50)));
+
+  btnSaveHero?.addEventListener('click', () => {
+    const h = (heroName.value || '').trim();
+    if (!h){ setStatus('Skriv ett hjältenamn först.', 'error'); return; }
+    const list = loadHeroes();
+    if (!list.includes(h)) list.unshift(h);
+    saveHeroes(list);
+    setStatus(`Sparade hjälten: ${h}`, 'ok');
+  });
+  btnResetHeroes?.addEventListener('click', () => {
+    saveHeroes([]);
+    setStatus('Rensade sparade hjältar.', 'ok');
+  });
+
+  // ====== TALA IN (Whisper-transcribe endpoint du redan har) ======
+  let mediaRec = null, audioChunks = [], audioCtx = null, analyser = null, silenceTimer = null;
+  let recording = false;
+
+  btnSpeak?.addEventListener('click', async () => {
+    if (recording) {
+      stopRecording();
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
+      mediaRec = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      audioChunks = [];
+      recording = true;
+      recBadge.style.display = 'inline';
+
+      // Tystnad => auto-stop
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const src = audioCtx.createMediaStreamSource(stream);
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 512;
+      src.connect(analyser);
+      watchSilence();
+
+      mediaRec.ondataavailable = (e) => { if (e.data.size) audioChunks.push(e.data); };
+      mediaRec.onstop = async () => {
+        try {
+          const blob = new Blob(audioChunks, { type: 'audio/webm' });
+          const form = new FormData();
+          form.append('audio', blob, 'speech.webm');
+
+          showSpinner(true, 'Transkriberar tal…');
+          // OBS: Anropa din befintliga endpoint (utan /api/ prefix om din installation så kräver)
+          const res = await fetch('/whisper_transcribe', { method:'POST', body: form });
+          showSpinner(false);
+
+          if (!res.ok) {
+            setStatus(`Kunde inte transkribera: Whisper ${res.status}`, 'error');
+            return;
+          }
+          const j = await res.json();
+          if (j?.text) {
+            prompt.value = (prompt.value ? (prompt.value.trim() + ' ') : '') + j.text;
+            setStatus('Talet omvandlat → sagognista uppdaterad.', 'ok');
+          } else {
+            setStatus('Tomt svar från transkribering.', 'error');
+          }
+        } catch (e) {
+          setStatus('Fel vid transkribering: ' + (e?.message || e), 'error');
+        } finally {
+          recBadge.style.display = 'none';
+        }
+      };
+
+      mediaRec.start(250);
+      setStatus('Spelar in… prata normalt. (Tystnad stoppar inspelningen automatiskt.)', 'ok');
+    } catch (e) {
+      setStatus('Mikrofonfel: ' + (e?.message || e), 'error');
+    }
+  });
+
+  function stopRecording() {
+    if (!recording) return;
+    recording = false;
+    try { mediaRec && mediaRec.state !== 'inactive' && mediaRec.stop(); } catch {}
+    try { audioCtx && audioCtx.close(); } catch {}
+    try {
+      const tracks = mediaRec?.stream?.getTracks?.() || [];
+      tracks.forEach(t => t.stop());
+    } catch {}
+    clearTimeout(silenceTimer);
+    recBadge.style.display = 'none';
+  }
+
+  function watchSilence() {
+    const data = new Uint8Array(analyser.frequencyBinCount);
+    const tick = () => {
+      if (!recording) return;
+      analyser.getByteTimeDomainData(data);
+      let max = 0;
+      for (let i=0;i<data.length;i++) {
+        const v = Math.abs(data[i]-128);
+        if (v>max) max = v;
+      }
+      const speaking = max > 8; // tröskel
+      clearTimeout(silenceTimer);
+      silenceTimer = setTimeout(() => {
+        if (!speaking) stopRecording();
+        else watchSilence();
+      }, 1400);
+      if (speaking) watchSilence();
+    };
+    tick();
+  }
+
+  setStatus('');
+})();
