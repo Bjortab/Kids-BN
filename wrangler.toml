@@ -33,7 +33,7 @@ BN_ALLOWED_ORIGIN = "https://*.pages.dev"
 binding      = "BN_DB"
 database_name = "bn_db"
 # byt till ditt riktiga ID (finns i Cloudflare på D1)
-database_id  = "SÄTT_DITT_D1_ID_HÄR"
+database_id  = "567ad325-9fd0-4311-8c7e-53ce03b2b9ac"
 
 # ===== R2 (ljudcache) =====
 [[r2_buckets]]
