@@ -2,18 +2,20 @@
 (() => {
   const $ = s => document.querySelector(s);
 
-  // fält/knappar
+  // Inputs
   const childName = $('#childName');
   const ageRange  = $('#ageRange');
   const prompt    = $('#prompt');
   const heroName  = $('#heroName');
   const useWhisper= $('#useWhisper');
 
+  // Buttons
   const btnSpeak  = $('#btnSpeak');
   const btnGenerate = $('#btnGenerate');
   const btnSaveHero = $('#btnSaveHero');
   const btnResetHeroes = $('#btnResetHeroes');
 
+  // Status / result
   const statusEl  = $('#status');
   const resultText= $('#resultText');
   const resultAudio = $('#resultAudio');
@@ -25,6 +27,7 @@
   const cacheText  = $('#cacheText');
   const storyImagesWrap = $('#storyImages');
 
+  // ===== Status helpers =====
   let isBusy = false;
   const setBusy = (v, msg='') => {
     isBusy = v;
@@ -34,9 +37,9 @@
   const setStatus = (msg, type='') => {
     if (!statusEl) return;
     statusEl.textContent = msg || '';
-    statusEl.className = 'status' + (type ? ` status--${type}` : '');
+    statusEl.classList.remove('status--ok','status--error');
+    if (type) statusEl.classList.add(`status--${type}`);
   };
-
   function showSpinner(show){ if(ttsSpinner) ttsSpinner.hidden = !show; }
   function updateCacheMeter(hits, total){
     if (!cacheWrap || !cacheBar || !cacheText) return;
@@ -57,15 +60,15 @@
     });
   }
 
-  // ---- Story controls (ålders-styrning)
+  // ===== Age → controls
   const ageToControls = (age) => {
     switch (age) {
-      case '1-2':  return { minWords: 50,  maxWords: 160,  tone:'bilderbok; enkel replik + [BYT SIDA] sparsamt', chapters:1 };
-      case '3-4':  return { minWords: 120, maxWords: 280,  tone:'lekfull; tydlig början/mitten/slut', chapters:1 };
-      case '5-6':  return { minWords: 250, maxWords: 450,  tone:'äventyr; hinder och lösning', chapters:1 };
-      case '7-8':  return { minWords: 400, maxWords: 700,  tone:'mysterium/äventyr, cliffhanger', chapters:2 };
-      case '9-10': return { minWords: 600, maxWords: 1000, tone:'fantasy/vänskap, moget språk', chapters:2 };
-      case '11-12':return { minWords: 900, maxWords: 1600, tone:'spänning/rys; konsekvenser; nertonad moral', chapters:3 };
+      case '1-2':  return { minWords: 50,  maxWords: 160,  tone:'bilderbok; rim; ljud; upprepning; [BYT SIDA] sparsamt', chapters:1 };
+      case '3-4':  return { minWords: 120, maxWords: 280,  tone:'enkel handling; humor; igenkänning', chapters:1 };
+      case '5-6':  return { minWords: 250, maxWords: 450,  tone:'problem → lösning; korta kapitel', chapters:1 };
+      case '7-8':  return { minWords: 400, maxWords: 700,  tone:'äventyr/mysterier; antydd cliffhanger', chapters:2 };
+      case '9-10': return { minWords: 600, maxWords: 1000, tone:'fantasy/vänskap/moral; kapitel', chapters:2 };
+      case '11-12':return { minWords: 900, maxWords: 1600, tone:'mognare teman; stakes; payoff; kapitel', chapters:3 };
       default:     return { minWords: 250, maxWords: 500,  tone:'barnvänlig', chapters:1 };
     }
   };
@@ -80,7 +83,7 @@
     };
   };
 
-  // ==== GENERATE (story + TTS + images)
+  // ===== Generate: story -> TTS -> images
   btnGenerate?.addEventListener('click', async () => {
     if (isBusy) return;
     const payload = buildStoryPayload();
@@ -127,7 +130,7 @@
       resultAudio.src = url;
       resultAudio.hidden = false;
 
-      // 3) Bilder (best effort)
+      // 3) Bilder (valfritt)
       try {
         const imgRes = await fetch('/api/images', {
           method: 'POST',
@@ -150,113 +153,7 @@
     }
   });
 
-  // ==== TAL-IN (Whisper) ====
-  let mediaStream, mediaRecorder, chunks = [];
-  let silenceTimer = null;
-  const SILENCE_MS = 2200;         // auto-stop efter ~2.2s tystnad
-  const SILENCE_LEVEL = 0.015;     // tröskel (0–1), kan fintrimmas
-
-  btnSpeak?.addEventListener('click', async () => {
-    if (btnSpeak.dataset.state === 'rec') {
-      stopRecording();
-    } else {
-      await startRecording();
-    }
-  });
-
-  async function startRecording() {
-    try {
-      const lang = (navigator.language || 'sv').toLowerCase().startsWith('sv') ? 'sv' : 'en';
-      btnSpeak.textContent = 'Stoppa (auto)';
-      btnSpeak.dataset.state = 'rec';
-      setStatus('Lyssnar… prata nu');
-
-      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaRecorder = new MediaRecorder(mediaStream, { mimeType: 'audio/webm' });
-      chunks = [];
-
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      const src = ctx.createMediaStreamSource(mediaStream);
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 2048;
-      src.connect(analyser);
-
-      const data = new Uint8Array(analyser.fftSize);
-
-      const checkSilence = () => {
-        analyser.getByteTimeDomainData(data);
-        // RMS-liknande
-        let sum = 0;
-        for (let i=0;i<data.length;i++) {
-          const v = (data[i]-128)/128;
-          sum += v*v;
-        }
-        const rms = Math.sqrt(sum / data.length);
-        if (rms < SILENCE_LEVEL) {
-          if (!silenceTimer) {
-            silenceTimer = setTimeout(() => {
-              silenceTimer = null;
-              stopRecording();
-            }, SILENCE_MS);
-          }
-        } else {
-          if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
-        }
-        if (btnSpeak.dataset.state === 'rec') requestAnimationFrame(checkSilence);
-      };
-      requestAnimationFrame(checkSilence);
-
-      mediaRecorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
-      mediaRecorder.onstop = async () => {
-        const blob = new Blob(chunks, { type: 'audio/webm' });
-        await uploadForTranscription(blob);
-        // stäng mic
-        mediaStream.getTracks().forEach(t => t.stop());
-        ctx.close();
-      };
-
-      mediaRecorder.start();
-    } catch (err) {
-      setStatus('Kunde inte starta mikrofon: ' + (err?.message || err), 'error');
-      btnSpeak.textContent = 'Tala in';
-      btnSpeak.dataset.state = '';
-    }
-  }
-
-  function stopRecording() {
-    try {
-      btnSpeak.textContent = 'Tala in';
-      btnSpeak.dataset.state = '';
-      if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
-      if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
-    } catch {}
-  }
-
-  async function uploadForTranscription(blob) {
-    try {
-      setStatus('Transkriberar…');
-      const fd = new FormData();
-      fd.append('file', blob, 'inspelning.webm');
-      fd.append('language', 'sv');
-
-      const res = await fetch('/api/whisper', { method: 'POST', body: fd });
-      if (!res.ok) throw new Error(`Whisper ${res.status} ${await res.text().catch(()=> '')}`);
-      const j = await res.json();
-      const txt = (j?.text || '').trim();
-      if (txt) {
-        // fyll i sagognistan + aktivera checkbox
-        if (prompt) prompt.value = txt;
-        if (useWhisper) useWhisper.checked = true;
-        setStatus('Klart! Text från tal inläst.', 'ok');
-      } else {
-        setStatus('Ingen text hittad i inspelningen.', 'error');
-      }
-    } catch (err) {
-      setStatus('Kunde inte transkribera: ' + (err?.message || err), 'error');
-    }
-  }
-
-  // ==== Hjältar (lokal-minne)
+  // ===== Hjältar (lokalt minne)
   const heroKey = 'bn_heroes_v1';
   const loadHeroes = () => { try { return JSON.parse(localStorage.getItem(heroKey) || '[]'); } catch { return []; } };
   const saveHeroes = (list) => localStorage.setItem(heroKey, JSON.stringify(list.slice(0, 50)));
@@ -273,6 +170,101 @@
     saveHeroes([]);
     setStatus('Rensade sparade hjältar.', 'ok');
   });
+
+  // ===== TALA IN -> /api/whisper_transcribe (auto-stop vid tystnad)
+  let mediaStream, mediaRecorder, chunks = [];
+  let analyser, audioCtx, sourceNode, silenceTimer = null;
+  const SILENCE_MS = 2000;
+  const SILENCE_LEVEL = 0.02;
+
+  btnSpeak?.addEventListener('click', async () => {
+    if (mediaRecorder && mediaRecorder.state === 'recording') {
+      stopRecording();
+      return;
+    }
+    try { await startRecording(); } catch(e){ setStatus('Mikrofonfel: '+(e?.message||e), 'error'); }
+  });
+
+  async function startRecording() {
+    setStatus('Lyssnar… (tystnad stoppar automatiskt)');
+    chunks = [];
+    mediaStream = await navigator.mediaDevices.getUserMedia({ audio:true });
+    mediaRecorder = new MediaRecorder(mediaStream, { mimeType:'audio/webm' });
+
+    // VAD
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    sourceNode = audioCtx.createMediaStreamSource(mediaStream);
+    analyser = audioCtx.createAnalyser(); analyser.fftSize = 2048;
+    sourceNode.connect(analyser);
+
+    const data = new Uint8Array(analyser.fftSize);
+    const loop = () => {
+      analyser.getByteTimeDomainData(data);
+      let sum=0; for (let i=0;i<data.length;i++){ const v=(data[i]-128)/128; sum+=v*v; }
+      const rms = Math.sqrt(sum/data.length);
+      const silent = rms < SILENCE_LEVEL;
+      if (silent){
+        if (!silenceTimer){
+          silenceTimer = setTimeout(() => { stopRecording(); }, SILENCE_MS);
+        }
+      } else if (silenceTimer){
+        clearTimeout(silenceTimer); silenceTimer=null;
+      }
+      if (mediaRecorder && mediaRecorder.state === 'recording') requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+
+    mediaRecorder.ondataavailable = e => e.data.size && chunks.push(e.data);
+    mediaRecorder.onstop = async () => {
+      try {
+        const blob = new Blob(chunks, { type:'audio/webm' });
+        await sendToWhisper(blob);
+      } finally {
+        cleanupAudio();
+      }
+    };
+    mediaRecorder.start();
+    btnSpeak.textContent = 'Stoppa';
+  }
+  function stopRecording(){
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+    if (mediaStream) mediaStream.getTracks().forEach(t=>t.stop());
+    btnSpeak.textContent = 'Tala in';
+  }
+  function cleanupAudio(){
+    if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
+    try{ sourceNode && sourceNode.disconnect(); }catch{}
+    try{ analyser && analyser.disconnect(); }catch{}
+    try{ audioCtx && audioCtx.close(); }catch{}
+    sourceNode = analyser = audioCtx = null;
+  }
+  async function sendToWhisper(blob){
+    try{
+      setStatus('Transkriberar…');
+      const res = await fetch('/api/whisper_transcribe', {
+        method: 'POST',
+        headers: { 'Content-Type':'audio/webm' },
+        body: blob
+      });
+      if (!res.ok) {
+        const t = await res.text().catch(()=> '');
+        setStatus(`Whisper fel: ${res.status}`, 'error');
+        console.error('Whisper', t);
+        return;
+      }
+      const j = await res.json();
+      if (j?.ok && j.text){
+        const prev = (prompt.value||'').trim();
+        prompt.value = prev ? (prev + ' ' + j.text) : j.text;
+        if (useWhisper) useWhisper.checked = true;
+        setStatus('Klart! Texten är inläst.', 'ok');
+      } else {
+        setStatus('Ingen text hittad.', 'error');
+      }
+    }catch(e){
+      setStatus('Fel vid transkribering: ' + (e?.message||e), 'error');
+    }
+  }
 
   setStatus('');
 })();
