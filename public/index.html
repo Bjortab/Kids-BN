@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>BN’s Sagovärld</title>
   <style>
-    :root { --bg:#0f1418; --panel:#1b232b; --text:#e8f0f7; --muted:#98a6b3; --accent:#19c37d; --warn:#f9a825; --danger:#ff5c5c; --border:#2a3642; }
+    :root { --bg:#0f1418; --panel:#1b232b; --text:#e8f0f7; --muted:#98a6b3; --accent:#19c37d; --warn:#f9a825; --border:#2a3642; }
     html,body { height:100%; background:var(--bg); color:var(--text); margin:0; font-family: system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial; }
     .wrap { max-width: 980px; margin: 24px auto; padding: 0 16px; }
     h1 { margin: 0 0 8px; color:#2ee59d; text-shadow: 0 0 12px rgba(46,229,157,.2);}
@@ -23,7 +23,6 @@
     button{border:1px solid var(--border);background:#0f1a22;color:var(--text);padding:10px 14px;border-radius:8px;cursor:pointer;}
     button.primary{background:var(--accent);color:#072314;font-weight:600;}
     button.ghost{background:transparent;}
-    button.warn{background:var(--warn);color:#221a00;}
     button:disabled{opacity:.6;cursor:not-allowed;}
     .spin{display:none;align-items:center;gap:8px;color:var(--muted);font-size:.95rem;margin-top:6px;}
     .dot{width:6px;height:6px;border-radius:50%;background:var(--muted);opacity:.6;animation:blink 1.2s infinite ease-in-out;}
@@ -45,8 +44,12 @@
         <div>
           <label for="age">Ålder</label>
           <select id="age">
-            <option>1–2 år</option><option>3–4 år</option><option>5–6 år</option>
-            <option>7–8 år</option><option>9–10 år</option><option>11–12 år</option>
+            <option>1–2 år</option>
+            <option>3–4 år</option>
+            <option>5–6 år</option>
+            <option>7–8 år</option>
+            <option>9–10 år</option>
+            <option>11–12 år</option>
           </select>
         </div>
         <div>
