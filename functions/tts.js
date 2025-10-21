@@ -1,157 +1,136 @@
-// functions/tts.js
+export const config = {
+  path: "/tts"
+};
+
 /**
- * Text → Speech med ElevenLabs + enkel R2-cache.
- * - Respekterar env.ELEVENLABS_VOICE_ID som standardröst
- * - Tillåter override via body.voiceId
- * - Cache-nyckel: sha1(text|voiceId|model|format)
- * - Returnerar MP3
- *
- * Kräver:
- *   - env.ELEVENLABS_API_KEY (Secret)
- *   - (valfritt) env.ELEVENLABS_VOICE_ID (Secret/Var)
- *   - R2 binding: env.BN_AUDIO -> R2-bucket (t.ex. bn-audio)
+ * POST /tts
+ * Body: { text:string, voiceId?:string, speed?:number }
+ * Kräver R2 bindingar: BN_AUDIO (bucket) och secret ELEVENLABS_API_KEY
+ * Optional: default voice via env.ELEVENLABS_VOICE_ID
  */
+export async function onRequestPost(context) {
+  const { request, env } = context;
 
-export const onRequestPost = async ({ request, env }) => {
-  let hits = 0;
-  let total = 0;
+  // --- Guard: R2 bindingar finns?
+  if (!env.BN_AUDIO) {
+    return json({ ok:false, error:"R2 binding BN_AUDIO saknas" }, 500);
+  }
+  const apiKey = env.ELEVENLABS_API_KEY;
+  if (!apiKey) {
+    return json({ ok:false, error:"ELEVENLABS_API_KEY saknas" }, 500);
+  }
 
-  try {
-    // ---- Läs in body ----
-    const body = await request.json().catch(() => ({}));
-    const textRaw = (body?.text ?? "").toString();
-    const voiceOverride = (body?.voiceId ?? "").toString().trim();
+  // --- Input
+  let body;
+  try { body = await request.json(); } catch { body = {}; }
+  const text    = (body?.text || "").trim();
+  const voiceId = (body?.voiceId || env.ELEVENLABS_VOICE_ID || "").trim();
+  const speed   = Number.isFinite(+body?.speed) ? Math.max(0.5, Math.min(2, +body.speed)) : 1.0;
 
-    // ---- Standardröstlogik (ingen ny secret behövs) ----
-    // Prioritet: body.voiceId > env.ELEVENLABS_VOICE_ID > fallback
-    const defaultVoice = (env.ELEVENLABS_VOICE_ID ?? "").toString().trim();
-    const voiceId = (voiceOverride || defaultVoice || "21m00Tcm4TlvDq8ikWAM").trim();
-    // (fallback = Ella, byt gärna till din favorit om du vill)
+  if (!text)   return json({ ok:false, error:"Tom text" }, 400);
+  if (!voiceId) return json({ ok:false, error:"Ingen voiceId (skicka i body.voiceId eller sätt ELEVENLABS_VOICE_ID)" }, 400);
 
-    if (!env.ELEVENLABS_API_KEY) {
-      return jsonErr(500, "ELEVENLABS_API_KEY saknas (Secret).");
-    }
-    if (!env.BN_AUDIO) {
-      return jsonErr(500, "R2-binding BN_AUDIO saknas.");
-    }
-    if (!textRaw) {
-      return jsonErr(400, "Ingen text att läsa upp.");
-    }
-    // Rensa bort potentiell kontrolltext i 1–2-års-stil (t.ex. [BYT SIDA])
-    const text = textRaw.replace(/\[BYT SIDA\]/g, " ").replace(/\s{2,}/g, " ").trim();
+  // --- Cache-nyckel
+  const keyBase = `${voiceId}::${speed}::${text}`;
+  const key     = await sha1(keyBase) + ".mp3";
 
-    // En mycket enkel check så man inte råkar skicka in "SÄTT_DIN_RÖST_ID_HÄR"
-    if (!/^[A-Za-z0-9_-]{6,}$/.test(voiceId)) {
-      return jsonErr(400, `Ogiltigt voiceId: "${voiceId}".`);
-    }
-
-    // ---- Cache-nyckel ----
-    const model = "eleven_turbo_v2"; // kan bytas
-    const format = "mp3_44100_128";  // ElevenLabs audio_format
-    const key = await sha1(`${voiceId}::${model}::${format}::${text}`);
-
-    // ---- Försök hämta från cache ----
-    total++;
-    const cached = await env.BN_AUDIO.get(key);
-    if (cached) {
-      hits++;
-      return new Response(await cached.arrayBuffer(), {
-        status: 200,
+  // --- Försök cache HIT (R2)
+  let hits = 0, total = 1;
+  const head = await env.BN_AUDIO.head(key).catch(()=>null);
+  if (head?.size) {
+    const obj = await env.BN_AUDIO.get(key);
+    if (obj) {
+      hits = 1;
+      return new Response(obj.body, {
         headers: {
           "content-type": "audio/mpeg",
           "cache-control": "public, max-age=31536000, immutable",
+          "x-tts-cache": "HIT",
           "x-tts-hits": String(hits),
           "x-tts-total": String(total),
-          "x-tts-voice-id": voiceId
+          "x-tts-key": key
         }
       });
     }
-
-    // ---- Skapa TTS hos ElevenLabs ----
-    const apiUrl = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(
-      voiceId
-    )}`;
-    const payload = {
-      model_id: model,
-      text,
-      // Justera tempo/intonation om du vill fintrimma svenska
-      voice_settings: {
-        stability: 0.45,
-        similarity_boost: 0.75,
-        style: 0.2,
-        use_speaker_boost: true
-      },
-      // MP3 med 44.1k/128kbit. Byt om du vill.
-      audio_format: format
-    };
-
-    const res = await fetch(apiUrl, {
-      method: "POST",
-      headers: {
-        "xi-api-key": env.ELEVENLABS_API_KEY,
-        "content-type": "application/json"
-      },
-      body: JSON.stringify(payload)
-    });
-
-    if (!res.ok) {
-      const errText = await safeText(res);
-      return jsonErr(
-        res.status,
-        `ElevenLabs fel (${res.status}): ${errText || res.statusText}`
-      );
-    }
-
-    const mp3 = await res.arrayBuffer();
-
-    // ---- Spara i cache ----
-    try {
-      await env.BN_AUDIO.put(key, mp3, {
-        httpMetadata: { contentType: "audio/mpeg" },
-        customMetadata: {
-          voiceId,
-          model,
-          created_at: new Date().toISOString()
-        }
-      });
-    } catch (_) {
-      // Ignorera cachefel – vi vill inte blocka ljudet
-    }
-
-    // ---- Svar till klient ----
-    return new Response(mp3, {
-      status: 200,
-      headers: {
-        "content-type": "audio/mpeg",
-        "cache-control": "public, max-age=31536000, immutable",
-        "x-tts-hits": String(hits),
-        "x-tts-total": String(total),
-        "x-tts-voice-id": voiceId
-      }
-    });
-  } catch (e) {
-    return jsonErr(500, `TTS-crash: ${e?.message || e}`);
   }
-};
 
-// ---- Hjälpare ----
-const jsonErr = (status, message) =>
-  new Response(JSON.stringify({ ok: false, error: message }), {
-    status,
-    headers: { "content-type": "application/json" }
+  // --- MISS: hämta från ElevenLabs
+  total = 1;
+  const mp3 = await synthElevenLabs({ apiKey, voiceId, text, speed });
+  if (!mp3) return json({ ok:false, error:"TTS misslyckades" }, 500);
+
+  // --- Spara i R2
+  try { await env.BN_AUDIO.put(key, mp3, { httpMetadata: { contentType:"audio/mpeg" } }); } catch {}
+
+  return new Response(mp3, {
+    headers: {
+      "content-type": "audio/mpeg",
+      "cache-control": "public, max-age=31536000, immutable",
+      "x-tts-cache": "MISS",
+      "x-tts-hits": String(hits),
+      "x-tts-total": String(total),
+      "x-tts-key": key
+    }
+  });
+}
+
+// --- Hjälpare
+
+async function synthElevenLabs({ apiKey, voiceId, text, speed }) {
+  // Använder v1 text-to-speech (multilingual v2). ElevenLabs accepterar "voice_settings".
+  const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}`;
+  const payload = {
+    text,
+    model_id: "eleven_multilingual_v2",
+    voice_settings: {
+      stability: 0.5,
+      similarity_boost: 0.75,
+      style: 0.2,
+      use_speaker_boost: true
+    },
+    // prosody-speed påverkas av SSML. Billig lösning: lägg SSML wrapper.
+    // ElevenLabs tar SSML om man sätter "optimize_streaming_latency" eller "apply_text_normalization".
+    // Vi kör enkel SSML här:
+    // OBS: om text redan innehåller < > så escapas den.
+  };
+
+  // SSML wrapper för hastighet
+  const safe = text
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  const ssml = `<speak><prosody rate="${Math.round(speed*100)}%">${safe}</prosody></speak>`;
+
+  const headers = {
+    "xi-api-key": apiKey,
+    "content-type": "application/json",
+    "accept": "audio/mpeg"
+  };
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ ...payload, text: ssml })
   });
 
-const safeText = async (res) => {
-  try {
-    const t = await res.text();
-    return t?.slice(0, 1000);
-  } catch {
-    return "";
+  if (!res.ok) {
+    const msg = await res.text().catch(()=>res.statusText);
+    // Skicka tillbaka vettigt fel
+    throw new Error(`TTS 400: ${msg}`);
   }
-};
+  const buf = await res.arrayBuffer();
+  return new Uint8Array(buf);
+}
 
-async function sha1(str) {
-  const buf = new TextEncoder().encode(str);
-  const digest = await crypto.subtle.digest("SHA-1", buf);
-  return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, "0")).join("");
+async function sha1(s) {
+  const enc = new TextEncoder();
+  const data = enc.encode(s);
+  const hashBuf = await crypto.subtle.digest("SHA-1", data);
+  const bytes = new Uint8Array(hashBuf);
+  return [...bytes].map(b=>b.toString(16).padStart(2,"0")).join("");
+}
+
+function json(obj, status=200, headers={}) {
+  return new Response(JSON.stringify(obj), {
+    status,
+    headers: { "content-type":"application/json; charset=utf-8", ...headers }
+  });
 }
