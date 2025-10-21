@@ -15,7 +15,7 @@ OPENAI_IMAGE_MODEL = "gpt-image-1"
 WHISPER_MODEL = "whisper-1"
 
 # ElevenLabs – byt till din röst-ID
-ELEVENLABS_VOICE_ID = "SÄTT_DIN_RÖST_ID_HÄR"
+ELEVENLABS_VOICE_ID = "x0u3EW21dbrORJzOq1m9"
 MERCH_API_URL = "https://api.printful.com"
 
 # Claude (sagor) – automatisk modell (vår kod väljer rätt modell)
