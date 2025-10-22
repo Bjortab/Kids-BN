@@ -7,11 +7,11 @@
   <style>
     :root { --bg:#0f1418; --panel:#1b242c; --fg:#dce6ef; --muted:#9bb0bf; --accent:#2dd4bf; --warn:#f59e0b; --err:#ef4444; --brd:#22313a; }
     html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif}
-    .wrap{max-width:900px;margin:28px auto;padding:0 16px}
+    .wrap{max-width:950px;margin:28px auto;padding:0 16px}
     h1{margin:0 0 8px;font-size:28px}
     .sub{color:var(--muted);margin-bottom:20px}
     .card{background:var(--panel);border-radius:10px;padding:16px;margin-bottom:16px;border:1px solid var(--brd)}
-    label{display:block;font-size:14px;color:var(--muted);margin-bottom:4px}
+    label{display:block;font-size:14px;color:var(--muted);margin-bottom:6px}
     input,select,textarea{width:100%;box-sizing:border-box;background:#111820;color:var(--fg);border:1px solid var(--brd);border-radius:8px;padding:10px}
     textarea{min-height:110px;resize:vertical;line-height:1.5}
     .row{display:flex;gap:12px;flex-wrap:wrap}
@@ -19,7 +19,7 @@
     .btns{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}
     button{border:0;border-radius:10px;padding:12px 16px;font-weight:700;cursor:pointer}
     .primary{background:var(--accent);color:#032c28}
-    .ghost{background:#0c1319;color:var(--fg);border:1px solid var(--brd)}
+    .ghost{background:#0c1319;color:#e7f2fb;border:1px solid var(--brd)}
     .muted{color:var(--muted)}
     .spinner{display:none;align-items:center;gap:8px}
     .dot{width:6px;height:6px;background:var(--muted);border-radius:50%;animation:blink 1s infinite ease-in-out}
@@ -29,6 +29,7 @@
     .badge{display:inline-block;border:1px solid var(--brd);border-radius:999px;padding:2px 8px;font-size:12px;color:var(--muted)}
     audio{width:100%;margin-top:8px}
     .errtxt{white-space:pre-wrap;color:#ffd7d7;background:#30181b;border:1px solid #512126;border-radius:8px;padding:10px;margin-top:8px;display:none}
+    .group-title{font-weight:700;margin-top:12px;margin-bottom:6px}
   </style>
 </head>
 <body>
@@ -58,24 +59,71 @@
       <label style="margin-top:10px">Sagognista (skriv eller tala in)</label>
       <textarea id="prompt" placeholder="Skriv din idé här…"></textarea>
 
-      <div class="row" style="margin-top:10px">
+      <div class="group-title">🎙️ Röstinställningar</div>
+      <div class="row">
         <div class="col">
-          <label>Google-röst (t.ex. sv-SE-Wavenet-A / sv-SE-Wavenet-D)</label>
-          <input id="voice" placeholder="sv-SE-Wavenet-D" />
+          <label>Röst (svenska)</label>
+          <select id="voice">
+            <option value="">Auto (från miljövariabel)</option>
+            <option value="sv-SE-Wavenet-A">sv-SE-Wavenet-A (man, tydlig)</option>
+            <option value="sv-SE-Wavenet-B">sv-SE-Wavenet-B (kvinna, varm)</option>
+            <option value="sv-SE-Wavenet-C">sv-SE-Wavenet-C (kvinna, ljus)</option>
+            <option value="sv-SE-Wavenet-D">sv-SE-Wavenet-D (man, informativ)</option>
+            <option value="sv-SE-Standard-A">sv-SE-Standard-A (k)</option>
+            <option value="sv-SE-Standard-B">sv-SE-Standard-B (m)</option>
+            <option value="sv-SE-Standard-C">sv-SE-Standard-C (k)</option>
+            <option value="sv-SE-Standard-D">sv-SE-Standard-D (m)</option>
+          </select>
         </div>
         <div class="col">
-          <label class="muted">Talhastighet / Pitch (valfritt)</label>
-          <div class="row">
-            <input id="rate" type="number" step="0.1" placeholder="speakingRate (1.0)" class="col"/>
-            <input id="pitch" type="number" step="0.5" placeholder="pitch (0.0)" class="col"/>
-          </div>
+          <label>Talhastighet</label>
+          <select id="rate">
+            <option value="">Standard (1.0)</option>
+            <option>0.80</option>
+            <option>0.85</option>
+            <option>0.90</option>
+            <option>0.95</option>
+            <option>0.97</option>
+            <option>1.00</option>
+            <option>1.03</option>
+            <option>1.05</option>
+            <option>1.10</option>
+            <option>1.20</option>
+          </select>
         </div>
+      </div>
+
+      <div class="row">
+        <div class="col">
+          <label>Pitch (tonhöjd)</label>
+          <input id="pitch" type="range" min="-5" max="5" step="0.5" value="0" />
+          <div class="muted" id="pitchVal">0.0</div>
+        </div>
+        <div class="col">
+          <label>Volym (dB)</label>
+          <input id="volume" type="range" min="-6" max="6" step="1" value="0" />
+          <div class="muted" id="volumeVal">0 dB</div>
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="col">
+          <label>Ljudprofil</label>
+          <select id="profile">
+            <option value="">Ingen (standard)</option>
+            <option value="headphone-class-device">headphone-class-device (klarare)</option>
+            <option value="car-hifi-class-device">car-hifi-class-device (varmare)</option>
+            <option value="telephony-class-application">telephony-class-application (smalband)</option>
+          </select>
+        </div>
+        <div class="col"></div>
       </div>
 
       <div class="btns">
         <button id="btnTalk" class="ghost">🎙️ Tala in</button>
         <button id="btnMake" class="primary">✨ Skapa saga + uppläsning</button>
         <button id="btnReplay" class="ghost">🔁 Spela igen</button>
+        <button id="btnTest" class="ghost">🔈 Testa röst</button>
         <div id="spinner" class="spinner">
           <div class="dot"></div><div class="dot"></div><div class="dot"></div>
           <span class="muted">Arbetar…</span>
