@@ -1,3 +1,15 @@
+export async function onRequestGet({ request }) {
+  const u = new URL(request.url);
+  const age    = (u.searchParams.get('age')    || '').trim();
+  const hero   = (u.searchParams.get('hero')   || '').trim();
+  const prompt = (u.searchParams.get('prompt') || '').trim();
+  if (!prompt) {
+    return new Response(JSON.stringify({ ok:false, error:'Missing prompt' }), {
+      status: 400, headers: { 'Content-Type': 'application/json' }
+    });
+  }
+  // ⬇️ Fortsätt med din befintliga kod och använd age/hero/prompt-variablerna
+}
 /**
  * BN Kids v1 — Story GC
  * Förbättrad berättelsekvalitet + kantcache (caches.default) utan extra bindings.
