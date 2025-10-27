@@ -55,8 +55,17 @@
     if (!age)   return showErr("Välj ålder.");
     if (!prompt) return showErr("Skriv vad sagan ska handla om.");
 
-    const url = new URL("/api/generate_story", window.location.origin);
-    url.search = new URLSearchParams({ age, hero, prompt }).toString();
+  const url = new URL('/api/generate_story', window.location.origin);
+url.search = new URLSearchParams({
+  age:    (age || '').trim(),
+  hero:   (hero || '').trim(),
+  prompt: (prompt || '').trim()
+}).toString();
+
+const res = await fetch(url.toString(), {
+  method: 'GET',
+  headers: { 'Accept': 'application/json' }
+});
 
     setBusy(true, "Skapar saga…");
     try {
