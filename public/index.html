@@ -5,144 +5,75 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>BN’s Sagovärld</title>
   <style>
-    :root { --bg:#0f1418; --panel:#1b242c; --fg:#dce6ef; --muted:#9bb0bf; --accent:#2dd4bf; --warn:#f59e0b; --err:#ef4444; --brd:#22313a; }
-    html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif}
-    .wrap{max-width:950px;margin:28px auto;padding:0 16px}
-    h1{margin:0 0 8px;font-size:28px}
-    .sub{color:var(--muted);margin-bottom:20px}
-    .card{background:var(--panel);border-radius:10px;padding:16px;margin-bottom:16px;border:1px solid var(--brd)}
-    label{display:block;font-size:14px;color:var(--muted);margin-bottom:6px}
-    input,select,textarea{width:100%;box-sizing:border-box;background:#111820;color:var(--fg);border:1px solid var(--brd);border-radius:8px;padding:10px}
-    textarea{min-height:110px;resize:vertical;line-height:1.5}
-    .row{display:flex;gap:12px;flex-wrap:wrap}
-    .row .col{flex:1 1 260px}
-    .btns{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}
-    button{border:0;border-radius:10px;padding:12px 16px;font-weight:700;cursor:pointer}
-    .primary{background:var(--accent);color:#032c28}
-    .ghost{background:#0c1319;color:#e7f2fb;border:1px solid var(--brd)}
-    .muted{color:var(--muted)}
-    .spinner{display:none;align-items:center;gap:8px}
-    .dot{width:6px;height:6px;background:var(--muted);border-radius:50%;animation:blink 1s infinite ease-in-out}
-    .dot:nth-child(2){animation-delay:.15s}.dot:nth-child(3){animation-delay:.3s}
+    body{background:#111;color:#eaeaea;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;margin:0}
+    .panel{max-width:880px;margin:28px auto;background:#1b1b1b;border:1px solid #2b2b2b;border-radius:12px;padding:20px 22px;box-shadow:0 0 1px #222}
+    .row{display:flex;gap:12px;flex-wrap:wrap;margin:8px 0}
+    .row > *{flex:1}
+    input,select,textarea,button{width:100%;font:inherit;border-radius:8px;border:1px solid #2b2b2b;background:#121212;color:#eaeaea;padding:10px;box-sizing:border-box}
+    textarea{min-height:110px}
+    button{cursor:pointer;border-color:#006d50;background:#005e43}
+    button[disabled]{opacity:.55;cursor:not-allowed}
+    .btn-primary{background:#006d50;border-color:#019a73;font-weight:600}
+    .btn-muted{background:#242424;border-color:#333}
+    .error{display:none;margin-top:8px;background:#300;border:1px solid #600;color:#f5c0c0;padding:10px;border-radius:8px;white-space:pre-wrap}
+    .spinner{display:none;gap:6px;align-items:center;margin-top:8px}
+    .dot{width:8px;height:8px;border-radius:50%;background:#9bd8c9;animation:blink 1s infinite ease-in-out}
+    .dot:nth-child(2){animation-delay:.2s}.dot:nth-child(3){animation-delay:.4s}
     @keyframes blink{0%,80%,100%{opacity:.25}40%{opacity:1}}
-    pre{white-space:pre-wrap;word-wrap:break-word;margin:0}
-    .badge{display:inline-block;border:1px solid var(--brd);border-radius:999px;padding:2px 8px;font-size:12px;color:var(--muted)}
-    audio{width:100%;margin-top:8px}
-    .errtxt{white-space:pre-wrap;color:#ffd7d7;background:#30181b;border:1px solid #512126;border-radius:8px;padding:10px;margin-top:8px;display:none}
-    .group-title{font-weight:700;margin-top:12px;margin-bottom:6px}
+    pre{white-space:pre-wrap;line-height:1.5}
+    h1{font-size:26px;margin:0 0 4px}
+    small{opacity:.7}
   </style>
 </head>
 <body>
-  <div class="wrap">
+  <div class="panel">
     <h1>BN’s Sagovärld</h1>
-    <div class="sub">…där drömmar blir berättelser</div>
+    <small>…där drömmar blir berättelser</small>
 
-    <div class="card">
-      <div class="row">
-        <div class="col">
-          <label>Ålder</label>
-          <select id="age">
-            <option>1–2 år</option>
-            <option>3–4 år</option>
-            <option>5–6 år</option>
-            <option>7–8 år</option>
-            <option>9–10 år</option>
-            <option>11–12 år</option>
-          </select>
-        </div>
-        <div class="col">
-          <label>Hjälte (valfritt)</label>
-          <input id="hero" placeholder="t.ex. Taxen Tage, Draken Holger" />
-        </div>
+    <div class="row">
+      <div>
+        <label>Ålder</label>
+        <select data-id="age">
+          <option value="1-2 år">1–2 år</option>
+          <option value="3-4 år">3–4 år</option>
+          <option value="5-6 år">5–6 år</option>
+          <option value="7-8 år">7–8 år</option>
+          <option value="9-10 år">9–10 år</option>
+          <option value="11-12 år">11–12 år</option>
+        </select>
       </div>
-
-      <label style="margin-top:10px">Sagognista (skriv eller tala in)</label>
-      <textarea id="prompt" placeholder="Skriv din idé här…"></textarea>
-
-      <div class="group-title">🎙️ Röstinställningar</div>
-      <div class="row">
-        <div class="col">
-          <label>Röst (svenska)</label>
-          <select id="voice">
-            <option value="">Auto (från miljövariabel)</option>
-            <option value="sv-SE-Wavenet-A">sv-SE-Wavenet-A (man, tydlig)</option>
-            <option value="sv-SE-Wavenet-B">sv-SE-Wavenet-B (kvinna, varm)</option>
-            <option value="sv-SE-Wavenet-C">sv-SE-Wavenet-C (kvinna, ljus)</option>
-            <option value="sv-SE-Wavenet-D">sv-SE-Wavenet-D (man, informativ)</option>
-            <option value="sv-SE-Standard-A">sv-SE-Standard-A (k)</option>
-            <option value="sv-SE-Standard-B">sv-SE-Standard-B (m)</option>
-            <option value="sv-SE-Standard-C">sv-SE-Standard-C (k)</option>
-            <option value="sv-SE-Standard-D">sv-SE-Standard-D (m)</option>
-          </select>
-        </div>
-        <div class="col">
-          <label>Talhastighet</label>
-          <select id="rate">
-            <option value="">Standard (1.0)</option>
-            <option>0.80</option>
-            <option>0.85</option>
-            <option>0.90</option>
-            <option>0.95</option>
-            <option>0.97</option>
-            <option>1.00</option>
-            <option>1.03</option>
-            <option>1.05</option>
-            <option>1.10</option>
-            <option>1.20</option>
-          </select>
-        </div>
-      </div>
-
-      <div class="row">
-        <div class="col">
-          <label>Pitch (tonhöjd)</label>
-          <input id="pitch" type="range" min="-5" max="5" step="0.5" value="0" />
-          <div class="muted" id="pitchVal">0.0</div>
-        </div>
-        <div class="col">
-          <label>Volym (dB)</label>
-          <input id="volume" type="range" min="-6" max="6" step="1" value="0" />
-          <div class="muted" id="volumeVal">0 dB</div>
-        </div>
-      </div>
-
-      <div class="row">
-        <div class="col">
-          <label>Ljudprofil</label>
-          <select id="profile">
-            <option value="">Ingen (standard)</option>
-            <option value="headphone-class-device">headphone-class-device (klarare)</option>
-            <option value="car-hifi-class-device">car-hifi-class-device (varmare)</option>
-            <option value="telephony-class-application">telephony-class-application (smalband)</option>
-          </select>
-        </div>
-        <div class="col"></div>
-      </div>
-
-      <div class="btns">
-        <button id="btnTalk" class="ghost">🎙️ Tala in</button>
-        <button id="btnMake" class="primary">✨ Skapa saga + uppläsning</button>
-        <button id="btnReplay" class="ghost">🔁 Spela igen</button>
-        <button id="btnTest" class="ghost">🔈 Testa röst</button>
-        <div id="spinner" class="spinner">
-          <div class="dot"></div><div class="dot"></div><div class="dot"></div>
-          <span class="muted">Arbetar…</span>
-        </div>
-      </div>
-
-      <div id="err" class="errtxt"></div>
-    </div>
-
-    <div class="card">
-      <h3>Berättelse <span id="cacheBadge" class="badge" style="display:none"></span></h3>
-      <pre id="story"></pre>
-      <div id="playerWrap" style="display:none">
-        <h3>Uppläsning</h3>
-        <audio id="player" controls></audio>
+      <div>
+        <label>Hjälte (valfritt)</label>
+        <input data-id="hero" placeholder="t.ex. Taxen Tage, Draken Holger" />
       </div>
     </div>
+
+    <div class="row">
+      <div style="flex:1 1 100%">
+        <label>Sagoförslag (skriv eller tala in)</label>
+        <textarea data-id="prompt" placeholder="Skriv din idé här…"></textarea>
+      </div>
+    </div>
+
+    <div class="row">
+      <button class="btn-primary" data-id="btn-create">Skapa saga</button>
+      <button class="btn-muted" data-id="btn-tts">Läs upp (om saga finns)</button>
+    </div>
+
+    <div class="spinner" data-id="spinner" aria-live="polite">
+      <div class="dot"></div><div class="dot"></div><div class="dot"></div>
+      <span data-id="status" style="margin-left:8px">Arbetar…</span>
+    </div>
+
+    <div class="error" data-id="error"></div>
+
+    <h3>Berättelse</h3>
+    <pre data-id="story"></pre>
+
+    <h3>Uppläsning</h3>
+    <audio data-id="audio" controls preload="none" style="width:100%"></audio>
   </div>
 
-  <script src="/app.js"></script>
+  <script src="./app.js" defer></script>
 </body>
 </html>
