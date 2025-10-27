@@ -25,6 +25,19 @@
     small{opacity:.7}
   </style>
 </head>
+  <script src="/app.js?v=gc15" defer></script>
+<script>
+  window.addEventListener('DOMContentLoaded', function () {
+    function byText(){const n=t=>t.toLowerCase();const btns=[...document.querySelectorAll('button,input[type=button],input[type=submit]')];
+      return (arr)=>btns.find(b=>arr.some(t=>(b.value||b.innerText||'').toLowerCase().includes(n(t))));}
+    const find = byText();
+    const c = find(['skapa saga','skapa & läs upp','skapa']);
+    const p = find(['läs upp','spela','testa röst']);
+    if (c) c.onclick = (e)=>{e.preventDefault?.(); window.createStory && window.createStory();};
+    if (p) p.onclick = (e)=>{e.preventDefault?.(); window.playTTS && window.playTTS();};
+    console.log('BN inline-binder aktiv');
+  });
+</script>
 <body>
   <div class="panel">
     <h1>BN’s Sagovärld</h1>
