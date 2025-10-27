@@ -1,129 +1,250 @@
-// functions/api/generate_story.js
-// POST /api/generate_story  -> { childName, heroName, ageRange, prompt, controls:{minWords,maxWords,tone,chapters}, read_aloud }
-// Returnerar { ok:true, story }
+/**
+ * BN Kids v1 — Story GC
+ * Förbättrad berättelsekvalitet + kantcache (caches.default) utan extra bindings.
+ * Backwards-kompatibel med tidigare frontend:
+ *   - tar "ageRange" eller "age"
+ *   - tar "heroName"  eller "hero"
+ *   - tar "prompt"
+ *
+ * Miljö:
+ *   - OPENAI_API_KEY  (föredras)
+ *   - annars fallback via OpenRouter (OPENROUTER_API_KEY)
+ */
 
-export const onRequestPost = async ({ request, env }) => {
-  try {
-    const apiKey = env.OPENAI_API_KEY;
-    const model  = env.STORY_MODEL || "gpt-4o-mini";
-    if (!apiKey) return j({ ok:false, error:"Saknar OPENAI_API_KEY" }, 500);
+const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
+const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+const OPENROUTER_MODEL = "meta-llama/llama-3.1-8b-instruct:free"; // fallback
 
-    const inb = await request.json();
-    const childName = (inb.childName||"").trim();
-    const heroName  = (inb.heroName||"").trim();
-    const age       = (inb.ageRange||"").trim();
-    const prompt    = (inb.prompt||"").trim();
-    const ctrls     = inb.controls || { minWords:250, maxWords:500, tone:"barnvänlig", chapters:1 };
+// Ålderskontroller: längd (ord), stil och ton
+function ageControls(age) {
+  switch ((age || "").trim()) {
+    case "1-2":
+      return {
+        minWords: 60,  maxWords: 90,
+        style: "pekbok; enkla ord; 1–2 korta meningar per scen; trygg rytm",
+        rules: [
+          "Ultrakorta meningar (max 6 ord).",
+          "Beskriv bara 3–4 enkla händelser.",
+          "Inga kapitelrubriker, bara en kort löpande text.",
+          "Naturligt tryggt slut (sova, kram, god natt)."
+        ]
+      };
+    case "3-4":
+      return {
+        minWords: 180, maxWords: 320,
+        style: "igenkänning, humor, vardagsmagi; tydlig början–mitt–slut",
+        rules: [
+          "En enkel konflikt som löses lugnt.",
+          "Undvik klyschor som 'vänskap besegrar allt'.",
+          "Naturligt, konkret slut (”de åt pannkakor och somnade nöjda”)."
+        ]
+      };
+    case "5-6":
+      return {
+        minWords: 300, maxWords: 500,
+        style: "problem–lösning; små ledtrådar; varm ton",
+        rules: [
+          "Bygg en liten båge med en twist.",
+          "Undvik moralpredikan.",
+          "Avsluta med en lugn upplösning kopplad till huvudtråden."
+        ]
+      };
+    case "7-8":
+      return {
+        minWords: 550, maxWords: 900,
+        style: "äventyr/mysterium; val och konsekvens; fart utan stress",
+        rules: [
+          "Skapa nerv med konkreta hinder.",
+          "Lösningen ska komma från hjälten, inte slump.",
+          "Avsluta i mål, undvik epilog-klichéer."
+        ]
+      };
+    case "9-10":
+      return {
+        minWords: 900, maxWords: 1300,
+        style: "mer dramatik; smarta vändningar; lite humor",
+        rules: [
+          "Sätt upp en tydlig insats.",
+          "Minst ett taktiskt val som påverkar slutet.",
+          "Snygg, självklar sista mening som knyter ihop."
+        ]
+      };
+    case "11-12":
+      return {
+        minWords: 1200, maxWords: 1700,
+        style: "coolt, modigt, visuellt; större båge; högre tempo",
+        rules: [
+          "Konflikten ska växla upp i mitten.",
+          "Hjälten vinner med list/kreativitet, inte magiskt deus ex.",
+          "Sista stycket ska kännas 'klart', inte som en lärdomspoesi."
+        ]
+      };
+    default:
+      return {
+        minWords: 300, maxWords: 600,
+        style: "familjevänlig; tydlig början–mitt–slut",
+        rules: [
+          "Naturlig, konkret upplösning.",
+          "Undvik floskler och generiska slutfraser."
+        ]
+      };
+  }
+}
 
-    // Säkerhetsräcken
-    const minW = clamp(+ctrls.minWords||250, 40, 3000);
-    const maxW = Math.max(minW+20, clamp(+ctrls.maxWords||500, 80, 5000));
-    const chapters = clamp(+ctrls.chapters||1, 1, 5);
-    const tone = (ctrls.tone||"barnvänlig").slice(0,180);
+function buildSystemPrompt(ageCtl) {
+  const baseRules = [
+    "Skriv på naturlig, idiomatisk svenska.",
+    "Inga vuxna/olämpliga teman; trygg och barnanpassad nivå.",
+    "Inga upprepade fraser; undvik floskler.",
+    "Visa i scener/handling, inte moralisera.",
+    "Avsluta med ett konkret, tillfredsställande slut som knyter ihop huvudtråden.",
+  ];
+  const rules = [...baseRules, ...ageCtl.rules].map(r => `- ${r}`).join("\n");
+  return [
+    `Du är en erfaren barnboksförfattare.`,
+    `Stil: ${ageCtl.style}.`,
+    `Längd: ${ageCtl.minWords}–${ageCtl.maxWords} ord (hårt mål).`,
+    `Skriv en fokuserad berättelse med röd tråd.`,
+    `Regler:\n${rules}`
+  ].join("\n");
+}
 
-    // Instruktioner för naturliga slut (per ålder)
-    const endingGuide = naturalEndingForAge(age);
+function buildUserPrompt({ prompt, hero, age }) {
+  const bits = [];
+  if (hero) bits.push(`Hjälte/huvudfigur: ${hero}.`);
+  if (prompt) bits.push(`Sagognista (önskat tema/innehåll): ${prompt}.`);
+  bits.push(`Målålder: ${age}.`);
+  bits.push("Skriv EN sammanhängande berättelse. Ingen extrainstruktion i svaret, bara sagan.");
+  // 1–2 särskilt enkelt:
+  if (age === "1-2") bits.push("Extra för 1–2: ultrakorta meningar, 3–4 scener, tryggt godnatt-slut.");
+  return bits.join("\n");
+}
 
-    // 1–2 år: stöd för “BYT SIDA” men inte efter varje rad
-    const pageBreakGuide = age.startsWith("1-2")
-      ? "Använd markören [BYT SIDA] sparsamt (ungefär var tredje-kvart mening), endast när en tydlig bildidé byts."
-      : "Använd INTE [BYT SIDA].";
-
-    const sys = [
-      "Du skriver barnberättelser på **svenska** för BN’s Sagovärld.",
-      "Skriv med tydlig, enkel svenska anpassad för åldern. Undvik vuxna klichéer.",
-      "Respektera längdintervall och kapitelantal om det anges.",
-      "Om ett namn är angivet (barn eller hjälte), väv in det utan att låsa in det i framtida berättelser.",
-      "Berättelsen ska ha en tydlig början, mitt och ett **naturligt slut**. Ingen pliktskyldig 'och allt var bra'-fras.",
-      "Undvik moraliska föreläsningar. Visa handling → konsekvens i stället.",
-      "Skriv alltid i **svenska**; inga engelska fraser."
-    ].join("\n");
-
-    const user = [
-      `Barnets namn: ${childName || "(ej angivet)"}`,
-      `Hjälte: ${heroName || "(ej angiven)"}`,
-      `Ålder: ${age}`,
-      `Ton: ${tone}`,
-      `Kapitel: ${chapters}`,
-      `Längd: ${minW}–${maxW} ord`,
-      pageBreakGuide,
-      endingGuide,
-      "",
-      `Sagognista: ${prompt || "(fri tolkning inom barnvänliga ramar)"}`
-    ].join("\n");
-
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+// Väljer OpenAI om möjligt; annars OpenRouter fallback
+async function callLLM({ env, messages, maxTokens, temperature }) {
+  if (env.OPENAI_API_KEY) {
+    const body = {
+      model: "gpt-4o-mini",
+      messages,
+      temperature,
+      max_tokens: maxTokens
+    };
+    const r = await fetch(OPENAI_URL, {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json"
+        "content-type": "application/json",
+        "authorization": `Bearer ${env.OPENAI_API_KEY}`
       },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role:"system", content: sys },
-          { role:"user",   content: user }
-        ],
-        temperature: 0.8,
-        max_tokens: 1500
-      })
+      body: JSON.stringify(body)
+    });
+    if (!r.ok) throw new Error(`OpenAI ${r.status}: ${await r.text().catch(()=>r.statusText)}`);
+    const j = await r.json();
+    return j?.choices?.[0]?.message?.content?.trim() || "";
+  }
+
+  // Fallback
+  if (!env.OPENROUTER_API_KEY) throw new Error("Saknar OPENAI_API_KEY och OPENROUTER_API_KEY");
+  const body = {
+    model: OPENROUTER_MODEL,
+    messages,
+    temperature,
+    max_tokens: maxTokens
+  };
+  const r = await fetch(OPENROUTER_URL, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "authorization": `Bearer ${env.OPENROUTER_API_KEY}`,
+      "HTTP-Referer": "https://bn-kids.pages.dev",
+      "X-Title": "BN Kids"
+    },
+    body: JSON.stringify(body)
+  });
+  if (!r.ok) throw new Error(`OpenRouter ${r.status}: ${await r.text().catch(()=>r.statusText)}`);
+  const j = await r.json();
+  return j?.choices?.[0]?.message?.content?.trim() || "";
+}
+
+// Skapar en stabil cache-nyckel (ingen extra binding behövs)
+function makeCacheKey({ age, hero, prompt }) {
+  const key = `/api/generate_story::v1::age=${(age||"").trim()}::hero=${(hero||"").trim()}::prompt=${(prompt||"").trim()}`;
+  return new Request(key);
+}
+
+export async function onRequestPost({ request, env }) {
+  try {
+    const input = await request.json().catch(()=> ({}));
+    // bakåtkompatibla fältnamn
+    const age = (input.age || input.ageRange || "5-6").trim();
+    const hero = (input.hero || input.heroName || "").trim();
+    const prompt = (input.prompt || "").trim();
+
+    // 1) Cache: kolla om vi redan har denna saga
+    const cache = caches.default;
+    const cacheReq = makeCacheKey({ age, hero, prompt });
+    const cached = await cache.match(cacheReq);
+    if (cached) {
+      // leverera direkt
+      return new Response(await cached.text(), {
+        headers: {
+          "content-type": "application/json",
+          "x-bn-cache": "HIT",
+          "cache-control": "public, max-age=86400"
+        }
+      });
+    }
+
+    // 2) Bygg prompts
+    const ctl = ageControls(age);
+    const system = buildSystemPrompt(ctl);
+    const user = buildUserPrompt({ prompt, hero, age });
+
+    // Temp lite lägre för högre åldrar (tajtare ton)
+    const temperature = age === "1-2" || age === "3-4" ? 0.8
+                      : age === "5-6" ? 0.7
+                      : 0.6;
+
+    const messages = [
+      { role: "system", content: system },
+      { role: "user", content: user }
+    ];
+
+    // 3) LLM
+    const story = await callLLM({
+      env,
+      messages,
+      maxTokens: Math.min(1800, Math.round(ctl.maxWords * 2.2)), // generöst tak
+      temperature
     });
 
-    if (!res.ok) {
-      const txt = await res.text().catch(()=> "");
-      return j({ ok:false, error:`OpenAI ${res.status}: ${txt}` }, 502);
+    if (!story) throw new Error("Tomt svar från modellen.");
+
+    const payload = JSON.stringify({ ok: true, story });
+
+    // 4) Spara i cache (kant-cache 24h)
+    const resp = new Response(payload, {
+      headers: {
+        "content-type": "application/json",
+        "x-bn-cache": "MISS",
+        "cache-control": "public, max-age=86400"
+      }
+    });
+    await cache.put(cacheReq, resp.clone());
+
+    return resp;
+  } catch (err) {
+    return new Response(JSON.stringify({ ok:false, error:String(err) }), {
+      status: 500,
+      headers: { "content-type":"application/json" }
+    });
+  }
+}
+
+export function onRequestOptions() {
+  return new Response(null, {
+    headers: {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization"
     }
-    const data = await res.json();
-    let story = (data.choices?.[0]?.message?.content || "").trim();
-
-    // Städa upp: inga dubbla rubriker, inga klyschiga slutfraser
-    story = cleanupStory(story, age);
-
-    return j({ ok:true, story }, 200);
-  } catch (e) {
-    return j({ ok:false, error: String(e?.message || e) }, 500);
-  }
-};
-
-function j(obj, status=200) {
-  return new Response(JSON.stringify(obj), {
-    status,
-    headers: { "Content-Type":"application/json; charset=utf-8" }
   });
-}
-const clamp = (n,min,max) => Math.min(max, Math.max(min, n));
-
-function naturalEndingForAge(age) {
-  if (age.startsWith("1-2")) {
-    return [
-      "SLUT: Lägg sista raden som en lugn, trygg bild (t.ex. 'Pelle sover gott med sin nalle.').",
-      "Inget 'Solen föll stilla...' eller vuxen slutkliché."
-    ].join(" ");
-  }
-  if (age.startsWith("11-12")) {
-    return [
-      "SLUT: Ge en kort payoff kopplad till konflikten och en antydan om konsekvens (utan moralkaka).",
-      "Ingen förenklad 'vänner löser allt'-slutfras."
-    ].join(" ");
-  }
-  return "SLUT: Låt sista stycket avrunda händelsen på ett naturligt, lågmält sätt – undvik klyschor.";
-}
-
-function cleanupStory(s, age) {
-  let out = String(s||"");
-
-  // Tvinga bort engelska markörer/rubriker
-  out = out.replace(/^#+\s*/gm, "");
-
-  // Ta bort “Solen föll stilla …” och liknande
-  out = out.replace(/Solen föll stilla.*?\.\s*$/is, "");
-
-  // 1–2 år: tillåt [BYT SIDA], men vänta gärna 2–4 meningar
-  if (!age.startsWith("1-2")) {
-    out = out.replace(/\[BYT SIDA\]/gi, "");
-  }
-
-  // Whitespace
-  out = out.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
-  return out;
 }
