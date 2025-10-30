@@ -2,8 +2,17 @@
 // Frontend skickar: { ageRange: "1-2|3-4|...|11-12", heroName?: string, prompt: string }
 // Returnerar: { story: string }  (exakt vad app.js redan förväntar sig)
 
+export async function onRequestOptions(context) {
+  const { env } = context;
+  return new Response(null, { 
+    status: 204, 
+    headers: cors(env?.BN_ALLOWED_ORIGIN || "*") 
+  });
+}
+
 export async function onRequestPost(context) {
   const { request, env } = context;
+  const origin = env?.BN_ALLOWED_ORIGIN || "*";
 
   // --- Läs input exakt som frontend skickar ---
   let body = {};
@@ -14,7 +23,7 @@ export async function onRequestPost(context) {
   const userPrompt = (body?.prompt || "").toString().trim();
 
   if (!ageRange || !userPrompt) {
-    return json({ story: "" }, 200); // håll respons-formatet stabilt
+    return json({ story: "" }, 200, origin); // håll respons-formatet stabilt
   }
 
   // --- Välj modell (behåll OpenRouter som tidigare) ---
@@ -60,7 +69,7 @@ export async function onRequestPost(context) {
       })
     });
 
-    if (!aiRes.ok) return json({ story: "" }, 200);
+    if (!aiRes.ok) return json({ story: "" }, 200, origin);
 
     const data = await aiRes.json().catch(() => ({}));
     const story =
@@ -68,14 +77,22 @@ export async function onRequestPost(context) {
       data?.choices?.[0]?.message?.content?.[0]?.text?.trim() ||
       "";
 
-    return json({ story: story || "" }, 200);
+    return json({ story: story || "" }, 200, origin);
 
   } catch {
-    return json({ story: "" }, 200);
+    return json({ story: "" }, 200, origin);
   }
 }
 
 // ----- Helpers -----
+
+function cors(origin) {
+  return {
+    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization"
+  };
+}
 
 function normalizeAge(value) {
   // Remove "år" suffix, replace long dash with hyphen, trim whitespace
@@ -85,10 +102,14 @@ function normalizeAge(value) {
     .trim();
 }
 
-function json(obj, status = 200) {
+function json(obj, status = 200, origin = "*") {
   return new Response(JSON.stringify(obj), {
     status,
-    headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" }
+    headers: { 
+      "Content-Type": "application/json; charset=utf-8", 
+      "Cache-Control": "no-store",
+      ...cors(origin)
+    }
   });
 }
 

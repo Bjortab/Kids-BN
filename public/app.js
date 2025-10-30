@@ -40,7 +40,7 @@
 
   async function createStory() {
     const rawAge = (ageEl?.value || '3-4 år').trim();
-    const age    = normalizeAgeForApi(rawAge);
+    const ageRange = normalizeAgeForApi(rawAge);
     const hero   = (heroEl?.value || '').trim();
     const prompt = (promptEl?.value || '').trim();
 
@@ -52,7 +52,7 @@
       let res = await fetch("/api/generate_story", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ageRange: age, heroName: hero, prompt })
+        body: JSON.stringify({ ageRange, heroName: hero, prompt })
       });
       if (!res.ok) throw new Error("v2 misslyckades " + res.status);
 
@@ -65,7 +65,7 @@
     } catch (e1) {
       // Fall-back till v1 (GET med query)
       try {
-        const url = `/api/generate?ageRange=${encodeURIComponent(age)}&hero=${encodeURIComponent(hero)}&prompt=${encodeURIComponent(prompt)}`;
+        const url = `/api/generate?ageRange=${encodeURIComponent(ageRange)}&hero=${encodeURIComponent(hero)}&prompt=${encodeURIComponent(prompt)}`;
         let res = await fetch(url);
         if (!res.ok) throw new Error("v1 misslyckades " + res.status);
         const data = await res.json();
