@@ -1,5 +1,5 @@
 export async function onRequestPost({ request, env }) {
-  const allow = env.KIDSBN_ALLOWED_ORIGIN || "*";
+  const allow = env.BN_ALLOWED_ORIGIN || "*";
   try {
     const { mode, email } = await request.json();
     if (!env.STRIPE_SECRET_KEY) return json({ error:"Stripe not configured" }, 500, allow);
@@ -39,4 +39,4 @@ function cors(origin){
   };
 }
 function json(obj, status, origin){ return new Response(JSON.stringify(obj), { status, headers: { "Content-Type":"application/json", ...cors(origin) } }); }
-export async function onRequestOptions({ env }) { return new Response(null, { status:204, headers: cors(env.KIDSBN_ALLOWED_ORIGIN || "*") }); }
+export async function onRequestOptions({ env }) { return new Response(null, { status:204, headers: cors(env.BN_ALLOWED_ORIGIN || "*") }); }
