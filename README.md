@@ -23,21 +23,26 @@ Detta projekt är en Cloudflare Pages-applikation som använder:
 
 ### Förutsättningar
 
-- Node.js och npm
+- Node.js (v18 eller senare) och npm
 - Wrangler CLI (`npm install -g wrangler`)
-- Cloudflare-konto
+- Cloudflare-konto med Pages, D1, och R2 uppsatt
 
 ### Installation
 
 1. Klona repot
-2. Installera beroenden: `npm install -g wrangler`
+2. Installera Wrangler CLI (kräver Node.js): `npm install -g wrangler`
 3. Konfigurera `wrangler.toml` med dina egna:
    - D1 database ID (`database_id`)
-   - API-nycklar (lägg till som secrets via Cloudflare dashboard eller wrangler)
    - Domän (`BN_ALLOWED_ORIGIN`)
    - ElevenLabs röst-ID (`ELEVENLABS_VOICE_ID`)
-4. Kör `wrangler pages dev` för lokal utveckling
-5. Deploy med `wrangler pages deploy`
+4. Lägg till API-nycklar som secrets:
+   ```bash
+   wrangler secret put OPENAI_API_KEY
+   wrangler secret put ANTHROPIC_API_KEY
+   wrangler secret put ELEVENLABS_API_KEY
+   ```
+5. Kör `wrangler pages dev` för lokal utveckling
+6. Deploy med `wrangler pages deploy`
 
 ## Samarbete
 
