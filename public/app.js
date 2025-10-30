@@ -12,24 +12,38 @@
     return btns.find(b => needles.some(n => lower(b.value||b.innerText).includes(lower(n))));
   }
 
-  const ageEl    = qs('#age, #ageRange, select[name="age"]') || null;
-  const heroEl   = qs('#hero, #heroName, input[name="hero"]') || null;
-  const promptEl = qs('#prompt, #idea, #sagoforslag, textarea[name="prompt"]') || null;
-  const storyEl  = qs('#story, #storyText, .story-output, #resultText') || null;
+  // Resilient selectors: leta först efter data-id, fallback på id/name
+  const ageEl    = qs('[data-id="age"]') || qs('#age, #ageRange, select[name="age"]') || null;
+  const heroEl   = qs('[data-id="hero"]') || qs('#hero, #heroName, input[name="hero"]') || null;
+  const promptEl = qs('[data-id="prompt"]') || qs('#prompt, #idea, #sagoforslag, textarea[name="prompt"]') || null;
+  const storyEl  = qs('[data-id="story"]') || qs('#story, #storyText, .story-output, #resultText') || null;
   const voiceEl  = qs('#voice, #voiceSelect, select[name="voice"]') || null;
+  const errorEl  = qs('[data-id="error"]') || qs('.error') || null;
 
-  const createBtn = findButtonByText('skapa saga', 'skapa & läs upp', 'skapa');
-  const playBtn   = findButtonByText('läs upp', 'spela', 'testa röst');
+  const createBtn = qs('[data-id="btn-create"]') || findButtonByText('skapa saga', 'skapa & läs upp', 'skapa');
+  const playBtn   = qs('[data-id="btn-tts"]') || findButtonByText('läs upp', 'spela', 'testa röst');
 
   if (!createBtn) warn("Hittar ingen 'Skapa saga'-knapp via text.");
   if (!playBtn)   warn("Hittar ingen 'Läs upp'-knapp via text.");
 
+  // Normalisera age för API på samma sätt som backend
+  function normalizeAgeForApi(value) {
+    return value
+      .replace(/\s*år\s*$/i, "")  // Ta bort " år" i slutet
+      .replace(/–/g, "-")          // Ersätt långt tankstreck med hyphen
+      .trim();
+  }
+
   async function createStory() {
-    const age    = (ageEl?.value || '3-4 år').trim();
+    const rawAge = (ageEl?.value || '3-4 år').trim();
     const hero   = (heroEl?.value || '').trim();
     const prompt = (promptEl?.value || '').trim();
 
+    // Normalisera ageRange innan API-anrop
+    const age = normalizeAgeForApi(rawAge);
+
     if (storyEl) storyEl.textContent = "Skapar berättelse...";
+    if (errorEl) errorEl.style.display = "none";
 
     // Försök v2 först (POST JSON)
     try {
@@ -41,7 +55,7 @@
       if (!res.ok) throw new Error("v2 misslyckades " + res.status);
 
       const data = await res.json();
-      if (data?.story) {
+      if (data?.story && data.story.trim()) {
         storyEl && (storyEl.textContent = data.story);
         return;
       }
@@ -53,10 +67,19 @@
         let res = await fetch(url);
         if (!res.ok) throw new Error("v1 misslyckades " + res.status);
         const data = await res.json();
-        storyEl && (storyEl.textContent = data.story || "Kunde inte skapa berättelse.");
+        if (data?.story && data.story.trim()) {
+          storyEl && (storyEl.textContent = data.story);
+        } else {
+          throw new Error("Kunde inte skapa berättelse.");
+        }
       } catch (e2) {
         console.error("[BN] createStory fel:", e1, e2);
-        storyEl && (storyEl.textContent = "Kunde inte skapa berättelse.");
+        const errorMsg = "Kunde inte skapa berättelse. Försök igen eller kontrollera din internetanslutning.";
+        if (storyEl) storyEl.textContent = errorMsg;
+        if (errorEl) {
+          errorEl.textContent = errorMsg;
+          errorEl.style.display = "block";
+        }
       }
     }
   }

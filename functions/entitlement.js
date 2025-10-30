@@ -3,7 +3,7 @@ import { getUser } from "./_auth";
 export async function onRequest(context){
   const { env } = context;
   const headers = {
-    "Access-Control-Allow-Origin": env.KIDSBN_ALLOWED_ORIGIN || "*",
+    "Access-Control-Allow-Origin": env.BN_ALLOWED_ORIGIN || "*",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Access-Control-Allow-Methods": "GET, OPTIONS",
     "Content-Type": "application/json"
