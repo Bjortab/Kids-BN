@@ -7,8 +7,13 @@ export async function onRequestPost(context) {
 
   // --- Läs input exakt som frontend skickar ---
   let body = {};
-  try { body = await request.json(); } catch {}
-  const ageRange = (body?.ageRange || "").toString().trim();
+  try { 
+    body = await request.json(); 
+  } catch (e) {
+    console.warn("[generate_story] Failed to parse JSON body:", e.message);
+  }
+  const rawAgeRange = (body?.ageRange || "").toString().trim();
+  const ageRange = normalizeAge(rawAgeRange);
   const heroName = (body?.heroName || "").toString().trim();
   const userPrompt = (body?.prompt || "").toString().trim();
 
@@ -76,6 +81,14 @@ export async function onRequestPost(context) {
 
 // ----- Helpers -----
 
+function normalizeAge(value) {
+  // Remove "år" suffix, replace long dash with hyphen, trim whitespace
+  return value
+    .replace(/\s*år\s*/gi, "")  // Remove "år" with surrounding whitespace
+    .replace(/–/g, "-")          // Replace long dash with hyphen
+    .trim();
+}
+
 function json(obj, status = 200) {
   return new Response(JSON.stringify(obj), {
     status,
@@ -91,6 +104,8 @@ function ageConfig(age) {
     case "7-8":  return { tone: "målande, spännande, tydliga scener",         words: 550,  maxTokens: 1400, temperature: 0.9 };
     case "9-10": return { tone: "dramatisk, dialog, twist, action",           words: 900,  maxTokens: 2000, temperature: 0.95 };
     case "11-12":return { tone: "episk känsla, mystik, filmisk, starkt slut", words: 1200, maxTokens: 2600, temperature: 0.95 };
-    default:     return { tone: "äventyrlig och målande",                     words: 500,  maxTokens: 1600, temperature: 0.9 };
+    default:
+      console.warn(`[generate_story] Unknown ageRange '${age}', using default config`);
+      return { tone: "äventyrlig och målande",                     words: 500,  maxTokens: 1600, temperature: 0.9 };
   }
 }

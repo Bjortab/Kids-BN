@@ -12,17 +12,27 @@
     return btns.find(b => needles.some(n => lower(b.value||b.innerText).includes(lower(n))));
   }
 
-  const ageEl    = qs('#age, #ageRange, select[name="age"]') || null;
-  const heroEl   = qs('#hero, #heroName, input[name="hero"]') || null;
-  const promptEl = qs('#prompt, #idea, #sagoforslag, textarea[name="prompt"]') || null;
-  const storyEl  = qs('#story, #storyText, .story-output, #resultText') || null;
-  const voiceEl  = qs('#voice, #voiceSelect, select[name="voice"]') || null;
+  // Resilient selectors: försök data-id först, sen fallback till id/name
+  const ageEl    = qs('[data-id="age"]') || qs('#age, #ageRange, select[name="age"]') || null;
+  const heroEl   = qs('[data-id="hero"]') || qs('#hero, #heroName, input[name="hero"]') || null;
+  const promptEl = qs('[data-id="prompt"]') || qs('#prompt, #idea, #sagoforslag, textarea[name="prompt"]') || null;
+  const storyEl  = qs('[data-id="story"]') || qs('#story, #storyText, .story-output, #resultText') || null;
+  const voiceEl  = qs('[data-id="voice"]') || qs('#voice, #voiceSelect, select[name="voice"]') || null;
+  const errorEl  = qs('[data-id="error"]') || qs('.error') || null;
 
-  const createBtn = findButtonByText('skapa saga', 'skapa & läs upp', 'skapa');
-  const playBtn   = findButtonByText('läs upp', 'spela', 'testa röst');
+  const createBtn = qs('[data-id="btn-create"]') || findButtonByText('skapa saga', 'skapa & läs upp', 'skapa');
+  const playBtn   = qs('[data-id="btn-tts"]') || findButtonByText('läs upp', 'spela', 'testa röst');
 
   if (!createBtn) warn("Hittar ingen 'Skapa saga'-knapp via text.");
   if (!playBtn)   warn("Hittar ingen 'Läs upp'-knapp via text.");
+
+  // Normalize age for API: remove "år", replace long dash with hyphen
+  function normalizeAgeForApi(value) {
+    return value
+      .replace(/\s*år\s*/gi, "")  // Remove "år" with surrounding whitespace
+      .replace(/–/g, "-")          // Replace long dash with hyphen
+      .trim();
+  }
 
   async function createStory() {
     const age    = (ageEl?.value || '3-4 år').trim();
@@ -30,18 +40,26 @@
     const prompt = (promptEl?.value || '').trim();
 
     if (storyEl) storyEl.textContent = "Skapar berättelse...";
+    if (errorEl) errorEl.style.display = "none";
+
+    // Normalize age before sending to API
+    const normalizedAge = normalizeAgeForApi(age);
 
     // Försök v2 först (POST JSON)
     try {
       let res = await fetch("/api/generate_story", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ageRange: age, heroName: hero, prompt })
+        body: JSON.stringify({ 
+          ageRange: normalizedAge, 
+          heroName: hero, 
+          prompt 
+        })
       });
       if (!res.ok) throw new Error("v2 misslyckades " + res.status);
 
       const data = await res.json();
-      if (data?.story) {
+      if (data?.story && data.story.trim()) {
         storyEl && (storyEl.textContent = data.story);
         return;
       }
@@ -49,14 +67,23 @@
     } catch (e1) {
       // Fall-back till v1 (GET med query)
       try {
-        const url = `/api/generate?ageRange=${encodeURIComponent(age)}&hero=${encodeURIComponent(hero)}&prompt=${encodeURIComponent(prompt)}`;
+        const url = `/api/generate?ageRange=${encodeURIComponent(normalizedAge)}&hero=${encodeURIComponent(hero)}&prompt=${encodeURIComponent(prompt)}`;
         let res = await fetch(url);
         if (!res.ok) throw new Error("v1 misslyckades " + res.status);
         const data = await res.json();
-        storyEl && (storyEl.textContent = data.story || "Kunde inte skapa berättelse.");
+        if (data?.story && data.story.trim()) {
+          storyEl && (storyEl.textContent = data.story);
+        } else {
+          throw new Error("Tom berättelse från servern");
+        }
       } catch (e2) {
         console.error("[BN] createStory fel:", e1, e2);
-        storyEl && (storyEl.textContent = "Kunde inte skapa berättelse.");
+        const errorMsg = "Kunde inte skapa berättelse. Kontrollera din anslutning och försök igen.";
+        storyEl && (storyEl.textContent = errorMsg);
+        if (errorEl) {
+          errorEl.textContent = errorMsg;
+          errorEl.style.display = "block";
+        }
       }
     }
   }
