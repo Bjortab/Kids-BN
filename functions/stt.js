@@ -1,9 +1,9 @@
 export async function onRequestOptions({ env }) {
-  return new Response(null, { status: 204, headers: cors(env.KIDSBN_ALLOWED_ORIGIN || "*") });
+  return new Response(null, { status: 204, headers: cors(env.BN_ALLOWED_ORIGIN || "*") });
 }
 
 export async function onRequestPost({ request, env }) {
-  const origin = env.KIDSBN_ALLOWED_ORIGIN || "*";
+  const origin = env.BN_ALLOWED_ORIGIN || "*";
   try {
     const form = await request.formData();
     const file = form.get('file');
