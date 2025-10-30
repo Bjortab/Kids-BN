@@ -105,7 +105,7 @@ function ageConfig(age) {
     case "9-10": return { tone: "dramatisk, dialog, twist, action",           words: 900,  maxTokens: 2000, temperature: 0.95 };
     case "11-12":return { tone: "episk känsla, mystik, filmisk, starkt slut", words: 1200, maxTokens: 2600, temperature: 0.95 };
     default:     
-      console.warn(`[generate_story] Unknown ageRange: "${age}", using default config`);
+      console.warn(`[generate_story] Unknown ageRange: "${age}", expected: 1-2, 3-4, 5-6, 7-8, 9-10, or 11-12. Using default config.`);
       return { tone: "äventyrlig och målande", words: 500, maxTokens: 1600, temperature: 0.9 };
   }
 }

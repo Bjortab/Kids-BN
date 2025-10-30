@@ -67,7 +67,7 @@
       if (!res.ok) throw new Error("v2 misslyckades " + res.status);
 
       const data = await res.json();
-      if (data?.story && data.story.trim()) {
+      if (data?.story?.trim()) {
         storyEl && (storyEl.textContent = data.story);
         return;
       }
@@ -79,7 +79,7 @@
         let res = await fetch(url);
         if (!res.ok) throw new Error("v1 misslyckades " + res.status);
         const data = await res.json();
-        if (data?.story && data.story.trim()) {
+        if (data?.story?.trim()) {
           storyEl && (storyEl.textContent = data.story);
         } else {
           showError("Kunde inte skapa berättelse. Försök igen senare.");
