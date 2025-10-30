@@ -65,6 +65,8 @@ Då kan du behöva:
 
 ## Ytterligare hjälp
 
+**Observera**: Länkarna nedan är till GitHubs officiella dokumentation på engelska.
+
 - [GitHub Copilot Dokumentation](https://docs.github.com/en/copilot)
 - [GitHub Copilot för Business](https://docs.github.com/en/copilot/overview-of-github-copilot/about-github-copilot-business)
 - [GitHub Apps vs Collaborators](https://docs.github.com/en/apps/overview)
