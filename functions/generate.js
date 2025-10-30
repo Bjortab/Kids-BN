@@ -1,9 +1,9 @@
 export async function onRequestOptions({ env }) {
-  return new Response(null, { status: 204, headers: cors(env.KIDSBN_ALLOWED_ORIGIN || "*") });
+  return new Response(null, { status: 204, headers: cors(env.BN_ALLOWED_ORIGIN || "*") });
 }
 
 export async function onRequestPost({ request, env }) {
-  const allow = env.KIDSBN_ALLOWED_ORIGIN || "*";
+  const allow = env.BN_ALLOWED_ORIGIN || "*";
   try {
     const { prompt, kidName = "Vännen", ageGroup = "3–5 år" } = await request.json();
 
