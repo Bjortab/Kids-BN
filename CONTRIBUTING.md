@@ -9,7 +9,7 @@ Om du vill ge någon skrivbehörighet till repot, följ dessa steg:
 ### Steg-för-steg Guide för Repository Owner
 
 1. **Gå till GitHub-repot**
-   - Navigera till https://github.com/Bjortab/Kids-BN
+   - Navigera till ditt repository på GitHub
 
 2. **Öppna Settings (Inställningar)**
    - Klicka på fliken **"Settings"** (högst upp till höger i menyn)

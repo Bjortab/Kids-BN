@@ -30,9 +30,14 @@ Detta projekt är en Cloudflare Pages-applikation som använder:
 ### Installation
 
 1. Klona repot
-2. Konfigurera `wrangler.toml` med dina egna ID:n och API-nycklar
-3. Kör `wrangler pages dev` för lokal utveckling
-4. Deploy med `wrangler pages deploy`
+2. Installera beroenden: `npm install -g wrangler`
+3. Konfigurera `wrangler.toml` med dina egna:
+   - D1 database ID (`database_id`)
+   - API-nycklar (lägg till som secrets via Cloudflare dashboard eller wrangler)
+   - Domän (`BN_ALLOWED_ORIGIN`)
+   - ElevenLabs röst-ID (`ELEVENLABS_VOICE_ID`)
+4. Kör `wrangler pages dev` för lokal utveckling
+5. Deploy med `wrangler pages deploy`
 
 ## Samarbete
 
