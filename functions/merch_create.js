@@ -1,7 +1,7 @@
 export async function onRequest(context){
   const { request, env } = context;
   const headers = {
-    "Access-Control-Allow-Origin": env.KIDSBN_ALLOWED_ORIGIN || "*",
+    "Access-Control-Allow-Origin": env.BN_ALLOWED_ORIGIN || "*",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
     "Content-Type": "application/json"
