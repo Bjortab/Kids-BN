@@ -23,30 +23,35 @@
     pre{white-space:pre-wrap;line-height:1.5}
     h1{font-size:26px;margin:0 0 4px}
     small{opacity:.7}
+    .muted { color:#9aa; font-size:13px }
+    .recorder-controls { display:flex; gap:8px; align-items:center; flex-wrap:wrap }
+    .recorder-status { color:#9aa; font-size:13px; margin-left:6px }
+    .secondary { background:#333; color:#ddd }
   </style>
 </head>
-  <script src="/app.js?v=gc15" defer></script>
+
 <script>
   window.addEventListener('DOMContentLoaded', function () {
     function byText(){const n=t=>t.toLowerCase();const btns=[...document.querySelectorAll('button,input[type=button],input[type=submit]')];
       return (arr)=>btns.find(b=>arr.some(t=>(b.value||b.innerText||'').toLowerCase().includes(n(t))));}
     const find = byText();
-    const c = find(['skapa saga','skapa & läs upp','skapa']);
-    const p = find(['läs upp','spela','testa röst']);
+    const c = find(['skapa saga','skapa & l\u00e4s upp','skapa']);
+    const p = find(['l\u00e4s upp','spela','testa r\u00f6st']);
     if (c) c.onclick = (e)=>{e.preventDefault?.(); window.createStory && window.createStory();};
     if (p) p.onclick = (e)=>{e.preventDefault?.(); window.playTTS && window.playTTS();};
     console.log('BN inline-binder aktiv');
   });
 </script>
+
 <body>
   <div class="panel">
     <h1>BN’s Sagovärld</h1>
-    <small>…där drömmar blir berättelser</small>
+    <small class="muted">…där drömmar blir berättelser</small>
 
-    <div class="row">
+    <div class="row" style="margin-top:12px">
       <div>
         <label>Ålder</label>
-        <select data-id="age">
+        <select data-id="age" id="age">
           <option value="1-2 år">1–2 år</option>
           <option value="3-4 år">3–4 år</option>
           <option value="5-6 år">5–6 år</option>
@@ -57,18 +62,42 @@
       </div>
       <div>
         <label>Hjälte (valfritt)</label>
-        <input data-id="hero" placeholder="t.ex. Taxen Tage, Draken Holger" />
+        <input data-id="hero" id="hero" placeholder="t.ex. Taxen Tage, Draken Holger" />
       </div>
     </div>
 
-    <div class="row">
+    <div class="row" style="margin-top:12px">
       <div style="flex:1 1 100%">
         <label>Sagoförslag (skriv eller tala in)</label>
-        <textarea data-id="prompt" placeholder="Skriv din idé här…"></textarea>
+        <textarea data-id="prompt" id="prompt" placeholder="Skriv din idé här…"></textarea>
       </div>
     </div>
 
-    <div class="row">
+    <!-- Röst‑UI: inspelning + transkript -->
+    <div class="row" style="margin-top:12px">
+      <div style="flex:1 1 100%">
+        <div class="recorder-controls" aria-live="polite">
+          <button id="mic" type="button">Starta inspelning</button>
+          <button id="cancel" class="secondary" type="button" style="display:none">Avbryt</button>
+          <span id="rec-status" class="recorder-status">Inaktiv</span>
+        </div>
+
+        <div style="margin-top:10px;">
+          <label class="muted" for="transcript">Transkript (klara att använda som prompt)</label>
+          <textarea id="transcript" placeholder="Här kommer transkriptionen..." aria-label="Transkript"></textarea>
+        </div>
+
+        <div style="margin-top:8px; display:flex; gap:8px; align-items:center">
+          <button id="use-transcript" class="btn-muted" type="button">Använd som prompt</button>
+          <button id="clear-transcript" class="btn-muted secondary" type="button">Rensa</button>
+          <div style="flex:1"></div>
+          <div class="muted">Max inspelningstid: 60 sekunder</div>
+        </div>
+      </div>
+    </div>
+    <!-- End röst-UI -->
+
+    <div class="row" style="margin-top:14px">
       <button class="btn-primary" data-id="btn-create">Skapa saga</button>
       <button class="btn-muted" data-id="btn-tts">Läs upp (om saga finns)</button>
     </div>
@@ -80,13 +109,15 @@
 
     <div class="error" data-id="error"></div>
 
-    <h3>Berättelse</h3>
+    <h3 style="margin-top:18px">Berättelse</h3>
     <pre data-id="story"></pre>
 
-    <h3>Uppläsning</h3>
+    <h3 style="margin-top:12px">Uppläsning</h3>
     <audio data-id="audio" controls preload="none" style="width:100%"></audio>
   </div>
 
+  <!-- Ladda recorder klienten först, sedan app.js -->
+  <script src="/recorder.js" defer></script>
   <script src="./app.js" defer></script>
 </body>
 </html>
