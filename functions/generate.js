@@ -1,145 +1,86 @@
-// functions/generate.js
-// Pages Function: POST /api/generate
-// Åldersanpassad längd: 1-2 år => max 80-100 tecken (characters).
-// Byt inte namn på filen — Pages mappar functions/<name>.js -> /api/<name>
+// Simple story generator helper to enforce different lengths per age category.
+//
+// Usage:
+//   const { buildPromptForAge } = require('./functions/generateStory');
+//   const prompt = buildPromptForAge(2, "en räv och en skog");
+//   // send prompt to your model / generation pipeline
+//
+// The function returns { category, minWords, maxWords, targetWords, prompt }
+// so you can both log the values and feed prompt to your generator.
 
-export async function onRequestOptions({ env }) {
-  const origin = env.KIDSBN_ALLOWED_ORIGIN || '*';
-  return new Response(null, {
-    status: 204,
-    headers: {
-      'Access-Control-Allow-Origin': origin,
-      'Access-Control-Allow-Methods': 'POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization'
-    }
-  });
+function getCategoryForAge(age) {
+  // accept either number or string convertible to number
+  const a = Number(age);
+  if (Number.isNaN(a)) throw new Error('age must be a number');
+  if (a <= 2) return '1-2';
+  if (a <= 4) return '3-4';
+  if (a <= 7) return '5-7';
+  if (a <= 10) return '8-10';
+  return '11-12';
 }
 
-export async function onRequestPost({ request, env }) {
-  const origin = env.KIDSBN_ALLOWED_ORIGIN || '*';
-  try {
-    const body = await request.json().catch(() => ({}));
-    const prompt = (body?.prompt || '').trim();
-    const kidName = (body?.kidName || body?.heroName || 'Vännen').trim();
-    const ageGroupRaw = (body?.ageGroup || body?.ageRange || '3-4 år').trim();
+const AGE_LENGTH_MAP = {
+  // these are word counts (min, max)
+  '1-2': { min: 40,  max: 120 },   // very short, simple sentences
+  '3-4': { min: 120, max: 260 },
+  '5-7': { min: 260, max: 450 },
+  '8-10': { min: 450, max: 700 },
+  '11-12': { min: 800, max: 1200 } // longer chapter‑like story
+};
 
-    if (!prompt) return json({ error: 'Skriv vad sagan ska handla om.' }, 400, origin);
-    if (!env.OPENAI_API_KEY) return json({ error: 'OPENAI_API_KEY saknas.' }, 500, origin);
+function pickTargetWords(min, max) {
+  // choose a reasonable target in the interval
+  return Math.floor(min + Math.random() * (max - min + 1));
+}
 
-    const ageKey = normalizeAge(ageGroupRaw);
-    const { lengthInstruction, maxTokens } = getLengthInstructionAndTokens(ageKey);
+function buildPromptForAge(age, topicOrBrief) {
+  const category = getCategoryForAge(age);
+  const { min, max } = AGE_LENGTH_MAP[category];
+  const targetWords = pickTargetWords(min, max);
 
-    // Strikt system prompt: instruera modellen att endast returnera berättelsetext
-    const sys = [
-      "Du är en trygg och snäll sagoberättare för barn på svenska.",
-      lengthInstruction,
-      `Åldersgrupp: ${ageGroupRaw}. Anpassa språk och ton efter åldern.`,
-      `Barnets namn är ${kidName}. Inkludera namnet naturligt i berättelsen.`,
-      "VIKTIGT: Svara endast med själva berättelsetexten — inga rubriker, inga förklaringar, inga citationstecken. Bara berättelsen."
-    ].join(' ');
+  // A clear instruction that helps the model hit the target length
+  const prompt = [
+    `Skriv en barnberättelse för ålderskategorin ${category} (age ${age}).`,
+    `Ämne / kort brief: ${topicOrBrief || 'Valfri barnberättelse med vänligt språk'}.`,
+    `Berättelsen ska vara enkel att förstå och passa för ${category}.`,
+    `Målsättning: skriv ungefär ${targetWords} ord (ange antal ord i din interna kalkyl).`,
+    `Använd korta meningar för yngre barn (1-4), något mer beskrivande språk för äldre.`,
+    `Avsluta med en kort moral / lärdom om det passar berättelsen.`,
+    `Skriv endast själva berättelsen i svaret — inga förklaringar eller metakommentarer.`
+  ].join(' ');
 
-    const payload = {
-      model: env.OPENAI_MODEL || 'gpt-4o-mini',
-      temperature: 0.8,
-      messages: [
-        { role: 'system', content: sys },
-        { role: 'user', content: `Sagaidé: ${prompt}` }
-      ]
-    };
-    if (maxTokens) payload.max_tokens = maxTokens;
+  return {
+    category,
+    minWords: min,
+    maxWords: max,
+    targetWords,
+    prompt
+  };
+}
 
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${env.OPENAI_API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(payload)
-    });
+// Helper: naive word count
+function countWords(text) {
+  if (!text) return 0;
+  return String(text).trim().split(/\s+/).filter(Boolean).length;
+}
 
-    if (!res.ok) {
-      const t = await res.text().catch(() => '');
-      return json({ error: 'OpenAI fel', details: t }, 502, origin);
-    }
-
-    const data = await res.json();
-    const storyRaw = data?.choices?.[0]?.message?.content?.trim() || '';
-    // Server-side safety truncation for 1-2 year olds
-    if (ageKey === '1-2') {
-      const trimmed = trimToCharacters(storyRaw, 100);
-      return json({ story: trimmed }, 200, origin);
-    }
-    return json({ story: storyRaw }, 200, origin);
-  } catch (e) {
-    return json({ error: e?.message || 'Serverfel' }, 500, env.KIDSBN_ALLOWED_ORIGIN || '*');
+// Helper: trim text by words to targetWords (keeps sentence boundaries naive)
+function trimToTargetWords(text, targetWords) {
+  const words = String(text).trim().split(/\s+/);
+  if (words.length <= targetWords) return text;
+  // Try to cut at the last full sentence before target if possible
+  const snippet = words.slice(0, targetWords).join(' ');
+  // If last character is not punctuation, try to trim to last sentence-ending punctuation
+  const idx = Math.max(snippet.lastIndexOf('.'), snippet.lastIndexOf('!'), snippet.lastIndexOf('?'));
+  if (idx > -1 && idx > snippet.length * 0.4) {
+    return snippet.slice(0, idx + 1).trim();
   }
+  return snippet.trim() + '…';
 }
 
-function normalizeAge(raw) {
-  const s = (raw || '').toLowerCase();
-  if (s.includes('1-2') || s.includes('1–2') || s.includes('1 2') || s.includes('1-2 år')) return '1-2';
-  if (s.includes('3-4') || s.includes('3–4')) return '3-4';
-  if (s.includes('5-6') || s.includes('5–6')) return '5-6';
-  if (s.includes('7-8') || s.includes('7–8')) return '7-8';
-  if (s.includes('9-10') || s.includes('9–10')) return '9-10';
-  if (s.includes('11-12') || s.includes('11–12')) return '11-12';
-  return '3-4';
-}
-
-function getLengthInstructionAndTokens(ageKey) {
-  // Returnerar textinstruktion + rekommenderat max_tokens
-  switch (ageKey) {
-    case '1-2':
-      // Mycket kort: 80-100 tecken — vi begränsar modellen hårt med max_tokens ~ 60
-      return {
-        lengthInstruction: 'Skriv en mycket kort, enkel och konkret saga på svenska — MAX 100 TECKEN (characters). Endast enkla ord och korta meningar.',
-        maxTokens: 60
-      };
-    case '3-4':
-      return {
-        lengthInstruction: 'Skriv en kort saga på svenska, enkel men komplett — ungefär 120–180 ord. Använd korta meningar.',
-        maxTokens: 220
-      };
-    case '5-6':
-      return {
-        lengthInstruction: 'Skriv en saga för 5–6 år — ungefär 250–400 ord.',
-        maxTokens: 600
-      };
-    case '7-8':
-      return {
-        lengthInstruction: 'Skriv en saga för 7–8 år — ungefär 400–600 ord.',
-        maxTokens: 900
-      };
-    case '9-10':
-      return {
-        lengthInstruction: 'Skriv en saga för 9–10 år — ungefär 600–900 ord.',
-        maxTokens: 1400
-      };
-    case '11-12':
-      return {
-        lengthInstruction: 'Skriv en saga för 11–12 år — ungefär 900–1200 ord.',
-        maxTokens: 2000
-      };
-    default:
-      return {
-        lengthInstruction: 'Skriv en saga anpassad för barn — anpassa längd efter åldern.',
-        maxTokens: undefined
-      };
-  }
-}
-
-function trimToCharacters(text, maxChars) {
-  if (!text) return text;
-  if (text.length <= maxChars) return text;
-  const candidate = text.slice(0, maxChars);
-  const lastDot = candidate.lastIndexOf('.');
-  if (lastDot > Math.floor(maxChars * 0.5)) return candidate.slice(0, lastDot + 1);
-  return candidate.trim().slice(0, Math.max(0, maxChars - 1)) + '…';
-}
-
-function json(obj, status = 200, origin = '*') {
-  return new Response(JSON.stringify(obj), {
-    status,
-    headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': origin }
-  });
-}
+module.exports = {
+  buildPromptForAge,
+  getCategoryForAge,
+  countWords,
+  trimToTargetWords
+};
