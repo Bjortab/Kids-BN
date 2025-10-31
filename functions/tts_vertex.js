@@ -1,3 +1,15 @@
+// Lägg detta högst upp i functions/tts_vertex.js
+export async function onRequestOptions({ env }) {
+  const origin = env.KIDSBN_ALLOWED_ORIGIN || '*';
+  return new Response(null, {
+    status: 204,
+    headers: {
+      'Access-Control-Allow-Origin': origin,
+      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+    }
+  });
+}
 import { GoogleAuth } from "google-auth-library";
 
 // Hämta nyckel från Cloudflare Secret (du har lagt in den som GOOGLE_TTS_KEY)
