@@ -1,4 +1,9 @@
-// Lägg detta högst upp i functions/tts_vertex.js
+// functions/tts_vertex.js
+// Pages Function: POST /api/tts_vertex
+// Endast Google Text-to-Speech via API key (ingen google-auth-library)
+// Kräver: env.GOOGLE_TTS_KEY eller env.GOOGLE_TTS_API_KEY
+// Hanterar CORS preflight och returnerar audio/mpeg (MP3).
+
 export async function onRequestOptions({ env }) {
   const origin = env.KIDSBN_ALLOWED_ORIGIN || '*';
   return new Response(null, {
@@ -10,98 +15,77 @@ export async function onRequestOptions({ env }) {
     }
   });
 }
-import { GoogleAuth } from "google-auth-library";
 
-// Hämta nyckel från Cloudflare Secret (du har lagt in den som GOOGLE_TTS_KEY)
-const googleKey = JSON.parse(process.env.GOOGLE_TTS_KEY || "{}");
+export async function onRequestPost({ request, env }) {
+  const origin = env.KIDSBN_ALLOWED_ORIGIN || '*';
+  try {
+    const ct = (request.headers.get('content-type') || '').toLowerCase();
+    let body = {};
+    if (ct.includes('application/json')) {
+      body = await request.json().catch(()=>({}));
+    } else if (ct.includes('application/x-www-form-urlencoded') || ct.includes('multipart/form-data')) {
+      const form = await request.formData().catch(()=>null);
+      if (form) body.text = form.get('text') || form.get('message') || '';
+    } else {
+      try {
+        const url = new URL(request.url);
+        body.text = url.searchParams.get('text') || '';
+      } catch (e) { body = body || {}; }
+    }
 
-// Initiera autentisering
-const auth = new GoogleAuth({
-  credentials: googleKey,
-  scopes: ["https://www.googleapis.com/auth/cloud-platform"]
-});
+    const text = (body?.text || '').trim();
+    const voice = body?.voice || 'sv-SE-Wavenet-A';
+    if (!text) return json({ error: 'Ingen text att läsa upp.' }, 400, origin);
 
-const GOOGLE_TTS_ENDPOINT =
-  "https://texttospeech.googleapis.com/v1/text:synthesize";
+    const googleKey = env.GOOGLE_TTS_KEY || env.GOOGLE_TTS_API_KEY;
+    if (!googleKey) return json({ error: 'Ingen Google TTS nyckel konfigurerad (GOOGLE_TTS_KEY).' }, 500, origin);
 
-/**
- * Genererar TTS med Google Cloud (Chirp 3 HD / WaveNet / Neural2)
- * @param {Object} params - inställningar
- * @param {string} params.text - Texten som ska läsas upp
- * @param {string} [params.voice="sv-SE-Standard-A"] - Rösten
- * @param {string} [params.model="chirp"] - Typ av modell (chirp / wavenet / neural2)
- * @param {string} [params.lang="sv-SE"] - Språk
- * @param {string} [params.format="MP3"] - Utdataformat
- * @returns {Promise<Blob>} - MP3-ljudfil som Blob
- */
-export async function synthesizeTTS({
-  text,
-  voice = "sv-SE-Standard-A",
-  model = "chirp",
-  lang = "sv-SE",
-  format = "MP3"
-}) {
-  if (!text || text.trim().length === 0) {
-    throw new Error("Ingen text angiven för TTS.");
+    const reqBody = {
+      input: { text },
+      voice: { languageCode: 'sv-SE', name: voice },
+      audioConfig: { audioEncoding: 'MP3' }
+    };
+
+    const resp = await fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${encodeURIComponent(googleKey)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(reqBody)
+    });
+
+    if (!resp.ok) {
+      const t = await resp.text().catch(()=>'');
+      return json({ error: 'Google TTS error', details: t }, 502, origin);
+    }
+
+    const ttsData = await resp.json().catch(()=>null);
+    const audioContent = ttsData?.audioContent;
+    if (!audioContent) return json({ error: 'Google TTS returnerade inget audioContent' }, 502, origin);
+
+    // Dekoda base64 -> ArrayBuffer och returnera som audio/mpeg
+    try {
+      const binaryString = atob(audioContent);
+      const len = binaryString.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
+      return new Response(bytes.buffer, {
+        status: 200,
+        headers: { 'Content-Type': 'audio/mpeg', 'Access-Control-Allow-Origin': origin }
+      });
+    } catch (e) {
+      // Fallback: returnera base64-string (mindre idealiskt)
+      return new Response(audioContent, {
+        status: 200,
+        headers: { 'Content-Type': 'application/octet-stream', 'Access-Control-Allow-Origin': origin }
+      });
+    }
+  } catch (err) {
+    return json({ error: 'Serverfel', details: String(err?.message || err) }, 500, env.KIDSBN_ALLOWED_ORIGIN || '*');
   }
-
-  const client = await auth.getClient();
-  const token = await client.getAccessToken();
-
-  const body = {
-    input: { text },
-    voice: {
-      languageCode: lang,
-      name:
-        model === "chirp"
-          ? "sv-SE-Chirp-3-HD"
-          : model === "wavenet"
-          ? "sv-SE-Wavenet-A"
-          : "sv-SE-Neural2-A"
-    },
-    audioConfig: { audioEncoding: format }
-  };
-
-  const res = await fetch(GOOGLE_TTS_ENDPOINT, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${token.token}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(body)
-  });
-
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`TTS-fel: ${res.status} – ${errText}`);
-  }
-
-  const data = await res.json();
-  const audioBuffer = Buffer.from(data.audioContent, "base64");
-  return audioBuffer;
 }
 
-/**
- * Cloudflare Worker-kompatibel hantering (om du kör via API-route)
- */
-export default {
-  async fetch(request, env) {
-    try {
-      const url = new URL(request.url);
-      if (url.pathname === "/api/tts_vertex") {
-        const { text, voice, model, lang } = await request.json();
-        const audioBuffer = await synthesizeTTS({ text, voice, model, lang });
-
-        return new Response(audioBuffer, {
-          headers: {
-            "Content-Type": "audio/mpeg",
-            "Cache-Control": "public, max-age=31536000"
-          }
-        });
-      }
-      return new Response("Not Found", { status: 404 });
-    } catch (err) {
-      return new Response(`TTS error: ${err.message}`, { status: 500 });
-    }
-  }
-};
+function json(obj, status = 200, origin = '*') {
+  return new Response(JSON.stringify(obj), {
+    status,
+    headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': origin }
+  });
+}
