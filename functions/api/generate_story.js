@@ -1,36 +1,66 @@
-// Enkel test‑funktion för Pages Functions
-// Placera denna fil i functions/api/generate_story.js i repo och merg­a/pusha till main.
-// Den förväntar sig en POST med JSON body: { "age": 3, "brief": "en räv i skogen" }
-// Svarar alltid med giltig JSON så frontend inte försöker parsa HTML/404.
+// Robust Pages Function endpoint för att generera berättelser.
+// Hanterar OPTIONS (CORS), GET (diagnostik) och POST (generera).
+// Returnerar alltid Content-Type: application/json så frontend inte försöker parsa HTML.
 
 export async function onRequest(context) {
+  const { request } = context;
+
+  const defaultHeaders = {
+    'Content-Type': 'application/json;charset=utf-8',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type'
+  };
+
   try {
-    const { request } = context;
-    // Tillåt preflight / CORS
+    // CORS preflight
     if (request.method === 'OPTIONS') {
       return new Response(null, {
         status: 204,
-        headers: {
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type'
-        }
+        headers: defaultHeaders
       });
     }
 
-    const bodyText = await request.text();
-    let payload = {};
-    try {
-      payload = bodyText ? JSON.parse(bodyText) : {};
-    } catch (e) {
-      // Om klient skickar form data eller tomt, hantera försiktigt
-      payload = {};
+    // Hjälp‑response för GET så man enkelt kan kontrollera endpointen i browser
+    if (request.method === 'GET') {
+      const info = {
+        ok: true,
+        message: 'generate_story endpoint — använd POST med JSON body: { ageRange, heroName, prompt }',
+        path: '/api/generate_story',
+        note: 'Returns JSON; make sure frontend POSTs to the exact path and sets Content-Type: application/json'
+      };
+      return new Response(JSON.stringify(info), { status: 200, headers: defaultHeaders });
     }
 
-    const age = payload.age ?? payload.ageGroup ?? 0;
-    const brief = payload.brief ?? payload.topic ?? 'En kort berättelse';
+    // Förväntar oss POST för riktig generering
+    if (request.method !== 'POST') {
+      return new Response(JSON.stringify({ ok: false, error: `Unsupported method ${request.method}` }), {
+        status: 405,
+        headers: defaultHeaders
+      });
+    }
 
-    // Enkel mapping av ordlängd per kategori (samma idé som vi diskuterade)
+    // Läs body säkert (kan vara tom, JSON eller formdata)
+    const bodyText = await request.text();
+    let payload = {};
+    if (bodyText) {
+      try {
+        payload = JSON.parse(bodyText);
+      } catch (err) {
+        // försök som urlencoded / fallback
+        try {
+          const params = new URLSearchParams(bodyText);
+          for (const [k, v] of params) payload[k] = v;
+        } catch (e) {
+          payload = {};
+        }
+      }
+    }
+
+    const age = payload.age ?? payload.ageRange ?? payload.ageGroup ?? 0;
+    const brief = payload.prompt ?? payload.brief ?? payload.topic ?? 'En kort berättelse';
+
+    // Enkel ordlängds‑mapping (kan justeras senare)
     const AGE_LENGTH_MAP = {
       '1-2': { min: 40,  max: 120 },
       '3-4': { min: 120, max: 260 },
@@ -40,7 +70,7 @@ export async function onRequest(context) {
     };
 
     function getCategoryForAge(a) {
-      const n = Number(a) || 0;
+      const n = Number(String(a).replace(/[^\d]/g, '')) || 0;
       if (n <= 2) return '1-2';
       if (n <= 4) return '3-4';
       if (n <= 7) return '5-7';
@@ -50,10 +80,9 @@ export async function onRequest(context) {
 
     const category = getCategoryForAge(age);
     const { min, max } = AGE_LENGTH_MAP[category] || AGE_LENGTH_MAP['5-7'];
-    // En enkel target (mitt i intervallet)
     const targetWords = Math.floor((min + max) / 2);
 
-    // Generera en placeholder‑text med ungefär targetWords ord (bara för test)
+    // Placeholder‑generation (byt ut mot riktig modellanrop senare)
     const word = "berättelseord";
     const wordsArray = new Array(targetWords).fill(word);
     const generatedText = wordsArray.join(' ');
@@ -64,19 +93,17 @@ export async function onRequest(context) {
       age,
       brief,
       targetWords,
-      text: generatedText
+      story: generatedText
     };
 
     return new Response(JSON.stringify(result), {
       status: 200,
-      headers: {
-        'Content-Type': 'application/json;charset=utf-8',
-        'Access-Control-Allow-Origin': '*'
-      }
+      headers: defaultHeaders
     });
 
   } catch (err) {
-    const errBody = { ok: false, error: String(err) };
+    // Alltid returnera JSON – undvik HTML‑error som frontend försöker parsa
+    const errBody = { ok: false, error: String(err), stack: err?.stack?.split('\n')?.slice(0,5) };
     return new Response(JSON.stringify(errBody), {
       status: 500,
       headers: {
