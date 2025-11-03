@@ -1,0 +1,48 @@
+# wrangler.toml — Kids-BN (stabil)
+name = "kids-bn"
+compatibility_date = "2024-10-06"
+pages_build_output_dir = "public"
+
+# ===== Gemensamma variabler (ENDA [vars]) =====
+[vars]
+APP = "kids"
+BN_ENV = "production"
+# Din egen domän om/ när du ansluter – just nu pages-dev:
+BN_ALLOWED_ORIGIN = "https://kids-bn.pages.dev"
+
+# Bild / (ev) whisper (om du använder dem)
+OPENAI_IMAGE_MODEL = "gpt-image-1"
+WHISPER_MODEL = "whisper-1"
+
+# ElevenLabs – byt till din röst-ID
+ELEVENLABS_VOICE_ID = "x0u3EW21dbrORJzOq1m9"
+MERCH_API_URL = "https://api.printful.com"
+
+# Claude (sagor) – automatisk modell (vår kod väljer rätt modell)
+MODEL_CLAUDE = "auto"
+# Standardspråk för sagor (“sv” eller “en”)
+LANG_DEFAULT = "sv"
+
+# ===== Preview-miljö (engångs override) =====
+[env.preview.vars]
+BN_ENV = "preview"
+BN_ALLOWED_ORIGIN = "https://*.pages.dev"
+
+# ===== D1 (SQL) =====
+[[d1_databases]]
+binding      = "BN_DB"
+database_name = "bn_db"
+# byt till ditt riktiga ID (finns i Cloudflare på D1)
+database_id  = "567ad325-9fd0-4311-8c7e-53ce03b2b9ac"
+
+# ===== R2 (ljudcache) =====
+[[r2_buckets]]
+binding             = "BN_AUDIO"
+bucket_name         = "bn-audio"
+preview_bucket_name = "bn-audio"
+
+# ===== R2 (bilder) =====
+[[r2_buckets]]
+binding             = "BN_IMAGES"
+bucket_name         = "bn-images"
+preview_bucket_name = "bn-images"
