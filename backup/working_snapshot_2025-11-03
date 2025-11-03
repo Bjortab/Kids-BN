@@ -1,0 +1,304 @@
+=== BACKUP: working snapshot (2025-11-03 09:24:33 UTC) ===
+Kommentar: Denna fil innehåller kopior av de två filer som fungerade när backup togs:
+- public/app.js (klientkod)
+- functions/api/generate_story.js (proxy som vidarebefordrar till /generate)
+
+Lägg denna fil i en mapp som Cloudflare inte använder (t.ex. .github/backup eller backups/) så påverkar den inte deploy.
+
+------ START FILE: public/app.js ------
+/* public/app.js — klientkod (ersätt ej i produktion utan PR) */
+(function(){
+  'use strict';
+
+  const log = (...args) => console.log('[BN]', ...args);
+  const warn = (...args) => console.warn('[BN]', ...args);
+
+  function qs(sel){ try { return document.querySelector(sel); } catch(e){ return null; } }
+
+  function findButtonByText(...terms){
+    const lower = t => t.toLowerCase();
+    const btns = Array.from(document.querySelectorAll('button,input[type=button],input[type=submit]'));
+    return btns.find(b => terms.some(term => (b.value||b.innerText||'').toLowerCase().includes(lower(term))));
+  }
+
+  let playBtn   = qs('[data-id="btn-tts"]')   || findButtonByText('läs upp','spela','testa röst');
+  let createBtn = qs('[data-id="btn-create"]') || findButtonByText('skapa saga','skapa & läs upp','skapa');
+
+  function setError(text){
+    const errorEl = qs('[data-id="error"]') || qs('.error');
+    if (!errorEl) return console.error('[BN] error:', text);
+    errorEl.style.display = text ? 'block' : 'none';
+    errorEl.textContent = text || '';
+  }
+
+  function showSpinner(show, statusText){
+    try {
+      const spinnerEl = qs('[data-id="spinner"]') || qs('.spinner');
+      if (!spinnerEl) return;
+      spinnerEl.style.display = show ? 'flex' : 'none';
+      const status = spinnerEl.querySelector('[data-id="status"]');
+      if (status && typeof statusText !== 'undefined') status.textContent = statusText;
+    } catch (e) { console.warn('[BN] spinner error', e); }
+  }
+
+  async function createStory() {
+    const ageEl    = qs('#age') || qs('[data-id="age"]') || null;
+    const heroEl   = qs('#hero') || qs('[data-id="hero"]') || null;
+    const promptEl = qs('#prompt') || qs('[data-id="prompt"]') || qs('textarea[name="prompt"]') || null;
+    const storyEl  = qs('[data-id="story"]') || qs('#story') || qs('.story-output') || null;
+    const spinnerEl = qs('[data-id="spinner"]') || qs('.spinner') || null;
+    const createButton = qs('[data-id="btn-create"]') || qs('#btn-create') || qs('.btn-primary') || createBtn || null;
+
+    try {
+      setError('');
+      if (!promptEl) { setError('Prompt-fält saknas.'); return; }
+      const age    = (ageEl?.value || '3-4 år').trim();
+      const hero   = (heroEl?.value || '').trim();
+      const prompt = (promptEl?.value || '').trim();
+      if (!prompt) { setError('Skriv eller tala in en idé först.'); return; }
+
+      showSpinner(true, 'Skapar berättelse…');
+      if (createButton) createButton.disabled = true;
+
+      let res = await fetch("/api/generate_story", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json"
+        },
+        body: JSON.stringify({ ageRange: age, heroName: hero, prompt })
+      });
+
+      if (res.ok) {
+        let data = null;
+        try {
+          data = await res.clone().json();
+        } catch (parseErr) {
+          const txt = await res.text().catch(()=>'(kunde inte läsa body)');
+          console.warn('[BN] generate_story returned non-JSON:', res.status, txt);
+          throw new Error('Server svarade inte med JSON: ' + (txt.slice ? txt.slice(0,300) : String(txt)));
+        }
+
+        if (data?.story) {
+          if (storyEl) storyEl.textContent = data.story;
+          return;
+        }
+        console.warn('[BN] generate_story ok men saknar story‑fält:', data);
+      } else {
+        const txt = await res.text().catch(()=>'(no body)');
+        console.warn('[BN] generate_story failed', res.status, txt);
+      }
+
+      const url = `/api/generate?ageRange=${encodeURIComponent(age)}&hero=${encodeURIComponent(hero)}&prompt=${encodeURIComponent(prompt)}`;
+      const res2 = await fetch(url);
+      if (!res2.ok) {
+        const t = await res2.text().catch(()=>'');
+        throw new Error('Båda endpoints misslyckades: ' + (t || res2.status));
+      }
+      const data2 = await res2.json();
+      if (data2?.story) {
+        if (storyEl) storyEl.textContent = data2.story;
+        return;
+      }
+
+      throw new Error('Inget story i svar från v1');
+    } catch (err) {
+      console.error('[BN] createStory error', err);
+      setError('Kunde inte skapa berättelse: ' + (err?.message || err));
+    } finally {
+      showSpinner(false);
+      try { if (createButton) createButton.disabled = false; } catch(e){}
+    }
+  }
+
+  async function playTTS() {
+    try {
+      setError('');
+      const storyEl = qs('[data-id="story"]') || qs('#story') || qs('.story-output');
+      const text = (storyEl?.textContent || "").trim();
+      if (!text) { setError('Ingen berättelse att läsa upp.'); return; }
+      const voice = (qs('#voice')?.value || 'sv-SE-Wavenet-A');
+
+      showSpinner(true, 'Spelar upp…');
+      const playButton = qs('[data-id="btn-tts"]') || playBtn || qs('.btn-muted');
+      if (playButton) playButton.disabled = true;
+
+      try {
+        let res = await fetch("/api/tts_vertex", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text, voice })
+        });
+        if (!res.ok) throw new Error('tts_vertex ' + res.status);
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const audioEl = qs('[data-id="audio"]') || qs('audio');
+        if (audioEl) {
+          audioEl.src = url;
+          audioEl.play().catch(e => console.warn('play error', e));
+        } else {
+          new Audio(url).play().catch(e => console.warn('play error', e));
+        }
+        return;
+      } catch (e1) {
+        console.warn('[BN] tts_vertex failed', e1);
+      }
+
+      try {
+        let res = await fetch("/api/tts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text, voice })
+        });
+        if (!res.ok) throw new Error('tts ' + res.status);
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const audioEl = qs('[data-id="audio"]') || qs('audio');
+        if (audioEl) {
+          audioEl.src = url;
+          audioEl.play().catch(e => console.warn('play error', e));
+        } else {
+          new Audio(url).play().catch(e => console.warn('play error', e));
+        }
+      } catch (e2) {
+        console.error('[BN] playTTS error', e2);
+        setError('Kunde inte spela upp ljud: ' + (e2?.message || e2));
+      }
+    } finally {
+      showSpinner(false);
+      const playButton = qs('[data-id="btn-tts"]') || playBtn || qs('.btn-muted');
+      if (playButton) playButton.disabled = false;
+    }
+  }
+
+  if (!createBtn) warn("Hittar ingen 'Skapa saga'-knapp. Kontrollera data-id eller knapptext.");
+  else createBtn.addEventListener("click", (e) => { e.preventDefault?.(); createStory(); });
+
+  if (!playBtn) warn("Hittar ingen 'Läs upp'-knapp. Kontrollera data-id eller knapptext.");
+  else playBtn.addEventListener("click", (e) => { e.preventDefault?.(); playTTS(); });
+
+  window.createStory = createStory;
+  window.playTTS = playTTS;
+
+  log("app.js laddad");
+})();
+------ END FILE: public/app.js ------
+
+------ START FILE: functions/api/generate_story.js ------
+/* functions/api/generate_story.js — proxy till /generate */
+export async function onRequest(context) {
+  const { request } = context;
+
+  const defaultHeaders = {
+    'Content-Type': 'application/json;charset=utf-8',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type'
+  };
+
+  try {
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { status: 204, headers: defaultHeaders });
+    }
+
+    if (request.method === 'GET') {
+      const info = {
+        ok: true,
+        message: 'generate_story endpoint — använd POST med JSON body: { ageRange, heroName, prompt }',
+        path: '/api/generate_story',
+        note: 'This endpoint proxies the request to /generate which performs the model call.'
+      };
+      return new Response(JSON.stringify(info), { status: 200, headers: defaultHeaders });
+    }
+
+    if (request.method !== 'POST') {
+      return new Response(JSON.stringify({ ok: false, error: `Unsupported method ${request.method}` }), {
+        status: 405,
+        headers: defaultHeaders
+      });
+    }
+
+    const bodyText = await request.text();
+    let payload = {};
+    if (bodyText) {
+      try {
+        payload = JSON.parse(bodyText);
+      } catch (err) {
+        try {
+          const params = new URLSearchParams(bodyText);
+          for (const [k, v] of params) payload[k] = v;
+        } catch (e) {
+          payload = {};
+        }
+      }
+    }
+
+    const target = new URL('/generate', request.url).toString();
+    try {
+      const forwardRes = await fetch(target, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const text = await forwardRes.text().catch(() => '');
+
+      if (!forwardRes.ok) {
+        return new Response(text || JSON.stringify({ ok: false, error: `Upstream failed with ${forwardRes.status}` }), {
+          status: 502,
+          headers: defaultHeaders
+        });
+      }
+
+      try {
+        const parsed = JSON.parse(text || '{}');
+        return new Response(JSON.stringify(parsed), { status: 200, headers: defaultHeaders });
+      } catch (e) {
+        return new Response(JSON.stringify({ ok: true, story: String(text || '') }), {
+          status: 200,
+          headers: defaultHeaders
+        });
+      }
+    } catch (forwardErr) {
+      console.error('[generate_story] forward error', forwardErr);
+      const word = "berättelseord";
+      const fallback = Array(120).fill(word).join(' ');
+      const result = {
+        ok: false,
+        error: 'Upstream generate call failed',
+        upstreamError: String(forwardErr),
+        note: 'Detta är en fallback placeholder. Åtgärda upstream /generate för riktiga berättelser.',
+        story: fallback
+      };
+      return new Response(JSON.stringify(result), { status: 502, headers: defaultHeaders });
+    }
+  } catch (err) {
+    const errBody = { ok: false, error: String(err), stack: err?.stack?.split('\n')?.slice(0,5) };
+    return new Response(JSON.stringify(errBody), {
+      status: 500,
+      headers: defaultHeaders
+    });
+  }
+}
+------ END FILE: functions/api/generate_story.js ------
+
+=== SLUT PÅ BACKUP ===
+Instruktioner för att lägga in filen i repo:
+1) GitHub UI (enkelt):
+   - Gå till ditt repo → klicka "Add file" → "Create new file".
+   - Skriv filvägen: .github/backup/working_snapshot_2025-11-03.txt
+   - Klistra in hela innehållet ovan och commit (create a new branch eller commit directly to main enligt din policy).
+   - När filen är committad ligger backupen tryggt i repo och Cloudflare Pages ignorerar .github/ (det påverkar inte deploy).
+
+2) Git (lokalt):
+   - git checkout -b add-working-backup
+   - mkdir -p .github/backup
+   - skapa filen .github/backup/working_snapshot_2025-11-03.txt med innehåll ovan
+   - git add .github/backup/working_snapshot_2025-11-03.txt
+   - git commit -m "chore: add working snapshot backup (app.js + generate_story proxy)"
+   - git push --set-upstream origin add-working-backup
+   - skapa PR och merge eller behåll som backup‑branch
+
+Obs om Cloudflare: att lägga backup i .github/backup eller en annan mapp (inte public/ eller functions/) innebär att Cloudflare Pages inte publicerar den som asset eller funktion — den är där bara för att du enkelt ska kunna hämta filen ifall något går fel.
+
+Vill du att jag istället öppnar PR åt dig med en fil på en ny branch (jag kan skapa PR om du ger OK att jag får skapa en fil i repo)? Skriv "Skapa PR" så gör jag det åt dig nu. Om du föredrar att göra det själv: klistra in ovan i GitHub UI enligt steg 1.
