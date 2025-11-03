@@ -1,7 +1,9 @@
 // public/recorder.js
 // Robust recorder som binder en "Starta inspelning"-knapp automatiskt.
-// Om knapp inte hittas kan du anropa startAutoRecord() manuellt.
-// Den här versionen försöker hitta knappen via selectors OCH via knapptext (svenska/engelska).
+// Förbättringar i denna version:
+// - Ta inte bort eller ändra text på andra knappar (undantag endast om knapp är markerad med data-id/#btn-record/.btn-record).
+// - Avstår från OPTIONS-probing som gav 405; skickar POST när blob finns och hanterar 4xx/5xx.
+// - Fler kontroller i resolveRecordButton så fel knapp inte väljs.
 (function(){
   'use strict';
 
@@ -9,17 +11,13 @@
   const SILENCE_THRESHOLD = 0.02; // RMS under denna = tyst (sänk vid svaga barnröster)
   const SILENCE_MS = 3500;        // ms tystnad innan inspelning stoppas (3.5s)
   const MAX_RECORD_MS = 60000;    // max inspelningstid i ms (60s)
-  const TRANSCRIBE_ENDPOINTS = [
-    '/api/whisper',
-    '/whisper_transcribe',
-    '/api/stt',
-    '/api/whisper_transcribe',
-    '/api/recognize'
-  ];
+  // Primär transcribe endpoint (skicka POST direkt). Lägg till fler endpoints här om din backend har andra vägar.
+  const TRANSCRIBE_ENDPOINT = '/api/whisper';
 
   // UI‑selectors (primära)
   const recordBtnSel = '[data-id="btn-record"], #btn-record, .btn-record, button.record';
   const transcriptSel = '[data-id="transcript"], #transcript, textarea[name="transcript"]';
+  const promptSel = '#prompt, textarea[name="prompt"], [data-id="prompt"], .prompt';
 
   // State
   let mediaStream = null;
@@ -37,7 +35,6 @@
   function qsa(sel){ try { return Array.from(document.querySelectorAll(sel)); } catch(e){ return []; } }
 
   function findButtonByText(terms){
-    // terms: array of lower-case strings to search for
     const btns = Array.from(document.querySelectorAll('button, a[role="button"], input[type="button"], input[type="submit"]'));
     for (const b of btns){
       const text = ((b.innerText || b.value || '') + '').trim().toLowerCase();
@@ -49,8 +46,33 @@
     return null;
   }
 
-  function setButtonState(btn, text, disabled){
-    try { if(btn){ btn.textContent = text; btn.disabled = !!disabled; } } catch(e){}
+  // Viktigt: vi ändrar inte knappens innerText UNLESS knappen är tydligt avsedd för inspelning.
+  // Här gör vi en säker ändring: om knappen har markerande selektor (data-id/#btn-record/.btn-record) så får vi skriva över text.
+  // Annars sätter vi endast aria-label, title och css‑klass 'bn-recording' för visuell feedback.
+  function setRecordingVisual(btn, isRecording){
+    if (!btn) return;
+    const safeToReplaceText = (btn.matches && (btn.matches('[data-id="btn-record"], #btn-record, .btn-record')));
+    if (isRecording) {
+      btn.classList.add('bn-recording');
+      btn.setAttribute('aria-pressed', 'true');
+      btn.setAttribute('title', 'Inspelning pågår');
+      if (safeToReplaceText) {
+        // spara originaltext om inte sparat
+        if (!btn.dataset.bnOriginal) btn.dataset.bnOriginal = btn.innerText || btn.value || '';
+        try { btn.textContent = 'Lyssnar…'; } catch(e){}
+      }
+    } else {
+      btn.classList.remove('bn-recording');
+      btn.setAttribute('aria-pressed', 'false');
+      btn.setAttribute('title', 'Starta inspelning');
+      if (safeToReplaceText && btn.dataset.bnOriginal) {
+        try { btn.textContent = btn.dataset.bnOriginal; } catch(e){}
+      }
+    }
+  }
+
+  function setButtonDisabled(btn, disabled){
+    try { if (btn) btn.disabled = !!disabled; } catch(e){}
   }
 
   function setTranscript(text){
@@ -66,21 +88,6 @@
   }
   function clearNotify(){
     try { if (window.showSpinner) window.showSpinner(false); } catch(e){}
-  }
-
-  // ---------------- Transcribe endpoint discovery ----------------
-  async function pickTranscribeEndpoint(){
-    for (const ep of TRANSCRIBE_ENDPOINTS){
-      try {
-        const res = await fetch(ep, { method: 'OPTIONS' });
-        if (res && (res.ok || res.status === 204 || res.status === 200)) return ep;
-      } catch(e){}
-      try {
-        const res2 = await fetch(ep, { method: 'GET' });
-        if (res2 && (res2.ok || res2.status === 200)) return ep;
-      } catch(e){}
-    }
-    return TRANSCRIBE_ENDPOINTS[0];
   }
 
   // ---------------- Audio helpers ----------------
@@ -121,13 +128,16 @@
   async function startRecording(){
     if (isRecording) return;
     const recordBtn = resolveRecordButton();
-    setButtonState(recordBtn, 'Lyssnar…', true);
+    // Visual feedback utan att skriva över andras knapptexter (se setRecordingVisual)
+    setRecordingVisual(recordBtn, true);
+    setButtonDisabled(recordBtn, true); // disabla knappen för att undvika dubbelklick
     notify('Tillåt mikrofon och prata när du är redo…');
     try {
       mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (err) {
       clearNotify();
-      setButtonState(recordBtn, 'Starta inspelning', false);
+      setRecordingVisual(recordBtn, false);
+      setButtonDisabled(recordBtn, false);
       console.error('Mic permission denied or error', err);
       alert('Mikrofontillgång nekad eller inte tillgänglig. Kontrollera att du tillåter mikrofonen.');
       return;
@@ -172,22 +182,25 @@
     try { if (mediaStream) mediaStream.getTracks().forEach(t=>t.stop()); } catch(e){}
     clearNotify();
     const recordBtn = resolveRecordButton();
-    setButtonState(recordBtn, 'Starta inspelning', false);
+    setRecordingVisual(recordBtn, false);
+    setButtonDisabled(recordBtn, false);
     console.log('Recording stopped:', reason);
   }
 
+  // ---------------- When recording is done ----------------
   async function handleRecordingComplete(blob){
     notify('Transkriberar…');
-    const endpoint = await pickTranscribeEndpoint();
-    console.log('Using transcribe endpoint:', endpoint);
+    const endpoint = TRANSCRIBE_ENDPOINT;
+    console.log('[recorder] Using transcribe endpoint:', endpoint);
     try {
       const fd = new FormData();
       fd.append('file', blob, 'recording.webm');
+      // Skicka POST direkt — server kan svara 4xx/5xx, vi hanterar det.
       const res = await fetch(endpoint, { method: 'POST', body: fd });
       if (!res.ok) {
         const t = await res.text().catch(()=>'<no-body>');
-        console.warn('Transcribe failed', res.status, t);
-        alert('Transkribering misslyckades: ' + res.status);
+        console.warn('[recorder] Transcribe failed', res.status, t);
+        alert('Transkribering misslyckades: ' + res.status + (t?(' — ' + t):''));
         return;
       }
 
@@ -203,25 +216,30 @@
 
       transcript = (transcript || '').trim();
       if (!transcript) {
-        console.warn('Empty transcript from server');
+        console.warn('[recorder] Empty transcript from server');
         alert('Transkribering gav ingen text. Försök igen.');
         return;
       }
 
+      // Sätt transkript i UI och autofyll prompt direkt
       setTranscript(transcript);
-      if (window.__BN_autoFillPromptFromTranscript && typeof window.applyTranscriptToPrompt === 'function'){
-        window.applyTranscriptToPrompt(transcript);
-      }
+      try {
+        const apply = window.applyTranscriptToPrompt;
+        if (window.__BN_autoFillPromptFromTranscript && typeof apply === 'function') {
+          apply(transcript);
+        }
+      } catch(e){ console.warn(e); }
 
+      // Skapa saga och spela upp automatiskt om funktioner finns
       try {
         notify('Skapar berättelse…');
         if (typeof window.createStory === 'function'){
           await window.createStory();
         } else {
-          console.warn('window.createStory missing');
+          console.warn('[recorder] window.createStory missing');
         }
       } catch (e) {
-        console.error('createStory failed', e);
+        console.error('[recorder] createStory failed', e);
       }
 
       try {
@@ -230,42 +248,51 @@
         if (typeof window.playTTS === 'function'){
           await window.playTTS();
         } else {
-          console.warn('window.playTTS missing');
+          console.warn('[recorder] window.playTTS missing');
         }
       } catch (e) {
-        console.error('playTTS failed', e);
+        console.error('[recorder] playTTS failed', e);
       } finally {
         clearNotify();
       }
 
     } catch (err) {
-      console.error('Transcribe error', err);
+      console.error('[recorder] Transcribe error', err);
       alert('Ett fel uppstod vid transkribering: ' + (err.message || String(err)));
     }
   }
 
   // ---------------- Button resolution and binding ----------------
   function resolveRecordButton(){
+    // 1) försöka primära selectors
     let btn = qs(recordBtnSel);
     if (btn) {
-      // console.info('[recorder] Found record button via primary selector.');
+      console.info('[recorder] Found record button via primary selector.');
       return btn;
     }
-    // fallback: find by common Swedish/English texts
-    const fallbacks = ['starta inspelning','start recording','spela in','inspelning','starta','start','record'];
+
+    // 2) försök matcha specifika texts som indikerar record
+    const fallbacks = ['starta inspelning','start recording','spela in','inspelning','lyssna','lyssnar','start','record'];
     btn = findButtonByText(fallbacks);
     if (btn) {
       console.info('[recorder] Found record button by text:', (btn.innerText || btn.value || '').trim());
       return btn;
     }
-    // fallback: try to find the large green button used in UI (common class patterns)
+
+    // 3) Heuristics: endast om det finns exakt EN tydlig .btn-like element OCH dess text matchar ett inspelningsord.
     const heuristics = qsa('.btn, .button, .btn-primary, .primary, .green, .btn-lg');
     if (heuristics.length === 1) {
-      console.info('[recorder] Using single .btn-like element as record button.');
-      return heuristics[0];
+      const candidate = heuristics[0];
+      const t = ((candidate.innerText || '') + '').toLowerCase();
+      const allowed = ['start','spela in','starta inspelning','inspelning','lyssna','lyssnar','record'];
+      if (allowed.some(a => t.includes(a))) {
+        console.info('[recorder] Using single .btn-like element as record button (heuristic).');
+        return candidate;
+      }
     }
-    // nothing found
-    console.warn('Record button not found with selectors. Use startAutoRecord() from console or add data-id="btn-record" to the button.');
+
+    // Nothing found
+    console.warn('[recorder] Record button not found with selectors. Use startAutoRecord() from console or add data-id="btn-record" to the button.');
     return null;
   }
 
@@ -284,7 +311,7 @@
     });
   }
 
-  // Expose functions
+  // ---------------- Expose functions ----------------
   window.startAutoRecord = startRecording;
   window.stopAutoRecord = stopRecording;
   window.isAutoRecording = () => isRecording;
