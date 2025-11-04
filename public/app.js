@@ -1,6 +1,6 @@
-// Komplett app.js — hel fil. Klistra in som public/app.js i ditt repo (ersätt befintlig).
-// Innehåller: DOM‑helpers, createStory (robust), playTTS, bindning av knappar,
-// och exponering av window.createStory / window.playTTS för inline‑binder.
+// public/app.js
+// Komplett app.js med playTTS uppdaterad för att anropa /api/tts (cache-aware) först.
+// Klistra in som public/app.js (ersätt befintlig).
 
 (function(){
   'use strict';
@@ -119,7 +119,7 @@
     }
   }
 
-  // Spela upp TTS — försöker /api/tts_vertex först, fallback till /api/tts
+  // Spela upp TTS — försöker /api/tts (cache-aware) först, fallback till tts_vertex
   async function playTTS() {
     try {
       setError('');
@@ -132,14 +132,14 @@
       const playButton = qs('[data-id="btn-tts"]') || playBtn || qs('.btn-muted');
       if (playButton) playButton.disabled = true;
 
-      // Försök tts_vertex först
+      // Försök /api/tts (cache-aware) först
       try {
-        let res = await fetch("/api/tts_vertex", {
+        let res = await fetch("/api/tts", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text, voice })
+          body: JSON.stringify({ text, voice, userId: (window.getBNUserId ? window.getBNUserId() : undefined) })
         });
-        if (!res.ok) throw new Error('tts_vertex ' + res.status);
+        if (!res.ok) throw new Error('tts ' + res.status);
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);
         const audioEl = qs('[data-id="audio"]') || qs('audio');
@@ -149,19 +149,21 @@
         } else {
           new Audio(url).play().catch(e => console.warn('play error', e));
         }
+        // Debug: logga headers så du ser X-Audio-Key och varning
+        try { console.info('tts headers', 'X-Audio-Key=', res.headers.get('X-Audio-Key'), 'X-Cost-Warning=', res.headers.get('X-Cost-Warning')); } catch(e){}
         return;
       } catch (e1) {
-        console.warn('[BN] tts_vertex failed', e1);
+        console.warn('[BN] /api/tts failed, falling back to tts_vertex', e1);
       }
 
-      // Fallback till /api/tts
+      // Fallback till /api/tts_vertex (om du har den äldre enda)
       try {
-        let res = await fetch("/api/tts", {
+        let res = await fetch("/api/tts_vertex", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ text, voice })
         });
-        if (!res.ok) throw new Error('tts ' + res.status);
+        if (!res.ok) throw new Error('tts_vertex ' + res.status);
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);
         const audioEl = qs('[data-id="audio"]') || qs('audio');
