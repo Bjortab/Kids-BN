@@ -1,0 +1,10 @@
+// Normalisera innan hash
+function normalizeTextForKey(s) {
+  return (s || '')
+    .replace(/\s+/g, ' ')        // slå ihop multipla mellanslag
+    .trim()
+    .replace(/\r\n/g, '\n')      // normalisera radbrytningar
+    .toLowerCase();              // gör lowercase för stabila nycklar
+}
+const normalized = normalizeTextForKey(text);
+const keyInput = `${normalized}||${voice}`;
