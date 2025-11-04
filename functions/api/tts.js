@@ -1,150 +1,116 @@
 // functions/api/tts.js
-// TTS endpoint med R2‑cache. 
-// - Tar emot POST { text, voice? }
-// - Beräknar SHA256(text + '||' + voice) -> key
-// - Om key finns i R2 (env.BN_AUDIO) returnerar objektet direkt (binary response).
-// - Om inte: anropar Google TTS (eller annan provider enligt env), sparar mp3 i R2 och returnerar audio.
-// - Returnerar alltid audio bytes (content-type audio/mpeg) så klienten kan spela direkt.
-// - Sätter Cache‑Control så CDN/webbläsare kan cacha och vi tjänar pengar på återanvändning.
-//
-// Bindningar som används:
-// - env.GOOGLE_TTS_KEY eller env.GOOGLE_TTS_API_KEY  (Google TTS API key)
-// - env.BN_AUDIO (R2 bucket binding, som redan finns i ditt wrangler.toml)
-// Obs: Om du använder annan TTS‑provider, anpassa blocket som anropar Google TTS.
+// TTS endpoint med R2 cache + daglig limit (D1 metrics).
+// - Deterministisk key: SHA256(text||voice)
+// - Återanvänder R2 (env.BN_AUDIO) om audio finns.
+// - Om ej finns: kolla DAILY_TTS_LIMIT (env.DAILY_TTS_LIMIT) via D1 (env.BN_DB), generera via Google TTS och spara i R2.
+// Response: audio bytes + headers (X-Audio-Key, X-Cost-Warning vid limit).
 
 export async function onRequest(context) {
   const { request, env } = context;
   const origin = request.headers.get('origin') || env.BN_ALLOWED_ORIGIN || '*';
-
-  const CORS_HEADERS = {
+  const CORS = {
     "Access-Control-Allow-Origin": origin,
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization"
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type"
   };
 
-  try {
-    // Preflight
-    if (request.method === 'OPTIONS') {
-      return new Response(null, { status: 204, headers: CORS_HEADERS });
-    }
+  if (request.method === 'OPTIONS') return new Response(null, { status:204, headers: CORS });
+  if (request.method !== 'POST') return new Response(JSON.stringify({ ok:false, error:'Use POST' }), { status:405, headers: Object.assign({ "Content-Type": "application/json;charset=utf-8" }, CORS) });
 
-    if (request.method !== 'POST') {
-      return new Response(JSON.stringify({ ok:false, error: 'Method not allowed, use POST' }), { status:405, headers: Object.assign({ "Content-Type": "application/json;charset=utf-8" }, CORS_HEADERS) });
-    }
+  let body = {};
+  try { body = await request.json(); } catch(e){ body = {}; }
+  const text = (body.text || body.message || '').toString().trim();
+  const voice = (body.voice || 'sv-SE-Wavenet-A').toString();
+  const userId = (body.userId || '').toString();
 
-    // Läs body (förväntar JSON)
-    let body = {};
+  if (!text) return new Response(JSON.stringify({ ok:false, error:'Missing text' }), { status:400, headers: Object.assign({ "Content-Type": "application/json;charset=utf-8" }, CORS) });
+
+  async function sha256hex(s) {
+    const enc = new TextEncoder();
+    const data = enc.encode(s);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2,'0')).join('');
+  }
+
+  const keyInput = `${text}||${voice}`;
+  const hash = await sha256hex(keyInput);
+  const r2Key = `tts/${hash}.mp3`;
+
+  // Try R2
+  if (env.BN_AUDIO) {
     try {
-      body = await request.json().catch(()=>{ return {}; });
-    } catch(e) { body = {}; }
-
-    const text = (body.text || body.message || '').toString().trim();
-    const voice = (body.voice || body.v || 'sv-SE-Wavenet-A').toString().trim(); // default voice
-
-    if (!text) {
-      return new Response(JSON.stringify({ ok:false, error: 'Missing text to synthesize' }), { status:400, headers: Object.assign({ "Content-Type": "application/json;charset=utf-8" }, CORS_HEADERS) });
-    }
-
-    // Compute deterministic key: SHA-256 of text||voice
-    async function sha256hex(s) {
-      const enc = new TextEncoder();
-      const data = enc.encode(s);
-      const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-      const hashArray = Array.from(new Uint8Array(hashBuffer));
-      return hashArray.map(b => b.toString(16).padStart(2,'0')).join('');
-    }
-
-    const keyInput = `${text}||${voice}`;
-    const hash = await sha256hex(keyInput);
-    const r2Key = `tts/${hash}.mp3`; // use mp3 since Google returns MP3
-
-    // If R2 binding exists, try to fetch object
-    if (env.BN_AUDIO) {
-      try {
-        const existing = await env.BN_AUDIO.get(r2Key);
-        if (existing) {
-          // Return cached object bytes directly with proper headers
-          const ct = (existing && existing.httpMetadata && existing.httpMetadata.contentType) ? existing.httpMetadata.contentType : 'audio/mpeg';
-          const bodyStream = existing.body;
-          const headers = Object.assign({
-            'Content-Type': ct,
-            'Cache-Control': 'public, max-age=31536000, immutable',
-            'X-Audio-Key': r2Key
-          }, CORS_HEADERS);
-          return new Response(bodyStream, { status:200, headers });
-        }
-      } catch (e) {
-        // If fetching from R2 fails, log and continue to generate
-        console.warn('[tts] R2 get failed, will regenerate', e);
+      const existing = await env.BN_AUDIO.get(r2Key);
+      if (existing) {
+        const ct = (existing && existing.httpMetadata && existing.httpMetadata.contentType) ? existing.httpMetadata.contentType : 'audio/mpeg';
+        const headers = Object.assign({
+          'Content-Type': ct,
+          'Cache-Control': 'public, max-age=31536000, immutable',
+          'X-Audio-Key': r2Key
+        }, CORS);
+        return new Response(existing.body, { status:200, headers });
       }
-    }
+    } catch (e) { console.warn('[tts] R2 get failed', e); }
+  }
 
-    // No cached audio — generate via Google TTS (or provider configured)
-    const googleKey = env.GOOGLE_TTS_KEY || env.GOOGLE_TTS_API_KEY;
-    if (!googleKey) {
-      // If no Google key and no R2 cached audio, we can't synthesize
-      return new Response(JSON.stringify({ ok:false, error: 'Missing Google TTS key (GOOGLE_TTS_KEY)' }), { status:500, headers: Object.assign({ "Content-Type": "application/json;charset=utf-8" }, CORS_HEADERS) });
-    }
+  // Check daily limit
+  const DAILY_LIMIT = Number(env.DAILY_TTS_LIMIT || 500);
+  if (env.BN_DB) {
+    try {
+      await env.BN_DB.prepare(`
+        CREATE TABLE IF NOT EXISTS metrics (
+          k TEXT PRIMARY KEY,
+          v INTEGER
+        )
+      `).run();
+      const dayKey = 'tts_' + (new Date().toISOString().slice(0,10));
+      const r = await env.BN_DB.prepare(`SELECT v FROM metrics WHERE k = ?`).bind(dayKey).all();
+      const cur = (r && r.results && r.results[0] && r.results[0].v) ? Number(r.results[0].v) : 0;
+      if (cur >= DAILY_LIMIT) {
+        return new Response(JSON.stringify({ ok:false, error:'daily_tts_limit_exceeded' }), { status:429, headers: Object.assign({ "Content-Type": "application/json;charset=utf-8", "X-Cost-Warning": "1" }, CORS) });
+      }
+    } catch (e) { console.warn('[tts] metrics check failed', e); }
+  }
 
-    // Build request for Google TTS (synthesize endpoint)
-    const reqBody = {
-      input: { text },
-      voice: { languageCode: 'sv-SE', name: voice },
-      audioConfig: { audioEncoding: 'MP3' } // request MP3
-    };
+  const googleKey = env.GOOGLE_TTS_KEY || env.GOOGLE_TTS_API_KEY;
+  if (!googleKey) return new Response(JSON.stringify({ ok:false, error:'Missing GOOGLE_TTS_KEY' }), { status:500, headers: Object.assign({ "Content-Type": "application/json;charset=utf-8" }, CORS) });
 
-    // Call Google TTS
+  try {
+    const reqBody = { input: { text }, voice: { languageCode: 'sv-SE', name: voice }, audioConfig: { audioEncoding: 'MP3' } };
     const resp = await fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${encodeURIComponent(googleKey)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(reqBody)
     });
-
     if (!resp.ok) {
-      const t = await resp.text().catch(()=>'<no-body>');
-      return new Response(JSON.stringify({ ok:false, error: 'Google TTS error', details: t }), { status:502, headers: Object.assign({ "Content-Type": "application/json;charset=utf-8" }, CORS_HEADERS) });
+      const t = await resp.text().catch(()=>'');
+      return new Response(JSON.stringify({ ok:false, error:'Google TTS failed', details: t }), { status:502, headers: Object.assign({ "Content-Type": "application/json;charset=utf-8" }, CORS) });
     }
 
     const data = await resp.json().catch(()=>null);
     const audioContent = data?.audioContent;
-    if (!audioContent) {
-      return new Response(JSON.stringify({ ok:false, error: 'Google TTS returned no audioContent', raw: data }), { status:502, headers: Object.assign({ "Content-Type": "application/json;charset=utf-8" }, CORS_HEADERS) });
-    }
+    if (!audioContent) return new Response(JSON.stringify({ ok:false, error:'No audioContent' }), { status:502, headers: Object.assign({ "Content-Type": "application/json;charset=utf-8" }, CORS) });
 
-    // Decode base64 to bytes
-    let bytes;
-    try {
-      // atob exists in Pages Functions environment
-      const binaryString = atob(audioContent);
-      const len = binaryString.length;
-      const arr = new Uint8Array(len);
-      for (let i = 0; i < len; i++) arr[i] = binaryString.charCodeAt(i);
-      bytes = arr;
-    } catch (e) {
-      // fallback if atob not available (unlikely)
-      return new Response(JSON.stringify({ ok:false, error: 'Failed to decode audio content', details: String(e) }), { status:500, headers: Object.assign({ "Content-Type": "application/json;charset=utf-8" }, CORS_HEADERS) });
-    }
+    // decode
+    const binaryString = atob(audioContent);
+    const len = binaryString.length;
+    const arr = new Uint8Array(len);
+    for (let i=0;i<len;i++) arr[i] = binaryString.charCodeAt(i);
 
-    // Try to store in R2 (if binding exists)
     if (env.BN_AUDIO) {
-      try {
-        // Put bytes into R2 with content type
-        await env.BN_AUDIO.put(r2Key, bytes, { httpMetadata: { contentType: 'audio/mpeg' } });
-      } catch (e) {
-        console.warn('[tts] R2 put failed (will still return audio)', e);
-      }
+      try { await env.BN_AUDIO.put(r2Key, arr, { httpMetadata: { contentType: 'audio/mpeg' } }); } catch(e){ console.warn('[tts] R2 put failed', e); }
     }
 
-    // Return audio bytes (so existing client code that expects binary still works)
-    const responseHeaders = Object.assign({
-      'Content-Type': 'audio/mpeg',
-      'Cache-Control': 'public, max-age=31536000, immutable',
-      'X-Audio-Key': r2Key
-    }, CORS_HEADERS);
+    if (env.BN_DB) {
+      try {
+        const dayKey = 'tts_' + (new Date().toISOString().slice(0,10));
+        await env.BN_DB.prepare(`INSERT OR REPLACE INTO metrics (k, v) VALUES (?, COALESCE((SELECT v FROM metrics WHERE k = ?), 0) + 1)`).bind(dayKey, dayKey).run();
+      } catch(e){ console.warn('[tts] metrics increment failed', e); }
+    }
 
-    return new Response(bytes.buffer, { status:200, headers: responseHeaders });
-
+    const headers = Object.assign({ 'Content-Type': 'audio/mpeg', 'Cache-Control': 'public, max-age=31536000, immutable', 'X-Audio-Key': r2Key }, CORS);
+    return new Response(arr.buffer, { status:200, headers });
   } catch (err) {
-    return new Response(JSON.stringify({ ok:false, error: String(err) }), { status:500, headers: Object.assign({ "Content-Type": "application/json;charset=utf-8" }, CORS_HEADERS) });
+    return new Response(JSON.stringify({ ok:false, error: String(err) }), { status:500, headers: Object.assign({ "Content-Type": "application/json;charset=utf-8" }, CORS) });
   }
 }
