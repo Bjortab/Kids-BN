@@ -155,9 +155,11 @@
           try {
             const cachedUrl = `/api/get_audio?key=${encodeURIComponent(audioKey)}`;
             const cachedRes = await fetch(cachedUrl);
-            if (cachedRes.ok) {
+            if (cachedRes.ok && cachedRes.headers.get('Content-Type')?.includes('audio')) {
               audioUrl = cachedUrl;
               console.info('[BN] Using cached audio from /api/get_audio');
+            } else {
+              console.warn('[BN] /api/get_audio response not valid audio, status:', cachedRes.status);
             }
           } catch (e) {
             console.warn('[BN] Could not fetch from /api/get_audio, falling back to blob', e);

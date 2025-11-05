@@ -4,9 +4,9 @@
 
 export default {
   async fetch(request, env, ctx) {
-    const origin = request.headers.get('origin') || env.BN_ALLOWED_ORIGIN || '*';
+    const origin = request.headers.get('origin') || env.BN_ALLOWED_ORIGIN || '';
     const CORS_HEADERS = {
-      "Access-Control-Allow-Origin": origin,
+      "Access-Control-Allow-Origin": origin || '*',
       "Access-Control-Allow-Methods": "GET, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type"
     };
@@ -64,7 +64,7 @@ export default {
       
     } catch (err) {
       console.error('[worker_get_audio] Error:', err);
-      return new Response(String(err), { 
+      return new Response('Internal server error', { 
         status: 500, 
         headers: CORS_HEADERS 
       });
