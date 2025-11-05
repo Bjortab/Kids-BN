@@ -97,8 +97,7 @@ export default {
       console.error('[worker_get_audio] Error:', err);
       return new Response(JSON.stringify({ 
         ok: false, 
-        error: err.message || String(err),
-        stack: err.stack || undefined
+        error: err.message || 'Internal server error'
       }), { 
         status: 500, 
         headers: { 
