@@ -143,7 +143,7 @@
         
         // Check for X-Audio-Key header to use cacheable endpoint
         const audioKey = res.headers.get('X-Audio-Key');
-        // Debug: logga headers så du ser X-Audio-Key och varning
+        // Debug: log headers to see X-Audio-Key and cost warning
         try { console.info('tts headers', 'X-Audio-Key=', audioKey, 'X-Cost-Warning=', res.headers.get('X-Cost-Warning')); } catch(e){}
         
         const audioEl = qs('[data-id="audio"]') || qs('audio');

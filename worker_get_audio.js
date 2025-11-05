@@ -7,8 +7,8 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     
-    // CORS headers
-    const origin = request.headers.get('origin') || env.BN_ALLOWED_ORIGIN || '*';
+    // CORS headers - use allowed origin or reject
+    const origin = request.headers.get('origin') || env.BN_ALLOWED_ORIGIN || 'https://kids-bn.pages.dev';
     const CORS_HEADERS = {
       "Access-Control-Allow-Origin": origin,
       "Access-Control-Allow-Methods": "GET, OPTIONS",
@@ -105,7 +105,9 @@ export default {
 
       // Store in edge cache (don't await, let it happen in background)
       // Cloudflare will respect the Cache-Control header
-      await cache.put(cacheKey, response.clone());
+      cache.put(cacheKey, response.clone()).catch(err => {
+        console.error('[worker_get_audio] Cache put failed:', err);
+      });
 
       return response;
 
