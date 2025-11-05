@@ -140,15 +140,45 @@
           body: JSON.stringify({ text, voice, userId: (window.getBNUserId ? window.getBNUserId() : undefined) })
         });
         if (!res.ok) throw new Error('tts ' + res.status);
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
+        
+        // Extract X-Audio-Key header for future use
+        const audioKey = res.headers.get('X-Audio-Key');
+        if (audioKey) {
+          console.info('[BN] Audio cached at:', audioKey);
+          // Store the key for potential future use
+          window.lastAudioKey = audioKey;
+        }
+        
+        // Try to use /api/get_audio with the key if available
+        let audioUrl = null;
+        if (audioKey) {
+          try {
+            const cachedUrl = `/api/get_audio?key=${encodeURIComponent(audioKey)}`;
+            const cachedRes = await fetch(cachedUrl);
+            if (cachedRes.ok) {
+              audioUrl = cachedUrl;
+              console.info('[BN] Using cached audio from /api/get_audio');
+            }
+          } catch (e) {
+            console.warn('[BN] Could not fetch from /api/get_audio, falling back to blob', e);
+          }
+        }
+        
+        // Fallback to blob URL if /api/get_audio didn't work
+        if (!audioUrl) {
+          const blob = await res.blob();
+          audioUrl = URL.createObjectURL(blob);
+          console.info('[BN] Using blob URL for audio');
+        }
+        
         const audioEl = qs('[data-id="audio"]') || qs('audio');
         if (audioEl) {
-          audioEl.src = url;
+          audioEl.src = audioUrl;
           audioEl.play().catch(e => console.warn('play error', e));
         } else {
-          new Audio(url).play().catch(e => console.warn('play error', e));
+          new Audio(audioUrl).play().catch(e => console.warn('play error', e));
         }
+        
         // Debug: logga headers så du ser X-Audio-Key och varning
         try { console.info('tts headers', 'X-Audio-Key=', res.headers.get('X-Audio-Key'), 'X-Cost-Warning=', res.headers.get('X-Cost-Warning')); } catch(e){}
         return;
