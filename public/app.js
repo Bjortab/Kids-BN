@@ -154,17 +154,19 @@
               const blob = await audioRes.blob();
               audioUrl = URL.createObjectURL(blob);
             } else {
+              // get_audio failed, consume original response as fallback
               log('get_audio failed, falling back to blob');
               const blob = await res.blob();
               audioUrl = URL.createObjectURL(blob);
             }
           } catch (e) {
+            // get_audio error, consume original response as fallback
             log('get_audio error, falling back to blob:', e);
             const blob = await res.blob();
             audioUrl = URL.createObjectURL(blob);
           }
         } else {
-          // Fallback: use blob response directly
+          // No X-Audio-Key header, use blob response directly
           const blob = await res.blob();
           audioUrl = URL.createObjectURL(blob);
         }

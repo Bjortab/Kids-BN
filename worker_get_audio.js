@@ -97,7 +97,8 @@ export default {
       console.error('[worker_get_audio] Error:', err);
       return new Response(JSON.stringify({ 
         ok: false, 
-        error: String(err) 
+        error: err.message || String(err),
+        stack: err.stack || undefined
       }), { 
         status: 500, 
         headers: { 
