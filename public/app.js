@@ -140,15 +140,46 @@
           body: JSON.stringify({ text, voice, userId: (window.getBNUserId ? window.getBNUserId() : undefined) })
         });
         if (!res.ok) throw new Error('tts ' + res.status);
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
+        
+        // Check for X-Audio-Key header to use CDN-cached audio
+        const audioKey = res.headers.get('X-Audio-Key');
+        let audioUrl;
+        
+        if (audioKey) {
+          // Use /api/get_audio to fetch from R2 with better CDN caching
+          log('Using cached audio from R2:', audioKey);
+          try {
+            const audioRes = await fetch(`/api/get_audio?key=${encodeURIComponent(audioKey)}`);
+            if (audioRes.ok) {
+              const blob = await audioRes.blob();
+              audioUrl = URL.createObjectURL(blob);
+            } else {
+              // get_audio failed, consume original response as fallback
+              log('get_audio failed, falling back to blob');
+              const blob = await res.blob();
+              audioUrl = URL.createObjectURL(blob);
+            }
+          } catch (e) {
+            // get_audio error, consume original response as fallback
+            log('get_audio error, falling back to blob:', e);
+            const blob = await res.blob();
+            audioUrl = URL.createObjectURL(blob);
+          }
+        } else {
+          // No X-Audio-Key header, use blob response directly
+          const blob = await res.blob();
+          audioUrl = URL.createObjectURL(blob);
+        }
+        
+        // Play audio
         const audioEl = qs('[data-id="audio"]') || qs('audio');
         if (audioEl) {
-          audioEl.src = url;
+          audioEl.src = audioUrl;
           audioEl.play().catch(e => console.warn('play error', e));
         } else {
-          new Audio(url).play().catch(e => console.warn('play error', e));
+          new Audio(audioUrl).play().catch(e => console.warn('play error', e));
         }
+        
         // Debug: logga headers så du ser X-Audio-Key och varning
         try { console.info('tts headers', 'X-Audio-Key=', res.headers.get('X-Audio-Key'), 'X-Cost-Warning=', res.headers.get('X-Cost-Warning')); } catch(e){}
         return;
