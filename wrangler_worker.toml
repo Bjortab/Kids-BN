@@ -1,0 +1,23 @@
+# wrangler_worker.toml — Cloudflare Worker for audio serving
+# This worker serves audio files from R2 with edge caching
+
+name = "kids-bn-audio-worker"
+main = "worker_get_audio.js"
+compatibility_date = "2024-10-06"
+
+# Worker-specific settings
+workers_dev = true
+
+# Environment variables
+[vars]
+BN_ALLOWED_ORIGIN = "https://kids-bn.pages.dev"
+
+# R2 bucket binding for audio files
+[[r2_buckets]]
+binding = "BN_AUDIO"
+bucket_name = "bn-audio"
+preview_bucket_name = "bn-audio"
+
+# Routes configuration (to be set up in Cloudflare dashboard or via API)
+# You'll need to configure routes to point /api/get_audio to this worker
+# Example: pattern = "kids-bn.pages.dev/api/get_audio"

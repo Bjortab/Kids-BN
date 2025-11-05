@@ -140,17 +140,32 @@
           body: JSON.stringify({ text, voice, userId: (window.getBNUserId ? window.getBNUserId() : undefined) })
         });
         if (!res.ok) throw new Error('tts ' + res.status);
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
+        
+        // Check for X-Audio-Key header to use cacheable endpoint
+        const audioKey = res.headers.get('X-Audio-Key');
+        // Debug: log headers to see X-Audio-Key and cost warning
+        try { console.info('tts headers', 'X-Audio-Key=', audioKey, 'X-Cost-Warning=', res.headers.get('X-Cost-Warning')); } catch(e){}
+        
         const audioEl = qs('[data-id="audio"]') || qs('audio');
+        let audioUrl;
+        
+        if (audioKey) {
+          // Use cacheable endpoint with the key (browser + CDN can cache)
+          audioUrl = `/api/get_audio?key=${encodeURIComponent(audioKey)}`;
+          console.info('[BN] Using cacheable audio URL:', audioUrl);
+        } else {
+          // Fallback to blob URL if no X-Audio-Key header
+          const blob = await res.blob();
+          audioUrl = URL.createObjectURL(blob);
+          console.info('[BN] Using blob URL (no X-Audio-Key header)');
+        }
+        
         if (audioEl) {
-          audioEl.src = url;
+          audioEl.src = audioUrl;
           audioEl.play().catch(e => console.warn('play error', e));
         } else {
-          new Audio(url).play().catch(e => console.warn('play error', e));
+          new Audio(audioUrl).play().catch(e => console.warn('play error', e));
         }
-        // Debug: logga headers så du ser X-Audio-Key och varning
-        try { console.info('tts headers', 'X-Audio-Key=', res.headers.get('X-Audio-Key'), 'X-Cost-Warning=', res.headers.get('X-Cost-Warning')); } catch(e){}
         return;
       } catch (e1) {
         console.warn('[BN] /api/tts failed, falling back to tts_vertex', e1);
