@@ -1,6 +1,6 @@
 // APP VERSION: 1.0.0
 // BUILD: 2025-11-06
-// CHANGES: playTTS now prefers X-Audio-Key -> /api/get_audio?key=... (CDN/cached) before playing blob.
+// CHANGES: playTTS prefers X-Audio-Key -> /api/get_audio?key=... (CDN/cached). Added safe audio playback to avoid AbortError.
 // MAINTAINER: Bjortab
 const APP_VERSION = '1.0.0';
 const APP_BUILD = '2025-11-06';
@@ -124,8 +124,64 @@ console.info(`[BN app] version=${APP_VERSION} build=${APP_BUILD}`);
     }
   }
 
-  // Hanterar ett fetch-svar från /api/tts: spelar antingen via CDN-endpoint (/api/get_audio?key=...)
-  // eller som blob. Denna funktion kan anropas från andra moduler (window.playTTSResponse).
+  // --- Safe audio helpers and replacement for playTTSResponse / playTTS ---
+  // Global guard to prevent concurrent plays
+  let __bn_audio_lock = { active: false, id: 0 };
+
+  /**
+   * Safely set src and play an audio element.
+   * Waits for canplaythrough (or timeout) before calling play().
+   */
+  async function safeSetSrcAndPlay(audioEl, audioUrl, options = {}) {
+    const timeoutMs = options.timeoutMs || 2500;
+
+    try {
+      // If same source already set, just attempt play once
+      if (audioEl.currentSrc && audioEl.currentSrc.includes(audioUrl)) {
+        console.debug('[SAFE] same src, calling play');
+        await audioEl.play().catch(e => console.warn('[SAFE] play failed', e));
+        return;
+      }
+
+      // Stop any previous loading/playing
+      try { audioEl.pause(); } catch (e){}
+
+      // Remove src and load to abort previous network fetch
+      audioEl.removeAttribute('src');
+      try { audioEl.load(); } catch(e){}
+
+      // Set new source
+      audioEl.src = audioUrl;
+      audioEl.preload = 'auto';
+
+      // Wait for canplaythrough or timeout
+      await new Promise((resolve) => {
+        let done = false;
+        function clean() {
+          if (done) return;
+          done = true;
+          audioEl.removeEventListener('canplaythrough', onReady);
+        }
+        function onReady() { clean(); resolve(); }
+        audioEl.addEventListener('canplaythrough', onReady);
+        // Fallback timeout
+        setTimeout(() => { clean(); resolve(); }, timeoutMs);
+      });
+
+      // Try to play
+      await audioEl.play().catch(e => {
+        console.warn('[SAFE] play failed after ready', e);
+      });
+    } catch (err) {
+      console.error('[SAFE] safeSetSrcAndPlay error', err);
+    }
+  }
+
+  /**
+   * Handle a fetch Response from /api/tts or /api/tts_vertex.
+   * If header X-Audio-Key exists, uses /api/get_audio?key=... (cached),
+   * otherwise falls back to blob playback.
+   */
   async function playTTSResponse(res) {
     if (!res || !res.ok) {
       console.warn('[BN] TTS response error', res && res.status);
@@ -141,32 +197,41 @@ console.info(`[BN app] version=${APP_VERSION} build=${APP_BUILD}`);
       document.body.appendChild(audioEl);
     }
 
-    if (audioKey) {
-      // Use CDN cacheable endpoint
-      const audioUrl = `/api/get_audio?key=${encodeURIComponent(audioKey)}`;
-      audioEl.src = audioUrl;
-      try {
-        await audioEl.play();
-      } catch (err) {
-        console.warn('Play failed', err);
-      }
-      return;
+    // Acquire simple lock to avoid concurrent source swaps
+    const myId = ++__bn_audio_lock.id;
+    if (__bn_audio_lock.active) {
+      // Another play in progress — politely wait a short while to avoid stomping it
+      console.debug('[BN] waiting for existing play lock');
+      await new Promise(r => setTimeout(r, 150));
     }
+    __bn_audio_lock.active = true;
 
-    // Fallback — if server returned audio blob directly
     try {
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      audioEl.src = url;
-      await audioEl.play().catch(()=>{});
-      // Optionally revoke the object URL after some time
-      setTimeout(()=> URL.revokeObjectURL(url), 60000);
-    } catch (err) {
-      console.error('Fallback play error', err);
+      if (audioKey) {
+        const audioUrl = `/api/get_audio?key=${encodeURIComponent(audioKey)}`;
+        await safeSetSrcAndPlay(audioEl, audioUrl, { timeoutMs: 2500 });
+        return;
+      }
+
+      // No audio key — read blob and play
+      try {
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        await safeSetSrcAndPlay(audioEl, url, { timeoutMs: 2500 });
+        // revoke after some time
+        setTimeout(()=> URL.revokeObjectURL(url), 60000);
+      } catch (err) {
+        console.error('[BN] fallback play error', err);
+      }
+    } finally {
+      // release lock (only if this caller is last)
+      if (myId === __bn_audio_lock.id) __bn_audio_lock.active = false;
     }
   }
 
-  // Spela upp TTS — skickar /api/tts och låter playTTSResponse hantera svaret
+  /**
+   * playTTS: sends request(s) to server and delegates playback to playTTSResponse
+   */
   async function playTTS() {
     try {
       setError('');
@@ -179,7 +244,7 @@ console.info(`[BN app] version=${APP_VERSION} build=${APP_BUILD}`);
       const playButton = qs('[data-id="btn-tts"]') || playBtn || qs('.btn-muted');
       if (playButton) playButton.disabled = true;
 
-      // Försök /api/tts (cache-aware) först
+      // Try cache-aware endpoint first
       try {
         let res = await fetch("/api/tts", {
           method: "POST",
@@ -188,16 +253,13 @@ console.info(`[BN app] version=${APP_VERSION} build=${APP_BUILD}`);
         });
         if (!res.ok) throw new Error('tts ' + res.status);
 
-        // Låt playTTSResponse hantera spelning — den kollar X-Audio-Key
         await playTTSResponse(res);
-        // Debug: logga headers så du ser X-Audio-Key och varning
-        try { console.info('tts headers', 'X-Audio-Key=', res.headers.get('X-Audio-Key'), 'X-Cost-Warning=', res.headers.get('X-Cost-Warning')); } catch(e){}
         return;
       } catch (e1) {
         console.warn('[BN] /api/tts failed or no cached key, falling back to tts_vertex', e1);
       }
 
-      // Fallback till /api/tts_vertex (om du har den äldre enda)
+      // Fallback to legacy TTS endpoint
       try {
         let res = await fetch("/api/tts_vertex", {
           method: "POST",
