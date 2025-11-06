@@ -1,3 +1,10 @@
+// APP VERSION: 1.0.0
+// BUILD: 2025-11-06
+// CHANGES: playTTS now prefers X-Audio-Key -> /api/get_audio?key=... (CDN/cached) before playing blob.
+// MAINTAINER: Bjortab
+const APP_VERSION = '1.0.0';
+const APP_BUILD = '2025-11-06';
+console.info(`[BN app] version=${APP_VERSION} build=${APP_BUILD}`);
 // HELA filen (exempel) — ersätt/infoga i ditt public/app.js
 // Den här filen innehåller en funktion playTTSResponse som appen ska anropa när POST /api/tts svar kommit.
 // Anpassa om din app har annan struktur; den här funktionen är färdig att användas.
