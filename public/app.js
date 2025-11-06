@@ -1,3 +1,49 @@
+// HELA filen (exempel) — ersätt/infoga i ditt public/app.js
+// Den här filen innehåller en funktion playTTSResponse som appen ska anropa när POST /api/tts svar kommit.
+// Anpassa om din app har annan struktur; den här funktionen är färdig att användas.
+
+async function playTTSResponse(res) {
+  if (!res || !res.ok) {
+    console.warn('TTS response error', res && res.status);
+    return;
+  }
+
+  const audioKey = res.headers.get('X-Audio-Key');
+  let audioEl = document.querySelector('audio[data-id="tts-audio"]') || document.querySelector('audio') || new Audio();
+
+  if (!audioEl.parentElement) {
+    audioEl.setAttribute('data-id', 'tts-audio');
+    audioEl.setAttribute('controls', '');
+    document.body.appendChild(audioEl);
+  }
+
+  if (audioKey) {
+    // Use CDN cacheable endpoint
+    const audioUrl = `/api/get_audio?key=${encodeURIComponent(audioKey)}`;
+    audioEl.src = audioUrl;
+    try {
+      await audioEl.play();
+    } catch (err) {
+      console.warn('Play failed', err);
+    }
+    return;
+  }
+
+  // Fallback — if server returned audio blob directly
+  try {
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    audioEl.src = url;
+    await audioEl.play().catch(()=>{});
+    // Optionally revoke the object URL after some time
+    setTimeout(()=> URL.revokeObjectURL(url), 60000);
+  } catch (err) {
+    console.error('Fallback play error', err);
+  }
+}
+
+// Export for other modules or window
+window.playTTSResponse = playTTSResponse;
 // Komplett app.js med playTTS uppdaterad för att använda X-Audio-Key -> /api/get_audio när den finns.
 // Klistra in som public/app.js (ersätt befintlig).
 
