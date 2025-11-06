@@ -1,51 +1,10 @@
-// HELA filen (exempel) — ersätt/infoga i ditt public/app.js
-// Den här filen innehåller en funktion playTTSResponse som appen ska anropa när POST /api/tts svar kommit.
-// Anpassa om din app har annan struktur; den här funktionen är färdig att användas.
-
-async function playTTSResponse(res) {
-  if (!res || !res.ok) {
-    console.warn('TTS response error', res && res.status);
-    return;
-  }
-
-  const audioKey = res.headers.get('X-Audio-Key');
-  let audioEl = document.querySelector('audio[data-id="tts-audio"]') || document.querySelector('audio') || new Audio();
-
-  if (!audioEl.parentElement) {
-    audioEl.setAttribute('data-id', 'tts-audio');
-    audioEl.setAttribute('controls', '');
-    document.body.appendChild(audioEl);
-  }
-
-  if (audioKey) {
-    // Use CDN cacheable endpoint
-    const audioUrl = `/api/get_audio?key=${encodeURIComponent(audioKey)}`;
-    audioEl.src = audioUrl;
-    try {
-      await audioEl.play();
-    } catch (err) {
-      console.warn('Play failed', err);
-    }
-    return;
-  }
-
-  // Fallback — if server returned audio blob directly
-  try {
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    audioEl.src = url;
-    await audioEl.play().catch(()=>{});
-    // Optionally revoke the object URL after some time
-    setTimeout(()=> URL.revokeObjectURL(url), 60000);
-  } catch (err) {
-    console.error('Fallback play error', err);
-  }
-}
-
-// Export for other modules or window
-window.playTTSResponse = playTTSResponse;
-// Komplett app.js med playTTS uppdaterad för att använda X-Audio-Key -> /api/get_audio när den finns.
-// Klistra in som public/app.js (ersätt befintlig).
+// APP VERSION: 1.0.0
+// BUILD: 2025-11-06
+// CHANGES: playTTS now prefers X-Audio-Key -> /api/get_audio?key=... (CDN/cached) before playing blob.
+// MAINTAINER: Bjortab
+const APP_VERSION = '1.0.0';
+const APP_BUILD = '2025-11-06';
+console.info(`[BN app] version=${APP_VERSION} build=${APP_BUILD}`);
 
 (function(){
   'use strict';
@@ -92,7 +51,6 @@ window.playTTSResponse = playTTSResponse;
     const heroEl   = qs('#hero') || qs('[data-id="hero"]') || null;
     const promptEl = qs('#prompt') || qs('[data-id="prompt"]') || qs('textarea[name="prompt"]') || null;
     const storyEl  = qs('[data-id="story"]') || qs('#story') || qs('.story-output') || null;
-    const spinnerEl = qs('[data-id="spinner"]') || qs('.spinner') || null;
     const createButton = qs('[data-id="btn-create"]') || qs('#btn-create') || qs('.btn-primary') || createBtn || null;
 
     try {
@@ -129,7 +87,8 @@ window.playTTSResponse = playTTSResponse;
         }
 
         if (data?.story) {
-          if (storyEl) storyEl.textContent = data.story;
+          const storyElLocal = storyEl || qs('[data-id="story"]') || qs('#story') || qs('.story-output');
+          if (storyElLocal) storyElLocal.textContent = data.story;
           return;
         }
         // Om format avviker, logga och fortsätt fallback
@@ -150,7 +109,8 @@ window.playTTSResponse = playTTSResponse;
       }
       const data2 = await res2.json();
       if (data2?.story) {
-        if (storyEl) storyEl.textContent = data2.story;
+        const storyElLocal = storyEl || qs('[data-id="story"]') || qs('#story') || qs('.story-output');
+        if (storyElLocal) storyElLocal.textContent = data2.story;
         return;
       }
 
@@ -164,7 +124,49 @@ window.playTTSResponse = playTTSResponse;
     }
   }
 
-  // Spela upp TTS — försöker /api/tts (cache-aware) först, fallback till tts_vertex
+  // Hanterar ett fetch-svar från /api/tts: spelar antingen via CDN-endpoint (/api/get_audio?key=...)
+  // eller som blob. Denna funktion kan anropas från andra moduler (window.playTTSResponse).
+  async function playTTSResponse(res) {
+    if (!res || !res.ok) {
+      console.warn('[BN] TTS response error', res && res.status);
+      return;
+    }
+
+    const audioKey = res.headers.get('X-Audio-Key');
+    let audioEl = qs('[data-id="audio"]') || qs('audio') || new Audio();
+
+    if (!audioEl.parentElement) {
+      audioEl.setAttribute('data-id', 'audio');
+      audioEl.setAttribute('controls', '');
+      document.body.appendChild(audioEl);
+    }
+
+    if (audioKey) {
+      // Use CDN cacheable endpoint
+      const audioUrl = `/api/get_audio?key=${encodeURIComponent(audioKey)}`;
+      audioEl.src = audioUrl;
+      try {
+        await audioEl.play();
+      } catch (err) {
+        console.warn('Play failed', err);
+      }
+      return;
+    }
+
+    // Fallback — if server returned audio blob directly
+    try {
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      audioEl.src = url;
+      await audioEl.play().catch(()=>{});
+      // Optionally revoke the object URL after some time
+      setTimeout(()=> URL.revokeObjectURL(url), 60000);
+    } catch (err) {
+      console.error('Fallback play error', err);
+    }
+  }
+
+  // Spela upp TTS — skickar /api/tts och låter playTTSResponse hantera svaret
   async function playTTS() {
     try {
       setError('');
@@ -186,34 +188,10 @@ window.playTTSResponse = playTTSResponse;
         });
         if (!res.ok) throw new Error('tts ' + res.status);
 
-        // Kolla header först — om server skickar X-Audio-Key använd get_audio endpoint istället för blob
-        const audioKey = res.headers.get('X-Audio-Key');
-        try { console.info('tts headers', 'X-Audio-Key=', audioKey, 'X-Cost-Warning=', res.headers.get('X-Cost-Warning')); } catch(e){}
-        const audioEl = qs('[data-id="audio"]') || qs('audio');
-
-        if (audioKey) {
-          // Använd CDN/cached endpoint — undvik att läsa body
-          const audioUrl = `/api/get_audio?key=${encodeURIComponent(audioKey)}`;
-          if (audioEl) {
-            audioEl.src = audioUrl;
-            audioEl.play().catch(e => console.warn('play error', e));
-          } else {
-            new Audio(audioUrl).play().catch(e => console.warn('play error', e));
-          }
-          return;
-        }
-
-        // Om ingen audioKey: fallback till att läsa blob och spela
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        if (audioEl) {
-          audioEl.src = url;
-          audioEl.play().catch(e => console.warn('play error', e));
-        } else {
-          new Audio(url).play().catch(e => console.warn('play error', e));
-        }
-        // revoke later
-        setTimeout(()=> URL.revokeObjectURL(url), 60000);
+        // Låt playTTSResponse hantera spelning — den kollar X-Audio-Key
+        await playTTSResponse(res);
+        // Debug: logga headers så du ser X-Audio-Key och varning
+        try { console.info('tts headers', 'X-Audio-Key=', res.headers.get('X-Audio-Key'), 'X-Cost-Warning=', res.headers.get('X-Cost-Warning')); } catch(e){}
         return;
       } catch (e1) {
         console.warn('[BN] /api/tts failed or no cached key, falling back to tts_vertex', e1);
@@ -227,16 +205,7 @@ window.playTTSResponse = playTTSResponse;
           body: JSON.stringify({ text, voice })
         });
         if (!res.ok) throw new Error('tts_vertex ' + res.status);
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        const audioEl = qs('[data-id="audio"]') || qs('audio');
-        if (audioEl) {
-          audioEl.src = url;
-          audioEl.play().catch(e => console.warn('play error', e));
-        } else {
-          new Audio(url).play().catch(e => console.warn('play error', e));
-        }
-        setTimeout(()=> URL.revokeObjectURL(url), 60000);
+        await playTTSResponse(res);
       } catch (e2) {
         console.error('[BN] playTTS error', e2);
         setError('Kunde inte spela upp ljud: ' + (e2?.message || e2));
@@ -255,9 +224,10 @@ window.playTTSResponse = playTTSResponse;
   if (!playBtn) warn("Hittar ingen 'Läs upp'-knapp. Kontrollera data-id eller knapptext.");
   else playBtn.addEventListener("click", (e) => { e.preventDefault?.(); playTTS(); });
 
-  // Exponera globalt (för inline HTML eller snabbtest)
+  // Exponera globalt (för inline HTML eller andra moduler)
   window.createStory = createStory;
   window.playTTS = playTTS;
+  window.playTTSResponse = playTTSResponse;
 
   log("app.js laddad");
 })();
