@@ -1,5 +1,4 @@
-// public/app.js
-// Komplett app.js med playTTS uppdaterad för att anropa /api/tts (cache-aware) först.
+// Komplett app.js med playTTS uppdaterad för att använda X-Audio-Key -> /api/get_audio när den finns.
 // Klistra in som public/app.js (ersätt befintlig).
 
 (function(){
@@ -140,20 +139,38 @@
           body: JSON.stringify({ text, voice, userId: (window.getBNUserId ? window.getBNUserId() : undefined) })
         });
         if (!res.ok) throw new Error('tts ' + res.status);
+
+        // Kolla header först — om server skickar X-Audio-Key använd get_audio endpoint istället för blob
+        const audioKey = res.headers.get('X-Audio-Key');
+        try { console.info('tts headers', 'X-Audio-Key=', audioKey, 'X-Cost-Warning=', res.headers.get('X-Cost-Warning')); } catch(e){}
+        const audioEl = qs('[data-id="audio"]') || qs('audio');
+
+        if (audioKey) {
+          // Använd CDN/cached endpoint — undvik att läsa body
+          const audioUrl = `/api/get_audio?key=${encodeURIComponent(audioKey)}`;
+          if (audioEl) {
+            audioEl.src = audioUrl;
+            audioEl.play().catch(e => console.warn('play error', e));
+          } else {
+            new Audio(audioUrl).play().catch(e => console.warn('play error', e));
+          }
+          return;
+        }
+
+        // Om ingen audioKey: fallback till att läsa blob och spela
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);
-        const audioEl = qs('[data-id="audio"]') || qs('audio');
         if (audioEl) {
           audioEl.src = url;
           audioEl.play().catch(e => console.warn('play error', e));
         } else {
           new Audio(url).play().catch(e => console.warn('play error', e));
         }
-        // Debug: logga headers så du ser X-Audio-Key och varning
-        try { console.info('tts headers', 'X-Audio-Key=', res.headers.get('X-Audio-Key'), 'X-Cost-Warning=', res.headers.get('X-Cost-Warning')); } catch(e){}
+        // revoke later
+        setTimeout(()=> URL.revokeObjectURL(url), 60000);
         return;
       } catch (e1) {
-        console.warn('[BN] /api/tts failed, falling back to tts_vertex', e1);
+        console.warn('[BN] /api/tts failed or no cached key, falling back to tts_vertex', e1);
       }
 
       // Fallback till /api/tts_vertex (om du har den äldre enda)
@@ -173,6 +190,7 @@
         } else {
           new Audio(url).play().catch(e => console.warn('play error', e));
         }
+        setTimeout(()=> URL.revokeObjectURL(url), 60000);
       } catch (e2) {
         console.error('[BN] playTTS error', e2);
         setError('Kunde inte spela upp ljud: ' + (e2?.message || e2));
