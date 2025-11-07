@@ -1,190 +1,154 @@
-// functions/generate.js
-// Generera saga med smart cache-beslut baserat på embedding-similaritet.
-// - Använder D1 (env.BN_DB) för metadata/storage.
-// - Använder OpenAI embeddings (env.OPENAI_API_KEY) för likhetsmätning.
-// - Policy:
-//   * Ålder 1-4: återanvänd sparad saga om likhet >= SIMILARITY_THRESHOLD.
-//   * Ålder 11-12: om sparad saga matchar men skapades av SAMMA user -> skapa NY; om skapad av ANNAN user -> återanvänd.
-//   * Annars: generera ny saga, spara i D1 med embedding.
-// POST body: { ageRange, heroName, prompt, userId? }
-// Response: { ok:true, story, reused:bool, reused_id?:string, saved_id?:string, similarity?:number }
+// functions/generate.js — komplett fil (ersätter befintlig).
+// Stödjer ageMin/ageMax + length (short|medium|long) + bakåtkompatibilitet med ageRange.
+// System prompt innehåller instruktion: skriv med spänning, undvik floskelslut, och följ längdönskemål.
 
 export async function onRequest(context) {
   const { request, env } = context;
   const origin = request.headers.get('origin') || env.BN_ALLOWED_ORIGIN || '*';
-  const CORS_HEADERS = {
+  const CORS = {
     "Content-Type": "application/json;charset=utf-8",
     "Access-Control-Allow-Origin": origin,
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type"
   };
 
-  function jsonBody(obj, status = 200) {
-    return new Response(JSON.stringify(obj, null, 2), { status, headers: CORS_HEADERS });
-  }
+  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
+  try {
+    // Läs body (POST) eller query (GET)
+    let body = {};
+    if (request.method === 'POST') {
+      body = await request.json().catch(()=>({}));
+    } else {
+      const u = new URL(request.url);
+      body = Object.fromEntries(u.searchParams.entries());
+    }
 
-  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_HEADERS });
-  if (request.method !== 'POST') return jsonBody({ ok:false, error: 'Use POST' }, 405);
+    const prompt = (body.prompt || body?.idea || '').toString().trim();
+    if (!prompt) return new Response(JSON.stringify({ ok:false, error:'Missing prompt' }), { status:400, headers: CORS });
 
-  let body = {};
-  try { body = await request.json(); } catch (e) { body = {}; }
+    // ageMin/ageMax eller ageRange
+    let ageMin = body.ageMin !== undefined ? Number(body.ageMin) : null;
+    let ageMax = body.ageMax !== undefined ? Number(body.ageMax) : null;
+    let lengthPref = body.length || body.lengthCategory || null; // 'short'|'medium'|'long' or null
+    let legacyAgeRange = body.ageRange || null;
 
-  const prompt = (body.prompt || '').toString().trim();
-  const ageRange = (body.ageRange || body.age || '3-4').toString();
-  const heroName = (body.heroName || body.hero || '').toString();
-  const userId = (body.userId || body.created_by || '').toString();
+    if ((!ageMin && ageMin !== 0) && legacyAgeRange) {
+      const m = String(legacyAgeRange).trim().match(/^(\d+)\s*[-–]\s*(\d+)/);
+      if (m) { ageMin = Number(m[1]); ageMax = Number(m[2]); }
+      else {
+        const s = String(legacyAgeRange).trim().match(/^(\d+)$/);
+        if (s) { ageMin = Number(s[1]); ageMax = ageMin; }
+      }
+    }
 
-  if (!prompt) return jsonBody({ ok:false, error: 'Missing prompt' }, 400);
+    // If single values (like "1" or "2"), ensure both min and max set
+    if (ageMin !== null && (ageMax === null || isNaN(ageMax))) ageMax = ageMin;
 
-  // Config
-  const OPENAI_KEY = env.OPENAI_API_KEY;
-  const EMB_MODEL = env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small';
-  const SIMILARITY_THRESHOLD = Number(env.SIMILARITY_THRESHOLD || 0.80);
-  const MAX_CANDIDATES = Number(env.MAX_CANDIDATES || 200);
-  const DEFAULT_MODEL = env.OPENAI_MODEL || 'gpt-4o-mini';
-  const DEFAULT_MAX_TOKENS = Number(env.MAX_OUTPUT_TOKENS || 1500);
-  const TEMPERATURE = Number(env.TEMPERATURE || 0.8);
+    // Fallback default age if missing
+    if (ageMin === null || isNaN(ageMin) || ageMax === null || isNaN(ageMax)) {
+      ageMin = 3; ageMax = 4;
+    }
 
-  // Helpers
-  function cosine(a, b) {
-    if (!a || !b || a.length !== b.length) return 0;
-    let dot = 0, na = 0, nb = 0;
-    for (let i=0;i<a.length;i++){ dot += a[i]*b[i]; na += a[i]*a[i]; nb += b[i]*b[i]; }
-    if (na === 0 || nb === 0) return 0;
-    return dot / (Math.sqrt(na) * Math.sqrt(nb));
-  }
+    // Map lengthPref + age interval to length instructions and token cap
+    function getLengthInstructionAndTokens(minAge, maxAge, lengthPref) {
+      // Baseline words by age group (approx)
+      const ageSpan = `${minAge}-${maxAge}`;
+      let targetWords = 200;
+      if (minAge <= 2) targetWords = 60;        // 1-2 år: mycket kort
+      else if (minAge <= 4) targetWords = 120;  // 3-4 år: kort
+      else if (minAge <= 6) targetWords = 220;  // 5-6
+      else if (minAge <= 8) targetWords = 350;  // 7-8
+      else if (minAge <= 10) targetWords = 520; // 9-10
+      else targetWords = 650;                   // 11-12
 
-  async function getEmbedding(text) {
-    if (!OPENAI_KEY) return null;
-    try {
-      const res = await fetch('https://api.openai.com/v1/embeddings', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${OPENAI_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ input: text, model: EMB_MODEL })
-      });
-      if (!res.ok) { console.warn('[embed] upstream failed', res.status); return null; }
-      const j = await res.json().catch(()=>null);
-      return j?.data?.[0]?.embedding || null;
-    } catch (e) { console.warn('[embed] error', e); return null; }
-  }
+      // Adjust by lengthPref
+      if (lengthPref === 'short') targetWords = Math.max(40, Math.round(targetWords * 0.35));
+      else if (lengthPref === 'medium') targetWords = Math.round(targetWords * 0.8);
+      else if (lengthPref === 'long') targetWords = Math.round(Math.max(targetWords, targetWords * 1.5));
 
-  async function generateStoryWithModel(promptForModel) {
-    if (!OPENAI_KEY) throw new Error('Missing OPENAI_API_KEY for generation');
-    const sys = [
-      "Du är en trygg och snäll sagoberättare för barn på svenska.",
-      `Åldersgrupp: ${ageRange}. Anpassa språk och ton efter åldern.`,
-      heroName ? `Barnets namn är ${heroName}.` : "",
-      "VIKTIGT: Svara endast med själva berättelsetexten — inga rubriker, inga förklaringar."
-    ].filter(Boolean).join(' ');
+      // Convert words -> rough tokens (token ~ 0.75 words): tokens = words * 1.4 (conservative)
+      const maxTokens = Math.min(4000, Math.round(targetWords * 1.4) + 100);
+
+      const lengthInstruction = `Skriv en berättelse anpassad för barn ${minAge}–${maxAge} år. Sikta på ungefär ${targetWords} ord (ungefär ${Math.round(targetWords/150)}–${Math.round(targetWords/100)} min lästid beroende på tempo).`;
+
+      return { lengthInstruction, maxTokens };
+    }
+
+    const { lengthInstruction, maxTokens } = getLengthInstructionAndTokens(ageMin, ageMax, lengthPref);
+
+    // System prompt: tydligt krav på spänning + inga floskelslut
+    const sysParts = [
+      "Du är en trygg, varm och skicklig sagoberättare på svenska.",
+      lengthInstruction,
+      `Åldersintervall: ${ageMin}-${ageMax} år. Anpassa språk, rytm och längd efter åldern.`,
+      "Skriv med god spänning och berättarteknik: använd konkret handling, tydlig konflikt och stegvis upplösning.",
+      "VIKTIGT: Undvik platta eller klichéartade slut (inga trötta floskler som \"och så levde de lyckliga\"). Avsluta med ett fint, lugnt eller öppet slut som känns trovärdigt.",
+      "Svar endast med berättelsetexten — inga rubriker, inga instruktioner, inga metadata."
+    ].join(' ');
+
+    // Build model payload
+    const model = env.OPENAI_MODEL || env.DEFAULT_MODEL || 'gpt-4o-mini';
+    const OPENAI_KEY = env.OPENAI_API_KEY;
+    if (!OPENAI_KEY) return new Response(JSON.stringify({ ok:false, error:'OPENAI_API_KEY saknas' }), { status:500, headers: CORS });
+
+    const userContent = `Sagaidé: ${prompt}` + (body.heroName ? `\nHjälte: ${body.heroName}` : '');
+
     const payload = {
-      model: DEFAULT_MODEL,
+      model,
       messages: [
-        { role: 'system', content: sys },
-        { role: 'user', content: `Sagaidé: ${promptForModel}` }
+        { role: 'system', content: sysParts },
+        { role: 'user', content: userContent }
       ],
-      temperature: TEMPERATURE,
-      max_tokens: DEFAULT_MAX_TOKENS
+      temperature: Number(env.TEMPERATURE || 0.8),
+      max_tokens: maxTokens
     };
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+
+    // Call OpenAI
+    const genRes = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${OPENAI_KEY}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
-    if (!res.ok) {
-      const t = await res.text().catch(()=>'' );
-      throw new Error('Model error: ' + t);
+
+    if (!genRes.ok) {
+      const t = await genRes.text().catch(()=>'(no body)');
+      return new Response(JSON.stringify({ ok:false, error: `Upstream model error: ${genRes.status}`, detail: t }), { status: 502, headers: CORS });
     }
-    const data = await res.json();
-    return data?.choices?.[0]?.message?.content?.trim() || '';
-  }
+    const genJson = await genRes.json().catch(()=>null);
+    const storyText = genJson?.choices?.[0]?.message?.content?.trim() || '';
 
-  const promptEmbedding = await getEmbedding(prompt);
-
-  // DB candidate search
-  let candidate = null;
-  if (env.BN_DB && promptEmbedding) {
-    try {
-      await env.BN_DB.prepare(`
-        CREATE TABLE IF NOT EXISTS stories (
-          id TEXT PRIMARY KEY,
-          prompt TEXT,
-          embedding TEXT,
-          story TEXT,
-          ageRange TEXT,
-          heroName TEXT,
-          created_by TEXT,
-          audio_key TEXT,
-          created_at INTEGER,
-          saved_flag INTEGER DEFAULT 0
-        )
-      `).run();
-
-      const rowsRes = await env.BN_DB.prepare(`
-        SELECT id, prompt, embedding, story, ageRange, heroName, created_by, audio_key, created_at
-        FROM stories
-        WHERE ageRange = ?
-        ORDER BY created_at DESC
-        LIMIT ?
-      `).bind(ageRange, MAX_CANDIDATES).all();
-
-      const rows = (rowsRes && rowsRes.results) ? rowsRes.results : [];
-      let best = { sim: 0, row: null };
-      for (const r of rows) {
-        try {
-          const emb = r.embedding ? JSON.parse(r.embedding) : null;
-          if (!emb) continue;
-          const sim = cosine(promptEmbedding, emb);
-          if (sim > best.sim) { best.sim = sim; best.row = r; }
-        } catch(e){ continue; }
-      }
-      if (best.row && best.sim >= SIMILARITY_THRESHOLD) candidate = { row: best.row, sim: best.sim };
-    } catch (e) {
-      console.warn('[generate] DB search failed', e);
-      candidate = null;
-    }
-  }
-
-  const ageStr = String(ageRange || '');
-  const isYoung = /(^|,|\s)(1|2|3|4)(\D|$)/.test(ageStr);
-  const isOlder = /11|12/.test(ageStr);
-
-  try {
-    if (candidate) {
-      const createdBy = candidate.row.created_by || '';
-      if (isYoung) {
-        return jsonBody({ ok:true, story: candidate.row.story, reused:true, reused_id: candidate.row.id, similarity: candidate.sim });
-      }
-      if (isOlder) {
-        if (userId && createdBy && userId === createdBy) {
-          // same user -> do not reuse => generate
-        } else {
-          return jsonBody({ ok:true, story: candidate.row.story, reused:true, reused_id: candidate.row.id, similarity: candidate.sim });
-        }
-      } else {
-        return jsonBody({ ok:true, story: candidate.row.story, reused:true, reused_id: candidate.row.id, similarity: candidate.sim });
-      }
-    }
-
-    // generate new
-    const story = await generateStoryWithModel(prompt);
-
-    // save in DB
+    // Optionally save to D1 DB (existing logic) — minimal safe save
     let savedId = null;
-    if (env.BN_DB) {
-      try {
+    try {
+      if (env.BN_DB) {
+        await env.BN_DB.prepare(`
+          CREATE TABLE IF NOT EXISTS stories (
+            id TEXT PRIMARY KEY,
+            prompt TEXT,
+            embedding TEXT,
+            story TEXT,
+            ageRange TEXT,
+            heroName TEXT,
+            created_by TEXT,
+            audio_key TEXT,
+            created_at INTEGER,
+            saved_flag INTEGER DEFAULT 0
+          )
+        `).run();
+
         const id = (typeof crypto?.randomUUID === 'function') ? crypto.randomUUID() : ('id_' + Date.now());
         const created_at = Date.now();
-        const embJson = promptEmbedding ? JSON.stringify(promptEmbedding) : null;
         await env.BN_DB.prepare(`
-          INSERT INTO stories (id, prompt, embedding, story, ageRange, heroName, created_by, created_at, saved_flag)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).bind(id, prompt, embJson, story, ageRange, heroName, userId || '', created_at, 0).run();
+          INSERT INTO stories (id, prompt, story, ageRange, heroName, created_by, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).bind(id, prompt, storyText, `${ageMin}-${ageMax}`, body.heroName || '', '', created_at).run();
         savedId = id;
-      } catch (e) { console.warn('[generate] failed to save story', e); }
-    }
+      }
+    } catch(e){ /* ignore save errors */ }
 
-    return jsonBody({ ok:true, story, reused:false, saved_id: savedId });
+    return new Response(JSON.stringify({ ok:true, story: storyText, saved_id: savedId }), { status:200, headers: CORS });
+
   } catch (err) {
-    return jsonBody({ ok:false, error: String(err) }, 500);
+    return new Response(JSON.stringify({ ok:false, error: String(err) }), { status:500, headers: CORS });
   }
 }
