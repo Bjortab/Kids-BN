@@ -1,12 +1,8 @@
 // functions/generate.js
-// Uppdaterad version med:
-// - bättre ord->tokens mappning
-// - env-override för max tokens (OPENAI_MAX_OUTPUT_TOKENS eller MAX_OUTPUT_TOKENS)
-// - automatisk "continue" / retry om modellen avbryts p.g.a. token-limit (finish_reason === 'length')
-// - bevarar bakåtkompatibilitet (ageRange legacy) och stöd för ageMin/ageMax + length
+// Uppdaterad version (bugfix): använder den korrekt namngivna variabeln finishReason i returobjektet.
+// Innehåller: ord->tokens mappning, env-override för max tokens, continuation retry vid token-avklippning.
 //
-// OBS: Sätt env.OPENAI_API_KEY och valfri OPENAI_MAX_OUTPUT_TOKENS i din Pages/Functions-konfiguration
-//      för att styra max_tokens utan att pusha kod.
+// OBS: Sätt env.OPENAI_API_KEY och valfri OPENAI_MAX_OUTPUT_TOKENS i Pages/Functions env.
 
 export async function onRequest(context) {
   const { request, env } = context;
@@ -166,7 +162,6 @@ export async function onRequest(context) {
             { role: 'system', content: "Fortsätt berättelsen. Svara endast med berättelsetexten." },
             { role: 'user', content: contUser }
           ],
-          // mindre men rimliga tokens för continuation
           temperature: Number(env.TEMPERATURE || 0.8),
           max_tokens: Math.min(2000, Math.round(finalMaxTokens / 2))
         };
@@ -178,18 +173,11 @@ export async function onRequest(context) {
           const contFinish = contChoice?.finish_reason || null;
           // Append continuation
           if (contText) {
-            // försök att inte duplicera overlappande text: om contText börjar med samma ord som tail, trimma overlap
-            if (contText.startsWith(tail.trim().slice(0,60))) {
-              // enkel dedupe: om startsWith första 60 chars av tail, skippa de första 60 i continuation
-              storyText += contText;
-            } else {
-              storyText += (storyText.endsWith('\n') ? '' : '\n') + contText;
-            }
+            storyText += (storyText.endsWith('\n') ? '' : '\n') + contText;
           }
           // Om continuation avslutades normalt, bryt
           if (contFinish !== 'length' && /[.!?]\s*$/.test(contText)) break;
         } catch (e) {
-          // bryt om error
           console.warn('[generate] continuation failed', e);
           break;
         }
@@ -225,7 +213,8 @@ export async function onRequest(context) {
       }
     } catch(e){ console.warn('[generate] save failed', e); /* ignore */ }
 
-    return new Response(JSON.stringify({ ok:true, story: storyText, saved_id: savedId, continued, finish_reason }), { status:200, headers: CORS });
+    // Returnera svar — använd korrekt variabel finishReason
+    return new Response(JSON.stringify({ ok:true, story: storyText, saved_id: savedId, continued, finish_reason: finishReason }), { status:200, headers: CORS });
 
   } catch (err) {
     return new Response(JSON.stringify({ ok:false, error: String(err) }), { status:500, headers: CORS });
