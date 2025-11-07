@@ -25,11 +25,13 @@
     .recorder-controls { display:flex; gap:8px; align-items:center; flex-wrap:wrap }
     .recorder-status { color:#9aa; font-size:13px; margin-left:6px }
     .secondary { background:#333; color:#ddd }
+    .controls-grid { display:grid; grid-template-columns: 1fr 1fr 1fr; gap:12px }
+    @media (max-width:720px) { .controls-grid { grid-template-columns: 1fr } }
   </style>
 </head>
 
 <script>
-  // Robust inline binder: waits for app.js to expose window.createStory / window.playTTS
+  // inline binder: binds createStory/playTTS when app.js exposes them
   window.addEventListener('DOMContentLoaded', function () {
     function byText(){const n=t=>t.toLowerCase();const btns=[...document.querySelectorAll('button,input[type=button],input[type=submit]')];
       return (arr)=>btns.find(b=>arr.some(t=>(b.value||b.innerText||'').toLowerCase().includes(n(t))));}
@@ -41,25 +43,17 @@
         const p = find(['l\u00e4s upp','spela','testa r\u00f6st']);
         if (c) c.onclick = (e)=>{ e.preventDefault?.(); if (window.createStory) return window.createStory(); console.warn('createStory saknas'); };
         if (p) p.onclick = (e)=>{ e.preventDefault?.(); if (window.playTTS) return window.playTTS(); console.warn('playTTS saknas'); };
-        console.log('BN inline-binder attempted');
-      } catch (err) {
-        console.warn('BN binder error', err);
-      }
+      } catch (err) { console.warn('BN binder error', err); }
     }
 
-    if (window.createStory && window.playTTS) {
-      bindButtons();
-    } else {
+    if (window.createStory && window.playTTS) bindButtons();
+    else {
       let tries = 0;
       const iv = setInterval(()=>{
         tries++;
         if (window.createStory || window.playTTS) {
-          bindButtons();
-          clearInterval(iv);
-        } else if (tries > 20) {
-          bindButtons();
-          clearInterval(iv);
-        }
+          bindButtons(); clearInterval(iv);
+        } else if (tries > 20) { bindButtons(); clearInterval(iv); }
       }, 100);
     }
   });
@@ -71,20 +65,35 @@
     <small class="muted">…där drömmar blir berättelser</small>
 
     <div class="row" style="margin-top:12px">
-      <div>
-        <label>Ålder</label>
-        <select data-id="age" id="age">
-          <option value="1-2 år">1–2 år</option>
-          <option value="3-4 år">3–4 år</option>
-          <option value="5-6 år">5–6 år</option>
-          <option value="7-8 år">7–8 år</option>
-          <option value="9-10 år">9–10 år</option>
-          <option value="11-12 år">11–12 år</option>
-        </select>
-      </div>
-      <div>
-        <label>Hjälte (valfritt)</label>
-        <input data-id="hero" id="hero" placeholder="t.ex. Taxen Tage, Draken Holger" />
+      <div class="controls-grid" style="width:100%">
+        <div>
+          <label>Ålder</label>
+          <!-- Separera 1 och 2 som egna val; övriga kvar som intervall -->
+          <select data-id="age" id="age">
+            <option value="1">1 år</option>
+            <option value="2">2 år</option>
+            <option value="3-4">3–4 år</option>
+            <option value="5-6">5–6 år</option>
+            <option value="7-8">7–8 år</option>
+            <option value="9-10">9–10 år</option>
+            <option value="11-12">11–12 år</option>
+          </select>
+        </div>
+
+        <div>
+          <label>Längd</label>
+          <select data-id="length" id="length">
+            <option value="">Standard (åldermall)</option>
+            <option value="short">Kort (≈1–3 min)</option>
+            <option value="medium">Medel (≈3–10 min)</option>
+            <option value="long">Lång (≈10+ min)</option>
+          </select>
+        </div>
+
+        <div>
+          <label>Hjälte (valfritt)</label>
+          <input data-id="hero" id="hero" placeholder="t.ex. Taxen Tage, Draken Holger" />
+        </div>
       </div>
     </div>
 
@@ -95,7 +104,7 @@
       </div>
     </div>
 
-    <!-- Röst‑UI: inspelning + transkript -->
+    <!-- Röst‑UI -->
     <div class="row" style="margin-top:12px">
       <div style="flex:1 1 100%">
         <div class="recorder-controls" aria-live="polite">
@@ -137,7 +146,6 @@
     <audio data-id="audio" controls preload="none" style="width:100%"></audio>
   </div>
 
-  <!-- Ladda recorder klienten först, sedan app.js -->
   <script src="/recorder.js"></script>
   <script src="/app.js"></script>
 </body>
