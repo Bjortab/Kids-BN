@@ -1,6 +1,6 @@
 // public/app.js — komplett fil (ersätter befintlig).
 // Viktigt: den parsar både enskilda år (value="1") och intervall (value="3-4"),
-// skickar ageMin/ageMax och length till /api/generate (POST) och fallback GET.
+// skickar ageMin/ageMax och length till /api/generate_story (POST) och fallback GET.
 
 (function(){
   'use strict';
@@ -59,16 +59,16 @@
         length: lengthVal || undefined
       };
 
-      // POST /api/generate
+      // POST /api/generate_story
       let res = null;
       try {
-        res = await fetch('/api/generate', {
+        res = await fetch('/api/generate_story', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body)
         });
       } catch (err) {
-        warn('POST /api/generate failed', err);
+        warn('POST /api/generate_story failed', err);
         res = null;
       }
 
@@ -91,7 +91,7 @@
       if (lengthVal) params.set('length', lengthVal);
       if (hero) params.set('hero', hero);
       params.set('prompt', prompt);
-      const fallbackUrl = `/api/generate?${params.toString()}`;
+      const fallbackUrl = `/api/generate_story?${params.toString()}`;
 
       const res2 = await fetch(fallbackUrl);
       if (!res2.ok) {
