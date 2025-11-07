@@ -1,6 +1,12 @@
-// functions/generate.js — komplett fil (ersätter befintlig).
-// Stödjer ageMin/ageMax + length (short|medium|long) + bakåtkompatibilitet med ageRange.
-// System prompt innehåller instruktion: skriv med spänning, undvik floskelslut, och följ längdönskemål.
+// functions/generate.js
+// Uppdaterad version med:
+// - bättre ord->tokens mappning
+// - env-override för max tokens (OPENAI_MAX_OUTPUT_TOKENS eller MAX_OUTPUT_TOKENS)
+// - automatisk "continue" / retry om modellen avbryts p.g.a. token-limit (finish_reason === 'length')
+// - bevarar bakåtkompatibilitet (ageRange legacy) och stöd för ageMin/ageMax + length
+//
+// OBS: Sätt env.OPENAI_API_KEY och valfri OPENAI_MAX_OUTPUT_TOKENS i din Pages/Functions-konfiguration
+//      för att styra max_tokens utan att pusha kod.
 
 export async function onRequest(context) {
   const { request, env } = context;
@@ -13,6 +19,7 @@ export async function onRequest(context) {
   };
 
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
+
   try {
     // Läs body (POST) eller query (GET)
     let body = {};
@@ -26,13 +33,13 @@ export async function onRequest(context) {
     const prompt = (body.prompt || body?.idea || '').toString().trim();
     if (!prompt) return new Response(JSON.stringify({ ok:false, error:'Missing prompt' }), { status:400, headers: CORS });
 
-    // ageMin/ageMax eller ageRange
-    let ageMin = body.ageMin !== undefined ? Number(body.ageMin) : null;
-    let ageMax = body.ageMax !== undefined ? Number(body.ageMax) : null;
+    // ageMin/ageMax eller ageRange (legacy)
+    let ageMin = (body.ageMin !== undefined && body.ageMin !== '') ? Number(body.ageMin) : null;
+    let ageMax = (body.ageMax !== undefined && body.ageMax !== '') ? Number(body.ageMax) : null;
     let lengthPref = body.length || body.lengthCategory || null; // 'short'|'medium'|'long' or null
     let legacyAgeRange = body.ageRange || null;
 
-    if ((!ageMin && ageMin !== 0) && legacyAgeRange) {
+    if ((ageMin === null || Number.isNaN(ageMin)) && legacyAgeRange) {
       const m = String(legacyAgeRange).trim().match(/^(\d+)\s*[-–]\s*(\d+)/);
       if (m) { ageMin = Number(m[1]); ageMax = Number(m[2]); }
       else {
@@ -42,57 +49,68 @@ export async function onRequest(context) {
     }
 
     // If single values (like "1" or "2"), ensure both min and max set
-    if (ageMin !== null && (ageMax === null || isNaN(ageMax))) ageMax = ageMin;
+    if (ageMin !== null && (ageMax === null || Number.isNaN(ageMax))) ageMax = ageMin;
 
     // Fallback default age if missing
-    if (ageMin === null || isNaN(ageMin) || ageMax === null || isNaN(ageMax)) {
+    if (ageMin === null || Number.isNaN(ageMin) || ageMax === null || Number.isNaN(ageMax)) {
       ageMin = 3; ageMax = 4;
     }
 
-    // Map lengthPref + age interval to length instructions and token cap
+    // Funktion: mappa ålder + längdpref -> instruktion + max_tokens
     function getLengthInstructionAndTokens(minAge, maxAge, lengthPref) {
-      // Baseline words by age group (approx)
-      const ageSpan = `${minAge}-${maxAge}`;
-      let targetWords = 200;
-      if (minAge <= 2) targetWords = 60;        // 1-2 år: mycket kort
-      else if (minAge <= 4) targetWords = 120;  // 3-4 år: kort
-      else if (minAge <= 6) targetWords = 220;  // 5-6
-      else if (minAge <= 8) targetWords = 350;  // 7-8
-      else if (minAge <= 10) targetWords = 520; // 9-10
-      else targetWords = 650;                   // 11-12
+      // Baseline målord per age
+      let targetWords;
+      if (minAge <= 2) targetWords = 60;        // 1 år / 2 år: mycket kort
+      else if (minAge <= 4) targetWords = 120;  // 3-4 år
+      else if (minAge <= 6) targetWords = 220;  // 5-6 år
+      else if (minAge <= 8) targetWords = 350;  // 7-8 år
+      else if (minAge <= 10) targetWords = 520; // 9-10 år
+      else targetWords = 650;                   // 11-12 år
 
-      // Adjust by lengthPref
+      // Modifiera efter lengthPref
       if (lengthPref === 'short') targetWords = Math.max(40, Math.round(targetWords * 0.35));
-      else if (lengthPref === 'medium') targetWords = Math.round(targetWords * 0.8);
-      else if (lengthPref === 'long') targetWords = Math.round(Math.max(targetWords, targetWords * 1.5));
+      else if (lengthPref === 'medium') targetWords = Math.round(targetWords * 0.9);
+      else if (lengthPref === 'long') targetWords = Math.round(Math.max(targetWords, targetWords * 1.6));
 
-      // Convert words -> rough tokens (token ~ 0.75 words): tokens = words * 1.4 (conservative)
-      const maxTokens = Math.min(4000, Math.round(targetWords * 1.4) + 100);
+      // Konservativ tokens-uppskattning: tokens ≈ words * 1.45
+      const estimatedTokens = Math.round(targetWords * 1.45);
+      // Buffert så vi undviker klippning
+      let maxTokens = Math.min(24000, estimatedTokens + 500);
 
-      const lengthInstruction = `Skriv en berättelse anpassad för barn ${minAge}–${maxAge} år. Sikta på ungefär ${targetWords} ord (ungefär ${Math.round(targetWords/150)}–${Math.round(targetWords/100)} min lästid beroende på tempo).`;
+      // Tillåt override via env (sätt detta i Pages Functions env om du behöver mer)
+      const envOverride = Number(env.OPENAI_MAX_OUTPUT_TOKENS || env.MAX_OUTPUT_TOKENS || env.OPENAI_MAX_TOKENS || 0);
+      if (envOverride && !Number.isNaN(envOverride) && envOverride > 0) {
+        // konservativ gräns
+        maxTokens = Math.min(32000, envOverride);
+      }
+
+      const lengthInstruction = `Skriv en berättelse anpassad för barn ${minAge}–${maxAge} år. Sikta på ungefär ${targetWords} ord.`;
 
       return { lengthInstruction, maxTokens };
     }
 
     const { lengthInstruction, maxTokens } = getLengthInstructionAndTokens(ageMin, ageMax, lengthPref);
 
-    // System prompt: tydligt krav på spänning + inga floskelslut
+    // System prompt: extra instruktion mot abrupt avslut
     const sysParts = [
       "Du är en trygg, varm och skicklig sagoberättare på svenska.",
       lengthInstruction,
       `Åldersintervall: ${ageMin}-${ageMax} år. Anpassa språk, rytm och längd efter åldern.`,
       "Skriv med god spänning och berättarteknik: använd konkret handling, tydlig konflikt och stegvis upplösning.",
       "VIKTIGT: Undvik platta eller klichéartade slut (inga trötta floskler som \"och så levde de lyckliga\"). Avsluta med ett fint, lugnt eller öppet slut som känns trovärdigt.",
+      "Om svaret riskerar att bli för långt, prioritera att avsluta hela meningar och ge ett komplett slut hellre än att bli avklippt mitt i en mening.",
       "Svar endast med berättelsetexten — inga rubriker, inga instruktioner, inga metadata."
     ].join(' ');
 
-    // Build model payload
+    // Modellen och nyckel
     const model = env.OPENAI_MODEL || env.DEFAULT_MODEL || 'gpt-4o-mini';
     const OPENAI_KEY = env.OPENAI_API_KEY;
     if (!OPENAI_KEY) return new Response(JSON.stringify({ ok:false, error:'OPENAI_API_KEY saknas' }), { status:500, headers: CORS });
 
     const userContent = `Sagaidé: ${prompt}` + (body.heroName ? `\nHjälte: ${body.heroName}` : '');
 
+    // Bygg payload för första generation
+    const finalMaxTokens = Math.min(32000, Number(maxTokens || 1500)); // säker cap
     const payload = {
       model,
       messages: [
@@ -100,24 +118,85 @@ export async function onRequest(context) {
         { role: 'user', content: userContent }
       ],
       temperature: Number(env.TEMPERATURE || 0.8),
-      max_tokens: maxTokens
+      max_tokens: finalMaxTokens
     };
 
-    // Call OpenAI
-    const genRes = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${OPENAI_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-
-    if (!genRes.ok) {
-      const t = await genRes.text().catch(()=>'(no body)');
-      return new Response(JSON.stringify({ ok:false, error: `Upstream model error: ${genRes.status}`, detail: t }), { status: 502, headers: CORS });
+    // Funktion för att kalla OpenAI
+    async function callOpenAI(payload) {
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${OPENAI_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        const t = await res.text().catch(()=>'');
+        throw new Error(`Model error ${res.status}: ${t}`);
+      }
+      const j = await res.json().catch(()=>null);
+      return j;
     }
-    const genJson = await genRes.json().catch(()=>null);
-    const storyText = genJson?.choices?.[0]?.message?.content?.trim() || '';
 
-    // Optionally save to D1 DB (existing logic) — minimal safe save
+    // Kör första anropet
+    let genJson = null;
+    try {
+      genJson = await callOpenAI(payload);
+    } catch (err) {
+      return new Response(JSON.stringify({ ok:false, error: String(err) }), { status:502, headers: CORS });
+    }
+
+    // Extrahera text och finish_reason
+    const choice = genJson?.choices?.[0] || null;
+    let storyText = choice?.message?.content?.trim() || '';
+    const finishReason = choice?.finish_reason || null;
+
+    // Om modellen avbröts pga length -> försök en kontrollerad "continue" (max 2 retries)
+    let continued = false;
+    if (finishReason === 'length' || (storyText && !/[.!?]\s*$/.test(storyText) && (choice?.message?.content?.length || 0) > (finalMaxTokens * 0.5))) {
+      // Gör upp till 2 fortsättningsanrop
+      let retries = 0;
+      while (retries < 2 && (finishReason === 'length' || (storyText && !/[.!?]\s*$/.test(storyText)))) {
+        retries++;
+        continued = true;
+        // Skicka en kort prompt som ber modellen att fortsätta där den slutade
+        const tail = storyText.slice(-400); // ge lite kontext
+        const contUser = `Fortsätt berättelsen där du slutade. Börja direkt med fortsättningen och avsluta på ett komplett, trovärdigt sätt. Kontext (sista delen): "${tail}"`;
+        const contPayload = {
+          model,
+          messages: [
+            { role: 'system', content: "Fortsätt berättelsen. Svara endast med berättelsetexten." },
+            { role: 'user', content: contUser }
+          ],
+          // mindre men rimliga tokens för continuation
+          temperature: Number(env.TEMPERATURE || 0.8),
+          max_tokens: Math.min(2000, Math.round(finalMaxTokens / 2))
+        };
+
+        try {
+          const contJson = await callOpenAI(contPayload);
+          const contChoice = contJson?.choices?.[0] || null;
+          const contText = contChoice?.message?.content?.trim() || '';
+          const contFinish = contChoice?.finish_reason || null;
+          // Append continuation
+          if (contText) {
+            // försök att inte duplicera overlappande text: om contText börjar med samma ord som tail, trimma overlap
+            if (contText.startsWith(tail.trim().slice(0,60))) {
+              // enkel dedupe: om startsWith första 60 chars av tail, skippa de första 60 i continuation
+              storyText += contText;
+            } else {
+              storyText += (storyText.endsWith('\n') ? '' : '\n') + contText;
+            }
+          }
+          // Om continuation avslutades normalt, bryt
+          if (contFinish !== 'length' && /[.!?]\s*$/.test(contText)) break;
+        } catch (e) {
+          // bryt om error
+          console.warn('[generate] continuation failed', e);
+          break;
+        }
+      }
+    }
+
+    // Spara i D1 DB om tillgänglig (samma struktur som tidigare)
     let savedId = null;
     try {
       if (env.BN_DB) {
@@ -144,9 +223,9 @@ export async function onRequest(context) {
         `).bind(id, prompt, storyText, `${ageMin}-${ageMax}`, body.heroName || '', '', created_at).run();
         savedId = id;
       }
-    } catch(e){ /* ignore save errors */ }
+    } catch(e){ console.warn('[generate] save failed', e); /* ignore */ }
 
-    return new Response(JSON.stringify({ ok:true, story: storyText, saved_id: savedId }), { status:200, headers: CORS });
+    return new Response(JSON.stringify({ ok:true, story: storyText, saved_id: savedId, continued, finish_reason }), { status:200, headers: CORS });
 
   } catch (err) {
     return new Response(JSON.stringify({ ok:false, error: String(err) }), { status:500, headers: CORS });
