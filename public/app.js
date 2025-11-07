@@ -1,32 +1,25 @@
-// APP VERSION: 1.0.0
-// BUILD: 2025-11-06
-// CHANGES: playTTS prefers X-Audio-Key -> /api/get_audio?key=... (CDN/cached). Added safe audio playback to avoid AbortError.
-// MAINTAINER: Bjortab
-const APP_VERSION = '1.0.0';
-const APP_BUILD = '2025-11-06';
-console.info(`[BN app] version=${APP_VERSION} build=${APP_BUILD}`);
+// public/app.js — komplett fil (ersätter befintlig).
+// Viktigt: den parsar både enskilda år (value="1") och intervall (value="3-4"),
+// skickar ageMin/ageMax och length till /api/generate (POST) och fallback GET.
 
 (function(){
   'use strict';
+  const log = (...a) => console.log('[BN]', ...a);
+  const warn = (...a) => console.warn('[BN]', ...a);
 
-  const log = (...args) => console.log('[BN]', ...args);
-  const warn = (...args) => console.warn('[BN]', ...args);
-
-  // Enkelt query helper
   function qs(sel){ try { return document.querySelector(sel); } catch(e){ return null; } }
 
-  // Hitta knapp via text (flera alternativ)
-  function findButtonByText(...terms){
-    const lower = t => t.toLowerCase();
-    const btns = Array.from(document.querySelectorAll('button,input[type=button],input[type=submit]'));
-    return btns.find(b => terms.some(term => (b.value||b.innerText||'').toLowerCase().includes(lower(term))));
+  // parse age value which can be "1" or "2" or "3-4"
+  function parseAgeValue(ageVal) {
+    if (!ageVal) return null;
+    const s = String(ageVal).trim();
+    const range = s.match(/^(\d+)\s*[-–]\s*(\d+)$/);
+    if (range) return { min: parseInt(range[1],10), max: parseInt(range[2],10) };
+    const single = s.match(/^(\d+)$/);
+    if (single) { const n = parseInt(single[1],10); return { min:n, max:n }; }
+    return null;
   }
 
-  // Grundläggande element (kan vara null initialt — createStory läser DOM igen vid anrop)
-  let playBtn   = qs('[data-id="btn-tts"]')   || findButtonByText('läs upp','spela','testa röst');
-  let createBtn = qs('[data-id="btn-create"]') || findButtonByText('skapa saga','skapa & läs upp','skapa');
-
-  // Hjälpfunktioner som UI använder
   function setError(text){
     const errorEl = qs('[data-id="error"]') || qs('.error');
     if (!errorEl) return console.error('[BN] error:', text);
@@ -34,262 +27,103 @@ console.info(`[BN app] version=${APP_VERSION} build=${APP_BUILD}`);
     errorEl.textContent = text || '';
   }
 
-  function showSpinner(show, statusText){
-    try {
-      const spinnerEl = qs('[data-id="spinner"]') || qs('.spinner');
-      if (!spinnerEl) return;
-      spinnerEl.style.display = show ? 'flex' : 'none';
-      const status = spinnerEl.querySelector('[data-id="status"]');
-      if (status && typeof statusText !== 'undefined') status.textContent = statusText;
-    } catch (e) { console.warn('[BN] spinner error', e); }
+  function showSpinner(on){
+    const s = qs('[data-id="spinner"]');
+    if (!s) return;
+    s.style.display = on ? 'flex' : 'none';
   }
 
-  // Robust createStory: läser DOM varje gång funktionen körs (för att undvika load-order problem)
-  async function createStory() {
-    // Läs DOM‑element här så funktionen fungerar oavsett när app.js kördes
-    const ageEl    = qs('#age') || qs('[data-id="age"]') || null;
-    const heroEl   = qs('#hero') || qs('[data-id="hero"]') || null;
-    const promptEl = qs('#prompt') || qs('[data-id="prompt"]') || qs('textarea[name="prompt"]') || null;
-    const storyEl  = qs('[data-id="story"]') || qs('#story') || qs('.story-output') || null;
-    const createButton = qs('[data-id="btn-create"]') || qs('#btn-create') || qs('.btn-primary') || createBtn || null;
-
+  async function createStory(){
+    setError('');
+    showSpinner(true);
     try {
-      setError('');
-      if (!promptEl) { setError('Prompt-fält saknas.'); return; }
-      const age    = (ageEl?.value || '3-4 år').trim();
-      const hero   = (heroEl?.value || '').trim();
-      const prompt = (promptEl?.value || '').trim();
-      if (!prompt) { setError('Skriv eller tala in en idé först.'); return; }
+      const ageSel = qs('#age');
+      const lengthSel = qs('#length');
+      const heroEl = qs('#hero');
+      const promptEl = qs('#prompt');
+      const prompt = (promptEl && promptEl.value) ? promptEl.value.trim() : '';
+      const hero = (heroEl && heroEl.value) ? heroEl.value.trim() : '';
+      if (!prompt) { setError('Skriv vad sagan ska handla om.'); showSpinner(false); return; }
 
-      showSpinner(true, 'Skapar berättelse…');
-      if (createButton) createButton.disabled = true;
+      const ageVal = ageSel ? ageSel.value : '';
+      const ageRange = parseAgeValue(ageVal);
+      const lengthVal = lengthSel ? lengthSel.value : '';
 
-      // Försök v2 först (POST JSON) — vi ber också om JSON i Accept
-      let res = await fetch("/api/generate_story", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Accept": "application/json"
-        },
-        body: JSON.stringify({ ageRange: age, heroName: hero, prompt })
-      });
+      // Build structured body (POST)
+      const body = {
+        prompt,
+        heroName: hero || undefined,
+        ageMin: ageRange ? ageRange.min : undefined,
+        ageMax: ageRange ? ageRange.max : undefined,
+        ageRange: ageVal || undefined, // legacy fallback
+        length: lengthVal || undefined
+      };
 
-      // Om status OK försök parse JSON, men fånga parsingfel och visa texten från servern
-      if (res.ok) {
-        let data = null;
-        try {
-          data = await res.clone().json();
-        } catch (parseErr) {
-          // Om parse misslyckas, hämta text och visa i error‑fältet (diagnostik)
-          const txt = await res.text().catch(()=>'(kunde inte läsa body)');
-          console.warn('[BN] generate_story returned non-JSON:', res.status, txt);
-          throw new Error('Server svarade inte med JSON: ' + (txt.slice ? txt.slice(0,300) : String(txt)));
-        }
+      // POST /api/generate
+      let res = null;
+      try {
+        res = await fetch('/api/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+      } catch (err) {
+        warn('POST /api/generate failed', err);
+        res = null;
+      }
 
-        if (data?.story) {
-          const storyElLocal = storyEl || qs('[data-id="story"]') || qs('#story') || qs('.story-output');
-          if (storyElLocal) storyElLocal.textContent = data.story;
+      if (res && res.ok) {
+        const data = await res.json().catch(()=>({}));
+        const storyText = data.story || data?.content || data?.text || '';
+        if (storyText) {
+          const el = qs('[data-id="story"]');
+          if (el) el.textContent = storyText;
+          showSpinner(false);
           return;
         }
-        // Om format avviker, logga och fortsätt fallback
-        console.warn('[BN] generate_story ok men saknar story‑fält:', data);
-      } else {
-        // res.ok = false, få text för debugging
-        const txt = await res.text().catch(()=>'(no body)');
-        console.warn('[BN] generate_story failed', res.status, txt);
-        // fortsätt till fallback
+        warn('POST returned ok but no story field', data);
       }
 
-      // Fallback till v1 (GET with query)
-      const url = `/api/generate?ageRange=${encodeURIComponent(age)}&hero=${encodeURIComponent(hero)}&prompt=${encodeURIComponent(prompt)}`;
-      const res2 = await fetch(url);
+      // Fallback GET (legacy)
+      const params = new URLSearchParams();
+      if (ageRange) { params.set('ageMin', ageRange.min); params.set('ageMax', ageRange.max); }
+      else if (ageVal) params.set('ageRange', ageVal);
+      if (lengthVal) params.set('length', lengthVal);
+      if (hero) params.set('hero', hero);
+      params.set('prompt', prompt);
+      const fallbackUrl = `/api/generate?${params.toString()}`;
+
+      const res2 = await fetch(fallbackUrl);
       if (!res2.ok) {
-        const t = await res2.text().catch(()=>'');
-        throw new Error('Båda endpoints misslyckades: ' + (t || res2.status));
-      }
-      const data2 = await res2.json();
-      if (data2?.story) {
-        const storyElLocal = storyEl || qs('[data-id="story"]') || qs('#story') || qs('.story-output');
-        if (storyElLocal) storyElLocal.textContent = data2.story;
+        const txt = await res2.text().catch(()=>'(no body)');
+        setError('Generering misslyckades: ' + txt);
+        showSpinner(false);
         return;
       }
-
-      throw new Error('Inget story i svar från v1');
+      const txt = await res2.text();
+      const el2 = qs('[data-id="story"]');
+      if (el2) el2.textContent = txt;
     } catch (err) {
-      console.error('[BN] createStory error', err);
-      setError('Kunde inte skapa berättelse: ' + (err?.message || err));
+      setError('Fel: ' + String(err));
     } finally {
       showSpinner(false);
-      try { if (createButton) createButton.disabled = false; } catch(e){}
     }
   }
 
-  // --- Safe audio helpers and replacement for playTTSResponse / playTTS ---
-  // Global guard to prevent concurrent plays
-  let __bn_audio_lock = { active: false, id: 0 };
-
-  /**
-   * Safely set src and play an audio element.
-   * Waits for canplaythrough (or timeout) before calling play().
-   */
-  async function safeSetSrcAndPlay(audioEl, audioUrl, options = {}) {
-    const timeoutMs = options.timeoutMs || 2500;
-
-    try {
-      // If same source already set, just attempt play once
-      if (audioEl.currentSrc && audioEl.currentSrc.includes(audioUrl)) {
-        console.debug('[SAFE] same src, calling play');
-        await audioEl.play().catch(e => console.warn('[SAFE] play failed', e));
-        return;
-      }
-
-      // Stop any previous loading/playing
-      try { audioEl.pause(); } catch (e){}
-
-      // Remove src and load to abort previous network fetch
-      audioEl.removeAttribute('src');
-      try { audioEl.load(); } catch(e){}
-
-      // Set new source
-      audioEl.src = audioUrl;
-      audioEl.preload = 'auto';
-
-      // Wait for canplaythrough or timeout
-      await new Promise((resolve) => {
-        let done = false;
-        function clean() {
-          if (done) return;
-          done = true;
-          audioEl.removeEventListener('canplaythrough', onReady);
-        }
-        function onReady() { clean(); resolve(); }
-        audioEl.addEventListener('canplaythrough', onReady);
-        // Fallback timeout
-        setTimeout(() => { clean(); resolve(); }, timeoutMs);
-      });
-
-      // Try to play
-      await audioEl.play().catch(e => {
-        console.warn('[SAFE] play failed after ready', e);
-      });
-    } catch (err) {
-      console.error('[SAFE] safeSetSrcAndPlay error', err);
-    }
-  }
-
-  /**
-   * Handle a fetch Response from /api/tts or /api/tts_vertex.
-   * If header X-Audio-Key exists, uses /api/get_audio?key=... (cached),
-   * otherwise falls back to blob playback.
-   */
-  async function playTTSResponse(res) {
-    if (!res || !res.ok) {
-      console.warn('[BN] TTS response error', res && res.status);
-      return;
-    }
-
-    const audioKey = res.headers.get('X-Audio-Key');
-    let audioEl = qs('[data-id="audio"]') || qs('audio') || new Audio();
-
-    if (!audioEl.parentElement) {
-      audioEl.setAttribute('data-id', 'audio');
-      audioEl.setAttribute('controls', '');
-      document.body.appendChild(audioEl);
-    }
-
-    // Acquire simple lock to avoid concurrent source swaps
-    const myId = ++__bn_audio_lock.id;
-    if (__bn_audio_lock.active) {
-      // Another play in progress — politely wait a short while to avoid stomping it
-      console.debug('[BN] waiting for existing play lock');
-      await new Promise(r => setTimeout(r, 150));
-    }
-    __bn_audio_lock.active = true;
-
-    try {
-      if (audioKey) {
-        const audioUrl = `/api/get_audio?key=${encodeURIComponent(audioKey)}`;
-        await safeSetSrcAndPlay(audioEl, audioUrl, { timeoutMs: 2500 });
-        return;
-      }
-
-      // No audio key — read blob and play
-      try {
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        await safeSetSrcAndPlay(audioEl, url, { timeoutMs: 2500 });
-        // revoke after some time
-        setTimeout(()=> URL.revokeObjectURL(url), 60000);
-      } catch (err) {
-        console.error('[BN] fallback play error', err);
-      }
-    } finally {
-      // release lock (only if this caller is last)
-      if (myId === __bn_audio_lock.id) __bn_audio_lock.active = false;
-    }
-  }
-
-  /**
-   * playTTS: sends request(s) to server and delegates playback to playTTSResponse
-   */
-  async function playTTS() {
-    try {
-      setError('');
-      const storyEl = qs('[data-id="story"]') || qs('#story') || qs('.story-output');
-      const text = (storyEl?.textContent || "").trim();
-      if (!text) { setError('Ingen berättelse att läsa upp.'); return; }
-      const voice = (qs('#voice')?.value || 'sv-SE-Wavenet-A');
-
-      showSpinner(true, 'Spelar upp…');
-      const playButton = qs('[data-id="btn-tts"]') || playBtn || qs('.btn-muted');
-      if (playButton) playButton.disabled = true;
-
-      // Try cache-aware endpoint first
-      try {
-        let res = await fetch("/api/tts", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text, voice, userId: (window.getBNUserId ? window.getBNUserId() : undefined) })
-        });
-        if (!res.ok) throw new Error('tts ' + res.status);
-
-        await playTTSResponse(res);
-        return;
-      } catch (e1) {
-        console.warn('[BN] /api/tts failed or no cached key, falling back to tts_vertex', e1);
-      }
-
-      // Fallback to legacy TTS endpoint
-      try {
-        let res = await fetch("/api/tts_vertex", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text, voice })
-        });
-        if (!res.ok) throw new Error('tts_vertex ' + res.status);
-        await playTTSResponse(res);
-      } catch (e2) {
-        console.error('[BN] playTTS error', e2);
-        setError('Kunde inte spela upp ljud: ' + (e2?.message || e2));
-      }
-    } finally {
-      showSpinner(false);
-      const playButton = qs('[data-id="btn-tts"]') || playBtn || qs('.btn-muted');
-      if (playButton) playButton.disabled = false;
-    }
-  }
-
-  // Bind events (om inte finns, logga och försök binda senare)
-  if (!createBtn) warn("Hittar ingen 'Skapa saga'-knapp. Kontrollera data-id eller knapptext.");
-  else createBtn.addEventListener("click", (e) => { e.preventDefault?.(); createStory(); });
-
-  if (!playBtn) warn("Hittar ingen 'Läs upp'-knapp. Kontrollera data-id eller knapptext.");
-  else playBtn.addEventListener("click", (e) => { e.preventDefault?.(); playTTS(); });
-
-  // Exponera globalt (för inline HTML eller andra moduler)
+  // Expose and bind
   window.createStory = createStory;
-  window.playTTS = playTTS;
-  window.playTTSResponse = playTTSResponse;
 
-  log("app.js laddad");
+  // Bind inline buttons if present
+  document.addEventListener('DOMContentLoaded', () => {
+    const b = qs('[data-id="btn-create"]');
+    if (b) b.addEventListener('click', (e)=>{ e.preventDefault(); createStory(); });
+
+    const useT = qs('#use-transcript');
+    const transcript = qs('#transcript');
+    const prompt = qs('#prompt');
+    if (useT && transcript && prompt) {
+      useT.addEventListener('click', ()=>{ prompt.value = transcript.value || prompt.value; });
+    }
+  });
+
 })();
