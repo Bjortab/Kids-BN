@@ -1,8 +1,4 @@
-// functions/api/generate_story.js
-// Proxy/adapter för frontend: POST -> /generate (Pages Function)
-// Denna implementation vidarebefordrar POST till interna /generate (som gör modell-anrop)
-// och returnerar alltid JSON med korrekta headers. Fallback till tydligt 502‑svar.
-
+/* functions/api/generate_story.js — proxy till /generate */
 export async function onRequest(context) {
   const { request } = context;
 
@@ -14,12 +10,10 @@ export async function onRequest(context) {
   };
 
   try {
-    // CORS preflight
     if (request.method === 'OPTIONS') {
       return new Response(null, { status: 204, headers: defaultHeaders });
     }
 
-    // Hjälpinfo för GET
     if (request.method === 'GET') {
       const info = {
         ok: true,
@@ -37,7 +31,6 @@ export async function onRequest(context) {
       });
     }
 
-    // Läs och tolka body
     const bodyText = await request.text();
     let payload = {};
     if (bodyText) {
@@ -53,7 +46,6 @@ export async function onRequest(context) {
       }
     }
 
-    // Forwarda till interna /generate (observera: route är /generate i ditt projekt)
     const target = new URL('/generate', request.url).toString();
     try {
       const forwardRes = await fetch(target, {
