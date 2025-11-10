@@ -1,12 +1,11 @@
 // public/app.js
 // Frontend glue for BN's Sagovärld (public folder).
-// - Hides age 1–6 when ENABLE_AGE_1_6=false
-// - Hooks Create saga -> existing /episodes/generate and then saves chapter to /api/chapter/save
-// - Exposes window.createStory and window.playTTS for inline binder in index.html
-// - Wires transcript use/clear and simple spinner/error UI
-// - Uses same-origin API (API_BASE = "")
-const API_BASE = "";
+// - Set API_BASE to your Worker URL (not the Pages URL) so POSTs hit the Worker.
+// Replace the placeholder below with your Worker URL, e.g.:
+// const API_BASE = "https://bn-worker.bjorta-bb.workers.dev";
+const API_BASE = "https://<REPLACE-WITH-YOUR-WORKER-URL>";
 
+// Helper shortcuts
 const $ = (sel) => document.querySelector(sel);
 const byId = (id) => document.getElementById(id);
 
@@ -14,7 +13,6 @@ const ENABLE_AGE_1_6 = false; // toggle client-side
 
 function uuidv4() {
   if (crypto && crypto.randomUUID) return crypto.randomUUID();
-  // fallback
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
     const r = Math.random()*16|0, v = c=='x' ? r : (r&0x3|0x8);
     return v.toString(16);
@@ -25,19 +23,16 @@ function hideAge1to6Options() {
   if (ENABLE_AGE_1_6) return;
   const sel = byId('age');
   if (!sel) return;
-  // Remove options matching 1..6 (text contains "1 år", "2 år", "3–4 år", "5–6 år")
   Array.from(sel.options).forEach(opt => {
     const t = (opt.text || '').toLowerCase().replace(/\s+/g,' ');
     if (/\b1 år\b|\b2 år\b|\b3|3–4|3-4|\b5-6\b|\b5–6\b|\b5 år\b|\b6 år\b/.test(t) || /(^|\b)(1|2|3|4|5|6)(\b|[^0-9])/.test(opt.value)) {
       try { opt.remove(); } catch(e) {}
     }
   });
-  // If the select left with nothing, hide it
   if (sel.options.length === 0) {
     const container = sel.closest('div') || sel.parentElement;
     if (container) container.style.display = 'none';
   } else {
-    // choose first option >=7 if present
     for (let i=0;i<sel.options.length;i++){
       const text = sel.options[i].text || sel.options[i].value;
       if (/\b7\b|\b8\b|\b9\b|\b10\b/.test(text)) { sel.selectedIndex = i; break; }
@@ -63,10 +58,7 @@ function setStoryText(text) {
   if (el) el.textContent = text || '';
 }
 
-/* Create story: generate via /episodes/generate (existing endpoint),
-   then save as chapter via /api/chapter/save (we create story_id locally if needed).
-   Exposed as window.createStory() for binder in index.html.
-*/
+/* Create story: generate via /episodes/generate, then save as chapter via /api/chapter/save */
 async function createStory() {
   showError('');
   const promptEl = document.querySelector('[data-id="prompt"]');
@@ -78,7 +70,6 @@ async function createStory() {
   const prompt = (promptEl && promptEl.value.trim()) || (transcriptEl && transcriptEl.value.trim());
   if (!prompt) { showError('Skriv en idé eller använd transkriptet innan du skapar saga.'); return; }
 
-  // map length select to minutes
   let mins = 5;
   const len = lengthSel?.value || '';
   if (len === 'short') mins = 2;
@@ -92,6 +83,7 @@ async function createStory() {
 
   try {
     showSpinner(true, 'Genererar berättelse…');
+    // IMPORTANT: POST goes to Worker. Ensure API_BASE points to your Worker.
     const r = await fetch(`${API_BASE}/episodes/generate`, {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
@@ -104,22 +96,17 @@ async function createStory() {
     const data = await r.json();
     const text = data.text || '';
     setStoryText(text);
-    // attach audio if returned (same origin base64)
+
     const audioEl = document.querySelector('[data-id="audio"]');
     if (data.audio && data.audio.base64 && data.audio.format && audioEl) {
       audioEl.src = `data:audio/${data.audio.format};base64,${data.audio.base64}`;
     }
 
-    // Save chapter to /api/chapter/save
-    // story_id persisted in localStorage for continuity across sessions
     let storyId = localStorage.getItem('bn_current_story');
-    if (!storyId) {
-      storyId = uuidv4();
-      localStorage.setItem('bn_current_story', storyId);
-    }
+    if (!storyId) { storyId = uuidv4(); localStorage.setItem('bn_current_story', storyId); }
     const title = (heroInput && heroInput.value.trim()) || prompt.split('\n')[0].slice(0,120) || 'Untitled';
     const payload = { story_id: storyId, title, chapter_index: 1, text };
-    // call save endpoint
+
     try {
       const saveR = await fetch(`${API_BASE}/api/chapter/save`, {
         method: 'POST',
@@ -128,13 +115,11 @@ async function createStory() {
       });
       const saveJ = await saveR.json().catch(()=>null);
       if (saveJ && saveJ.ok) {
-        // mark saved
         showSpinner(false);
         showError('');
         const statusEl = document.querySelector('[data-id="status"]');
         if (statusEl) statusEl.textContent = 'Berättelse skapad och sparad (kapitel 1).';
       } else {
-        // fallback: keep text in localStorage as draft
         localStorage.setItem(`bn_localchapter_${storyId}_ch1`, JSON.stringify({ title, text, created_at: new Date().toISOString() }));
         showSpinner(false);
         showError('Berättelsen genererades men kunde inte sparas på servern — sparad lokalt.');
@@ -153,7 +138,7 @@ async function createStory() {
   }
 }
 
-/* Play TTS: uses existing /api/tts/generate which returns MP3 (arraybuffer) */
+/* Play TTS via /api/tts/generate */
 async function playTTS() {
   const text = (document.querySelector('[data-id="story"]')?.textContent || '').trim();
   if (!text) { showError('Ingen berättelse att läsa upp'); return; }
@@ -173,10 +158,7 @@ async function playTTS() {
     const blob = new Blob([buf], { type: 'audio/mpeg' });
     const url = URL.createObjectURL(blob);
     const audioEl = document.querySelector('[data-id="audio"]');
-    if (audioEl) {
-      audioEl.src = url;
-      await audioEl.play().catch(()=>{/* ignore autoplay block */});
-    }
+    if (audioEl) { audioEl.src = url; await audioEl.play().catch(()=>{}); }
     showSpinner(false, 'Uppspelning klar');
   } catch (e) {
     showSpinner(false);
@@ -187,45 +169,29 @@ async function playTTS() {
   }
 }
 
-/* Transcript buttons */
+/* Transcript and recorder hooks */
 function hookTranscriptButtons() {
   const useBtn = document.getElementById('use-transcript');
   const clearBtn = document.getElementById('clear-transcript');
   const prompt = document.querySelector('[data-id="prompt"]');
   const transcript = document.getElementById('transcript');
   if (useBtn && transcript && prompt) {
-    useBtn.addEventListener('click', () => {
-      prompt.value = (transcript.value || '').trim();
-    });
+    useBtn.addEventListener('click', () => { prompt.value = (transcript.value || '').trim(); });
   }
-  if (clearBtn && transcript) {
-    clearBtn.addEventListener('click', () => { transcript.value = ''; });
-  }
+  if (clearBtn && transcript) { clearBtn.addEventListener('click', () => { transcript.value = ''; }); }
 }
 
-/* Recorder buttons: delegate to recorder.js if it exposes start/stop API.
-   recorder.js in this repo likely binds mic and writes to #transcript.
-   We just call exported functions if present, otherwise disable mic button.
-*/
 function hookRecorderControls() {
   const micBtn = byId('mic');
   const cancelBtn = byId('cancel');
   const recStatus = byId('rec-status');
-
-  // If a recorder controller exists on window, use it.
   const recorderAPI = window.RecorderAPI || window.recorder || null;
-  // fallback: check for global functions startRecording/stopRecording (some recorder.js implementations)
   const hasStart = !!(recorderAPI?.start || window.startRecording || window.recorderStart);
   if (!micBtn) return;
-  if (!hasStart) {
-    micBtn.setAttribute('disabled','disabled');
-    micBtn.textContent = 'Inspelning ej tillgänglig';
-    return;
-  }
+  if (!hasStart) { micBtn.setAttribute('disabled','disabled'); micBtn.textContent = 'Inspelning ej tillgänglig'; return; }
 
   micBtn.addEventListener('click', async () => {
     try {
-      // prefer recorderAPI.start/stop
       if (recorderAPI && recorderAPI.running) {
         await (recorderAPI.stop?.() || recorderAPI.stopRecording?.());
         micBtn.textContent = 'Starta inspelning';
@@ -237,20 +203,12 @@ function hookRecorderControls() {
         recStatus.textContent = 'Spelar in…';
         if (cancelBtn) cancelBtn.style.display = 'inline-block';
       }
-    } catch (err) {
-      console.warn('Recorder control error', err);
-      showError('Kunde inte starta inspelning: ' + (err.message || err));
-    }
+    } catch (err) { console.warn('Recorder control error', err); showError('Kunde inte starta inspelning: ' + (err.message || err)); }
   });
 
   if (cancelBtn) {
     cancelBtn.addEventListener('click', async () => {
-      try {
-        await (recorderAPI?.cancel?.() || recorderAPI?.stop?.() || window.stopRecording?.());
-        micBtn.textContent = 'Starta inspelning';
-        recStatus.textContent = 'Inaktiv';
-        cancelBtn.style.display = 'none';
-      } catch (e) { console.warn(e); }
+      try { await (recorderAPI?.cancel?.() || recorderAPI?.stop?.() || window.stopRecording?.()); micBtn.textContent = 'Starta inspelning'; recStatus.textContent = 'Inaktiv'; cancelBtn.style.display = 'none'; } catch (e) { console.warn(e); }
     });
   }
 }
@@ -261,19 +219,15 @@ window.addEventListener('DOMContentLoaded', () => {
   hookTranscriptButtons();
   hookRecorderControls();
 
-  // wire inline binder expectations
   window.createStory = createStory;
   window.playTTS = playTTS;
 
-  // attach UI buttons too
   const createBtn = document.querySelector('[data-id="btn-create"]');
   const ttsBtn = document.querySelector('[data-id="btn-tts"]');
   if (createBtn) createBtn.addEventListener('click', (e)=>{ e.preventDefault(); createStory(); });
   if (ttsBtn) ttsBtn.addEventListener('click', (e)=>{ e.preventDefault(); playTTS(); });
 
-  // status ping quietly (no flood)
   setTimeout(()=>{ fetch(`${API_BASE}/health`).catch(()=>{}); }, 300);
 
-  // small UX: clear previous messages
   showError('');
 });
