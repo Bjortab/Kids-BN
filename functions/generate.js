@@ -1,200 +1,145 @@
 // functions/generate.js
-// Uppdaterad promptinstruktioner för mer äventyr/spänning, särskilt för 11-12 år.
-// - Tillåter action/teknologi (laser‑svärd, kanoner) men förbjuder grafiskt våld.
-// - Kräver konkreta handlingar, eskalation, konsekvenser och ett "earned" eller öppet slut.
-// - Behåller ageMin/ageMax + length + legacy ageRange.
-// OBS: Behåll dina env: OPENAI_API_KEY, OPENAI_MAX_OUTPUT_TOKENS etc.
+// Pages Function: POST /api/generate
+// Åldersanpassad längd: 1-2 år => max 80-100 tecken (characters).
+// Byt inte namn på filen — Pages mappar functions/<name>.js -> /api/<name>
 
-export async function onRequest(context) {
-  const { request, env } = context;
-  const origin = request.headers.get('origin') || env.BN_ALLOWED_ORIGIN || '*';
-  const CORS = {
-    "Content-Type": "application/json;charset=utf-8",
-    "Access-Control-Allow-Origin": origin,
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type"
-  };
+export async function onRequestOptions({ env }) {
+  const origin = env.KIDSBN_ALLOWED_ORIGIN || '*';
+  return new Response(null, {
+    status: 204,
+    headers: {
+      'Access-Control-Allow-Origin': origin,
+      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+    }
+  });
+}
 
-  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
-
+export async function onRequestPost({ request, env }) {
+  const origin = env.KIDSBN_ALLOWED_ORIGIN || '*';
   try {
-    // Läs body (POST) eller query (GET)
-    let body = {};
-    if (request.method === 'POST') {
-      body = await request.json().catch(()=>({}));
-    } else {
-      const u = new URL(request.url);
-      body = Object.fromEntries(u.searchParams.entries());
-    }
+    const body = await request.json().catch(() => ({}));
+    const prompt = (body?.prompt || '').trim();
+    const kidName = (body?.kidName || body?.heroName || 'Vännen').trim();
+    const ageGroupRaw = (body?.ageGroup || body?.ageRange || '3-4 år').trim();
 
-    const prompt = (body.prompt || body?.idea || '').toString().trim();
-    if (!prompt) return new Response(JSON.stringify({ ok:false, error:'Missing prompt' }), { status:400, headers: CORS });
+    if (!prompt) return json({ error: 'Skriv vad sagan ska handla om.' }, 400, origin);
+    if (!env.OPENAI_API_KEY) return json({ error: 'OPENAI_API_KEY saknas.' }, 500, origin);
 
-    // ageMin/ageMax eller ageRange (legacy)
-    let ageMin = (body.ageMin !== undefined && body.ageMin !== '') ? Number(body.ageMin) : null;
-    let ageMax = (body.ageMax !== undefined && body.ageMax !== '') ? Number(body.ageMax) : null;
-    let lengthPref = body.length || body.lengthCategory || null; // 'short'|'medium'|'long' or null
-    let legacyAgeRange = body.ageRange || null;
+    const ageKey = normalizeAge(ageGroupRaw);
+    const { lengthInstruction, maxTokens } = getLengthInstructionAndTokens(ageKey);
 
-    if ((ageMin === null || Number.isNaN(ageMin)) && legacyAgeRange) {
-      const m = String(legacyAgeRange).trim().match(/^(\d+)\s*[-–]\s*(\d+)/);
-      if (m) { ageMin = Number(m[1]); ageMax = Number(m[2]); }
-      else {
-        const s = String(legacyAgeRange).trim().match(/^(\d+)$/);
-        if (s) { ageMin = Number(s[1]); ageMax = ageMin; }
-      }
-    }
-    if (ageMin !== null && (ageMax === null || Number.isNaN(ageMax))) ageMax = ageMin;
-    if (ageMin === null || Number.isNaN(ageMin) || ageMax === null || Number.isNaN(ageMax)) { ageMin = 3; ageMax = 4; }
-
-    // Map age+length -> lengthInstruction + token estimate (samma approach som förut)
-    function getLengthInstructionAndTokens(minAge, maxAge, lengthPref) {
-      let targetWords;
-      if (minAge <= 2) targetWords = 60;
-      else if (minAge <= 4) targetWords = 120;
-      else if (minAge <= 6) targetWords = 220;
-      else if (minAge <= 8) targetWords = 350;
-      else if (minAge <= 10) targetWords = 520;
-      else targetWords = 650;
-
-      if (lengthPref === 'short') targetWords = Math.max(40, Math.round(targetWords * 0.35));
-      else if (lengthPref === 'medium') targetWords = Math.round(targetWords * 0.9);
-      else if (lengthPref === 'long') targetWords = Math.round(Math.max(targetWords, targetWords * 1.6));
-
-      const estimatedTokens = Math.round(targetWords * 1.45);
-      let maxTokens = Math.min(24000, estimatedTokens + 500);
-      const envOverride = Number(env.OPENAI_MAX_OUTPUT_TOKENS || env.MAX_OUTPUT_TOKENS || env.OPENAI_MAX_TOKENS || 0);
-      if (envOverride && !Number.isNaN(envOverride) && envOverride > 0) maxTokens = Math.min(32000, envOverride);
-      const lengthInstruction = `Sikta på ungefär ${targetWords} ord.`;
-
-      return { lengthInstruction, maxTokens };
-    }
-
-    const { lengthInstruction, maxTokens } = getLengthInstructionAndTokens(ageMin, ageMax, lengthPref);
-
-    // Bygg en tydlig, detaljerad system prompt: särskild hantering för äldre barn
-    // Viktigt: inga grafiska beskrivningar av våld, MEN action/strider och teknologi är tillåtna.
-    // Krav: konkret handling, eskalation, konsekvens, inga klichéer, avsluta earned eller cliffhanger.
-    let sysParts = [
-      "Du är en skicklig sagoberättare på svenska. Skriv för barn/använd den ton som passar åldersintervallet.",
+    // Strikt system prompt: instruera modellen att endast returnera berättelsetext
+    const sys = [
+      "Du är en trygg och snäll sagoberättare för barn på svenska.",
       lengthInstruction,
-      `Ålder: ${ageMin}-${ageMax} år. Anpassa språk, rytm och komplexitet efter åldern.`,
-      "Fokusera på konkret handling och scenisk beskrivning: visa vad händer (handling), inte förklara (talar om känslor).",
-      "Bygg eskalation: skapa en tydlig konflikt, stegvis upptrappning och en konkret upplösning eller trovärdig öppen slut/cliffhanger.",
-      "När du skriver action/scener (t.ex. laser‑svärd, rymdfarkoster, kanoner), beskriv rörelse, ljud, ljus och konsekvens — men undvik grafiska detaljer eller blod.",
-      "Undvik platta, klichéartade slut (t.ex. 'allt löstes tack vare vänskap' eller 'och så levde de lyckliga'). Om vänskap är ett tema, låt det bidra praktiskt på ett trovärdigt sätt (t.ex. en hjälpsam idé eller handling), inte som magisk lösning.",
-      "Ge karaktärerna mål, misstag och konsekvenser — ett 'earned' slut eller ett öppet slut med konsekvens är bättre än en tom, lycklig avslutning.",
-      "Variera meningarnas längd; använd korta meningar i actionscener för rytm. Avsluta alltid på en hel mening; om modellen riskerar att avbrytas, prioritera att avsluta meningen.",
-      "Svara endast med själva berättelsetexten — inga rubriker, inga listor, inga metadata."
+      `Åldersgrupp: ${ageGroupRaw}. Anpassa språk och ton efter åldern.`,
+      `Barnets namn är ${kidName}. Inkludera namnet naturligt i berättelsen.`,
+      "VIKTIGT: Svara endast med själva berättelsetexten — inga rubriker, inga förklaringar, inga citationstecken. Bara berättelsen."
     ].join(' ');
 
-    // Extra för 11-12: stärk äventyrs/teknik‑tonen
-    if (ageMin >= 11) {
-      sysParts += " För 11–12-åringar: tona upp äventyrsaspekten: våga tekniska detaljer (laser‑svärd, riktiga taktiska beslut, rymdnavigering, begränsad teknologi‑terminologi), men håll språket begripligt och spännande. Scenerna kan innehålla strider och risk men inga grafiska skildringar av skada. Avslut ska visa konsekvens, pris eller möjlighet till utveckling — inte en platt moralisk försoning.";
-    }
-
-    const model = env.OPENAI_MODEL || env.DEFAULT_MODEL || 'gpt-4o-mini';
-    const OPENAI_KEY = env.OPENAI_API_KEY;
-    if (!OPENAI_KEY) return new Response(JSON.stringify({ ok:false, error:'OPENAI_API_KEY saknas' }), { status:500, headers: CORS });
-
-    const userContent = `Sagaidé: ${prompt}` + (body.heroName ? `\nHjälte: ${body.heroName}` : '');
-
-    const finalMaxTokens = Math.min(32000, Number(maxTokens || 1500));
     const payload = {
-      model,
+      model: env.OPENAI_MODEL || 'gpt-4o-mini',
+      temperature: 0.8,
       messages: [
-        { role: 'system', content: sysParts },
-        { role: 'user', content: userContent }
-      ],
-      temperature: Number(env.TEMPERATURE || 0.8),
-      max_tokens: finalMaxTokens
+        { role: 'system', content: sys },
+        { role: 'user', content: `Sagaidé: ${prompt}` }
+      ]
     };
+    if (maxTokens) payload.max_tokens = maxTokens;
 
-    async function callOpenAI(payload) {
-      const res = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${OPENAI_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      if (!res.ok) {
-        const t = await res.text().catch(()=>'' );
-        throw new Error(`Model error ${res.status}: ${t}`);
-      }
-      const j = await res.json().catch(()=>null);
-      return j;
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${env.OPENAI_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) {
+      const t = await res.text().catch(() => '');
+      return json({ error: 'OpenAI fel', details: t }, 502, origin);
     }
 
-    // Kör första anropet och hantera avklippning via continuation (som tidigare)
-    let genJson;
-    try { genJson = await callOpenAI(payload); } catch (err) { return new Response(JSON.stringify({ ok:false, error: String(err) }), { status:502, headers: CORS }); }
-
-    const choice = genJson?.choices?.[0] || null;
-    let storyText = choice?.message?.content?.trim() || '';
-    const finishReason = choice?.finish_reason || null;
-    let continued = false;
-
-    if (finishReason === 'length' || (storyText && !/[.!?]\s*$/.test(storyText) && (choice?.message?.content?.length || 0) > (finalMaxTokens * 0.5))) {
-      let retries = 0;
-      while (retries < 2 && (finishReason === 'length' || (storyText && !/[.!?]\s*$/.test(storyText)))) {
-        retries++;
-        continued = true;
-        const tail = storyText.slice(-400);
-        const contUser = `Fortsätt berättelsen där du slutade. Börja direkt med fortsättningen och avsluta på ett komplett, trovärdigt sätt. Kontext (sista delen): "${tail}"`;
-        const contPayload = {
-          model,
-          messages: [
-            { role: 'system', content: "Fortsätt berättelsen. Svara endast med berättelsetexten och undvik att upprepa exakt samma meningar." },
-            { role: 'user', content: contUser }
-          ],
-          temperature: Number(env.TEMPERATURE || 0.8),
-          max_tokens: Math.min(2000, Math.round(finalMaxTokens / 2))
-        };
-        try {
-          const contJson = await callOpenAI(contPayload);
-          const contChoice = contJson?.choices?.[0] || null;
-          const contText = contChoice?.message?.content?.trim() || '';
-          const contFinish = contChoice?.finish_reason || null;
-          if (contText) storyText += (storyText.endsWith('\n') ? '' : '\n') + contText;
-          if (contFinish !== 'length' && /[.!?]\s*$/.test(contText)) break;
-        } catch (e) {
-          console.warn('[generate] continuation failed', e);
-          break;
-        }
-      }
+    const data = await res.json();
+    const storyRaw = data?.choices?.[0]?.message?.content?.trim() || '';
+    // Server-side safety truncation for 1-2 year olds
+    if (ageKey === '1-2') {
+      const trimmed = trimToCharacters(storyRaw, 100);
+      return json({ story: trimmed }, 200, origin);
     }
-
-    // Save minimal to DB if available
-    let savedId = null;
-    try {
-      if (env.BN_DB) {
-        await env.BN_DB.prepare(`
-          CREATE TABLE IF NOT EXISTS stories (
-            id TEXT PRIMARY KEY,
-            prompt TEXT,
-            embedding TEXT,
-            story TEXT,
-            ageRange TEXT,
-            heroName TEXT,
-            created_by TEXT,
-            audio_key TEXT,
-            created_at INTEGER,
-            saved_flag INTEGER DEFAULT 0
-          )
-        `).run();
-
-        const id = (typeof crypto?.randomUUID === 'function') ? crypto.randomUUID() : ('id_' + Date.now());
-        const created_at = Date.now();
-        await env.BN_DB.prepare(`
-          INSERT INTO stories (id, prompt, story, ageRange, heroName, created_by, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).bind(id, prompt, storyText, `${ageMin}-${ageMax}`, body.heroName || '', '', created_at).run();
-        savedId = id;
-      }
-    } catch (e) { console.warn('[generate] save failed', e); }
-
-    return new Response(JSON.stringify({ ok:true, story: storyText, saved_id: savedId, continued, finish_reason: finishReason }), { status:200, headers: CORS });
-
-  } catch (err) {
-    return new Response(JSON.stringify({ ok:false, error: String(err) }), { status:500, headers: CORS });
+    return json({ story: storyRaw }, 200, origin);
+  } catch (e) {
+    return json({ error: e?.message || 'Serverfel' }, 500, env.KIDSBN_ALLOWED_ORIGIN || '*');
   }
+}
+
+function normalizeAge(raw) {
+  const s = (raw || '').toLowerCase();
+  if (s.includes('1-2') || s.includes('1–2') || s.includes('1 2') || s.includes('1-2 år')) return '1-2';
+  if (s.includes('3-4') || s.includes('3–4')) return '3-4';
+  if (s.includes('5-6') || s.includes('5–6')) return '5-6';
+  if (s.includes('7-8') || s.includes('7–8')) return '7-8';
+  if (s.includes('9-10') || s.includes('9–10')) return '9-10';
+  if (s.includes('11-12') || s.includes('11–12')) return '11-12';
+  return '3-4';
+}
+
+function getLengthInstructionAndTokens(ageKey) {
+  // Returnerar textinstruktion + rekommenderat max_tokens
+  switch (ageKey) {
+    case '1-2':
+      // Mycket kort: 80-100 tecken — vi begränsar modellen hårt med max_tokens ~ 60
+      return {
+        lengthInstruction: 'Skriv en mycket kort, enkel och konkret saga på svenska — MAX 100 TECKEN (characters). Endast enkla ord och korta meningar.',
+        maxTokens: 60
+      };
+    case '3-4':
+      return {
+        lengthInstruction: 'Skriv en kort saga på svenska, enkel men komplett — ungefär 120–180 ord. Använd korta meningar.',
+        maxTokens: 220
+      };
+    case '5-6':
+      return {
+        lengthInstruction: 'Skriv en saga för 5–6 år — ungefär 250–400 ord.',
+        maxTokens: 600
+      };
+    case '7-8':
+      return {
+        lengthInstruction: 'Skriv en saga för 7–8 år — ungefär 400–600 ord.',
+        maxTokens: 900
+      };
+    case '9-10':
+      return {
+        lengthInstruction: 'Skriv en saga för 9–10 år — ungefär 600–900 ord.',
+        maxTokens: 1400
+      };
+    case '11-12':
+      return {
+        lengthInstruction: 'Skriv en saga för 11–12 år — ungefär 900–1200 ord.',
+        maxTokens: 2000
+      };
+    default:
+      return {
+        lengthInstruction: 'Skriv en saga anpassad för barn — anpassa längd efter åldern.',
+        maxTokens: undefined
+      };
+  }
+}
+
+function trimToCharacters(text, maxChars) {
+  if (!text) return text;
+  if (text.length <= maxChars) return text;
+  const candidate = text.slice(0, maxChars);
+  const lastDot = candidate.lastIndexOf('.');
+  if (lastDot > Math.floor(maxChars * 0.5)) return candidate.slice(0, lastDot + 1);
+  return candidate.trim().slice(0, Math.max(0, maxChars - 1)) + '…';
+}
+
+function json(obj, status = 200, origin = '*') {
+  return new Response(JSON.stringify(obj), {
+    status,
+    headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': origin }
+  });
 }
