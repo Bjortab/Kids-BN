@@ -1,0 +1,114 @@
+ url=https://github.com/Bjortab/bn-demo/blob/8d8061d769669070a6526fac75feab212da70612/web/index.html
+<!doctype html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>BlushNarratives — Core</title>
+  <link rel="stylesheet" href="./styles.css" />
+  <style>
+    body { background:#111; color:#eee; font-family:system-ui, sans-serif; }
+    .row { margin: 10px 0; }
+    .btn { background:#e11; color:#fff; padding:8px 12px; border:0; border-radius:6px; cursor:pointer; }
+    .btn:disabled { opacity:.6; cursor:wait; }
+    .btn.gray { background:#444; }
+    #log { background:#000; color:#0f0; padding:10px; white-space:pre-wrap; height:180px; overflow:auto; border-radius:8px; }
+
+    #story { background:#1a1a1a; color:#eee; padding:12px; border-radius:8px; min-height:160px; white-space:pre-wrap; line-height:1.55; }
+    .chip { background:#222; padding:6px 8px; border-radius:6px; margin-right:8px; display:inline-block; }
+    .spinner { display:inline-block; min-width:28px; text-align:left; font-weight:700; }
+    audio { width:100%; }
+    textarea { width:100%; min-height:120px; background:#161616; color:#eee; border:1px solid #333; border-radius:8px; padding:8px; }
+    select, input[type="number"], input[type="text"] { background:#161616; color:#eee; border:1px solid #333; border-radius:6px; padding:6px; }
+    label { opacity:.9; }
+    .toolbar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+    .small { font-size:0.9rem; color:#9f9; }
+    .chapter-section { margin-top:16px; padding:12px; background:#0f0f0f; border-radius:8px; }
+  </style>
+</head>
+<body>
+  <main style="max-width:900px;margin:16px auto;">
+    <h1>BlushNarratives — Core</h1>
+
+    <div class="row">
+      <textarea id="prompt" placeholder="Skriv din prompt…"></textarea>
+    </div>
+
+    <div class="row toolbar">
+      <label class="chip">Nivå:
+        <select id="level">
+          <option value="1">1 — mild</option>
+          <option value="2">2 — lätt</option>
+          <option value="3" selected>3 — mellan</option>
+          <option value="4">4 — stark</option>
+          <option value="5">5 — explicit</option>
+        </select>
+      </label>
+
+      <label class="chip">Längd (min):
+        <input id="minutes" type="number" min="1" max="30" value="5" />
+      </label>
+
+      <label class="chip">Språk:
+        <select id="lang">
+          <option value="sv" selected>Svenska</option>
+          <option value="en">Engelska</option>
+        </select>
+      </label>
+
+      <label class="chip" style="display:flex;align-items:center;">
+        <input id="variant" type="checkbox" style="margin-right:6px" />
+        Variant (ändra *seed* för ny version)
+      </label>
+
+      <button id="status" class="btn gray">Status</button>
+      <button id="go" class="btn">
+        <span id="goText">Generera & lyssna</span>
+        <span id="spin" class="spinner"></span>
+      </button>
+    </div>
+
+    <div class="row">
+      <audio id="player" controls preload="none"></audio>
+    </div>
+
+    <div class="row">
+      <div id="story" placeholder="Genererad text visas här…"></div>
+    </div>
+
+    <div class="row">
+      <div id="log"></div>
+    </div>
+
+    <!-- Kapitelbok (7-15) section -->
+    <section id="chapterbook" class="chapter-section" aria-live="polite">
+      <h2>Kapitelbok (7–15)</h2>
+
+      <label style="display:block; margin-top:8px;">Titel för berättelsen
+        <input id="bkTitle" type="text" placeholder="Skriv titeln här" style="width:100%; margin-top:6px;" />
+      </label>
+
+      <label style="display:block; margin-top:8px;">Kapiteltext
+        <textarea id="chapterText" placeholder="Skriv eller använd Fortsätt..."></textarea>
+      </label>
+
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
+        <button id="btnSave" class="btn">Spara kapitel</button>
+        <button id="btnContinue" class="btn gray">Fortsätt (AI)</button>
+        <button id="btnList" class="btn gray">Lista kapitel</button>
+        <button id="btnSpeak" class="btn gray">Spela upp</button>
+        <button id="btnRecord" class="btn gray">Rösta in</button>
+        <select id="genMinutes" style="background:#161616; color:#eee; border-radius:6px;">
+          <option value="1">1 min</option><option value="3">3 min</option><option selected value="5">5 min</option>
+        </select>
+      </div>
+
+      <div id="chapterList" style="margin-top:12px;"></div>
+      <div id="chapterStatus" style="margin-top:8px; color:#7fbf7f;"></div>
+      <p class="small" style="margin-top:8px;">Autosave sparas lokalt var 10:e sekund. Innehåll sparas i D1 när servern är tillgänglig.</p>
+    </section>
+  </main>
+
+  <script src="./app.js"></script>
+</body>
+</html>
