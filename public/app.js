@@ -3,7 +3,7 @@
 // This version adds automatic fallback attempts for where the API is mounted.
 // It will try several likely endpoints when creating stories (to avoid 405 on Pages).
 // If none succeeds it shows a clear error asking you to set API_BASE to your Worker URL.
-const API_BASE = ""; // Leave empty to use same-origin; or set to full Worker URL e.g. "https://bn-worker.bjorta-bb.workers.dev"
+const API_BASE = "https://bn-worker.bjorta-bb.workers.dev"; // Leave empty to use same-origin; or set to full Worker URL e.g. "https://bn-worker.bjorta-bb.workers.dev"
 
 const $ = (sel) => document.querySelector(sel);
 const byId = (id) => document.getElementById(id);
