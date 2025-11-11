@@ -1,131 +1,156 @@
 // functions/api/tts.js
-// TTS endpoint med R2 cache + daglig limit (D1 metrics).
-// Denna version normaliserar text innan SHA‑256 nyckel tas, så små skillnader i whitespace/case
-// inte skapar nya cache-nycklar i onödan.
-// Klistra in som functions/api/tts.js (ersätt befintlig).
+// Robust TTS proxy with R2 cache + server-side retries.
+// Config via env:
+// - BN_AUDIO (R2 bucket binding)
+// - KIDSBN_ALLOWED_ORIGIN (CORS origin, fallback '*')
+// - TTS_ENDPOINT or VERTEX_ENDPOINT or ELEVENLABS_ENDPOINT (full URL to TTS provider)
+// - TTS_API_KEY (provider key, if needed)
 
 export async function onRequest(context) {
   const { request, env } = context;
-  const origin = request.headers.get('origin') || env.BN_ALLOWED_ORIGIN || '*';
+  const origin = env.KIDSBN_ALLOWED_ORIGIN || '*';
   const CORS = {
-    "Access-Control-Allow-Origin": origin,
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type"
+    'Access-Control-Allow-Origin': origin,
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization'
   };
 
-  if (request.method === 'OPTIONS') return new Response(null, { status:204, headers: CORS });
-  if (request.method !== 'POST') return new Response(JSON.stringify({ ok:false, error:'Use POST' }), { status:405, headers: Object.assign({ "Content-Type": "application/json;charset=utf-8" }, CORS) });
-
-  let body = {};
-  try { body = await request.json(); } catch(e){ body = {}; }
-  const text = (body.text || body.message || '').toString();
-  const voice = (body.voice || 'sv-SE-Wavenet-A').toString();
-  const userId = (body.userId || '').toString();
-
-  if (!text || !text.trim()) return new Response(JSON.stringify({ ok:false, error:'Missing text' }), { status:400, headers: Object.assign({ "Content-Type": "application/json;charset=utf-8" }, CORS) });
-
-  // Normalize text for stable key generation
-  function normalizeTextForKey(s) {
-    return String(s || '')
-      .replace(/\s+/g, ' ')   // collapse whitespace
-      .replace(/\r\n/g, '\n') // normalize newlines
-      .trim()
-      .toLowerCase();         // lowercase to avoid case-differences
-  }
-  const normalizedText = normalizeTextForKey(text);
-
-  // Deterministic key based on normalized text + voice
-  async function sha256hex(s) {
-    const enc = new TextEncoder();
-    const data = enc.encode(s);
-    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map(b => b.toString(16).padStart(2,'0')).join('');
+  if (request.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers: CORS });
   }
 
-  const keyInput = `${normalizedText}||${voice}`;
-  const hash = await sha256hex(keyInput);
-  const r2Key = `tts/${hash}.mp3`;
-
-  // Try R2 cached object first
-  if (env.BN_AUDIO) {
-    try {
-      const existing = await env.BN_AUDIO.get(r2Key);
-      if (existing) {
-        const ct = (existing && existing.httpMetadata && existing.httpMetadata.contentType) ? existing.httpMetadata.contentType : 'audio/mpeg';
-        const headers = Object.assign({
-          'Content-Type': ct,
-          'Cache-Control': 'public, max-age=31536000, immutable',
-          'X-Audio-Key': r2Key
-        }, CORS);
-        return new Response(existing.body, { status:200, headers });
-      }
-    } catch (e) {
-      console.warn('[tts] R2 get failed', e);
-    }
+  if (request.method !== 'POST') {
+    return new Response(JSON.stringify({ ok: false, error: 'Method not allowed' }), { status: 405, headers: Object.assign({ 'Content-Type': 'application/json' }, CORS) });
   }
-
-  // Check daily limit if configured
-  const DAILY_LIMIT = Number(env.DAILY_TTS_LIMIT || 500);
-  if (env.BN_DB) {
-    try {
-      await env.BN_DB.prepare(`
-        CREATE TABLE IF NOT EXISTS metrics (
-          k TEXT PRIMARY KEY,
-          v INTEGER
-        )
-      `).run();
-      const dayKey = 'tts_' + (new Date().toISOString().slice(0,10));
-      const r = await env.BN_DB.prepare(`SELECT v FROM metrics WHERE k = ?`).bind(dayKey).all();
-      const cur = (r && r.results && r.results[0] && r.results[0].v) ? Number(r.results[0].v) : 0;
-      if (cur >= DAILY_LIMIT) {
-        return new Response(JSON.stringify({ ok:false, error:'daily_tts_limit_exceeded' }), { status:429, headers: Object.assign({ "Content-Type": "application/json;charset=utf-8", "X-Cost-Warning": "1" }, CORS) });
-      }
-    } catch (e) { console.warn('[tts] metrics check failed', e); }
-  }
-
-  // Generate via Google TTS (or your provider)
-  const googleKey = env.GOOGLE_TTS_KEY || env.GOOGLE_TTS_API_KEY;
-  if (!googleKey) return new Response(JSON.stringify({ ok:false, error:'Missing GOOGLE_TTS_KEY' }), { status:500, headers: Object.assign({ "Content-Type": "application/json;charset=utf-8" }, CORS) });
 
   try {
-    const reqBody = { input: { text: normalizedText }, voice: { languageCode: 'sv-SE', name: voice }, audioConfig: { audioEncoding: 'MP3' } };
-    const resp = await fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${encodeURIComponent(googleKey)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(reqBody)
-    });
-    if (!resp.ok) {
-      const t = await resp.text().catch(()=>'');
-      return new Response(JSON.stringify({ ok:false, error:'Google TTS failed', details: t }), { status:502, headers: Object.assign({ "Content-Type": "application/json;charset=utf-8" }, CORS) });
+    // Read text in flexible formats
+    const ct = (request.headers.get('content-type') || '').toLowerCase();
+    let text = '';
+    if (ct.includes('application/json')) {
+      const body = await request.json().catch(()=>null);
+      text = body?.text || body?.message || '';
+    } else if (ct.includes('text/plain')) {
+      text = await request.text().catch(()=>'');
+    } else {
+      const form = await request.formData().catch(()=>null);
+      if (form) text = form.get('text') || form.get('message') || '';
+      if (!text) {
+        try { const u = new URL(request.url); text = u.searchParams.get('text') || ''; } catch(e){ }
+      }
+    }
+    text = (text || '').toString().trim();
+    if (!text) return new Response(JSON.stringify({ ok:false, error:'Missing text' }), { status:400, headers: Object.assign({ 'Content-Type':'application/json' }, CORS) });
+
+    // voice param
+    const bodyParsed = (ct.includes('application/json') ? (await request.json().catch(()=>({}))) : {});
+    const voice = bodyParsed?.voice || (new URL(request.url)).searchParams.get('voice') || 'default';
+
+    // Normalize text to build deterministic cache key
+    function normalize(s){ return (s||'').replace(/\s+/g,' ').trim().toLowerCase().slice(0,10000); }
+    const normalized = normalize(text + '|' + voice);
+
+    async function sha256hex(s){
+      const enc = new TextEncoder().encode(s);
+      const h = await crypto.subtle.digest('SHA-256', enc);
+      return Array.from(new Uint8Array(h)).map(b => b.toString(16).padStart(2,'0')).join('');
     }
 
-    const data = await resp.json().catch(()=>null);
-    const audioContent = data?.audioContent;
-    if (!audioContent) return new Response(JSON.stringify({ ok:false, error:'No audioContent' }), { status:502, headers: Object.assign({ "Content-Type": "application/json;charset=utf-8" }, CORS) });
+    const hash = await sha256hex(normalized);
+    const r2Key = `tts/${hash}.mp3`;
 
-    // decode base64
-    const binaryString = atob(audioContent);
-    const len = binaryString.length;
-    const arr = new Uint8Array(len);
-    for (let i=0;i<len;i++) arr[i] = binaryString.charCodeAt(i);
-
-    // store in R2 if available
+    // If R2 binding exists, try cached object first
     if (env.BN_AUDIO) {
-      try { await env.BN_AUDIO.put(r2Key, arr, { httpMetadata: { contentType: 'audio/mpeg' } }); } catch(e){ console.warn('[tts] R2 put failed', e); }
-    }
-
-    // increment metrics
-    if (env.BN_DB) {
       try {
-        const dayKey = 'tts_' + (new Date().toISOString().slice(0,10));
-        await env.BN_DB.prepare(`INSERT OR REPLACE INTO metrics (k, v) VALUES (?, COALESCE((SELECT v FROM metrics WHERE k = ?), 0) + 1)`).bind(dayKey, dayKey).run();
-      } catch(e){ console.warn('[tts] metrics increment failed', e); }
+        const existing = await env.BN_AUDIO.get(r2Key);
+        if (existing) {
+          const ct = (existing.httpMetadata && existing.httpMetadata.contentType) || 'audio/mpeg';
+          const headers = Object.assign({
+            'Content-Type': ct,
+            'Cache-Control': 'public, max-age=31536000, immutable'
+          }, CORS);
+          return new Response(existing.body, { status: 200, headers });
+        }
+      } catch (e) {
+        console.warn('[tts] R2 read error', e);
+        // fallthrough -> try generate
+      }
     }
 
-    const headers = Object.assign({ 'Content-Type': 'audio/mpeg', 'Cache-Control': 'public, max-age=31536000, immutable', 'X-Audio-Key': r2Key }, CORS);
-    return new Response(arr.buffer, { status:200, headers });
+    // Build provider URL and headers
+    const providerUrl = env.TTS_ENDPOINT || env.VERTEX_ENDPOINT || env.ELEVENLABS_ENDPOINT;
+    if (!providerUrl) {
+      return new Response(JSON.stringify({ ok:false, error:'No TTS provider configured (TTS_ENDPOINT missing)' }), { status:500, headers: Object.assign({ 'Content-Type':'application/json' }, CORS) });
+    }
+
+    const providerHeaders = {
+      'Content-Type': 'application/json',
+      'Authorization': env.TTS_API_KEY ? `Bearer ${env.TTS_API_KEY}` : (env.VERTEX_API_KEY ? `Bearer ${env.VERTEX_API_KEY}` : '')
+    };
+
+    // Server-side fetch with retries
+    async function fetchWithRetries(url, opts = {}, retries = 3, baseDelay = 300) {
+      for (let i=0;i<=retries;i++){
+        try {
+          const r = await fetch(url, opts);
+          if ([429,502,503,504].includes(r.status)) {
+            if (i === retries) return r;
+            await new Promise(res => setTimeout(res, baseDelay * Math.pow(2,i)));
+            continue;
+          }
+          return r;
+        } catch (err) {
+          if (i === retries) throw err;
+          await new Promise(res => setTimeout(res, baseDelay * Math.pow(2,i)));
+        }
+      }
+    }
+
+    // Prepare payload for provider — keep minimal; providers differ so allow raw pass-through via env
+    const providerPayload = {
+      text,
+      voice
+    };
+
+    // Call provider
+    const providerRes = await fetchWithRetries(providerUrl, {
+      method: 'POST',
+      headers: providerHeaders,
+      body: JSON.stringify(providerPayload)
+    }, 3, 400);
+
+    if (!providerRes || !providerRes.ok) {
+      const bodyText = await (providerRes ? providerRes.text().catch(()=>'(no body)') : Promise.resolve('(no response)'));
+      console.error('[tts] provider failed', providerRes ? providerRes.status : 'no-res', bodyText.slice ? bodyText.slice(0,200) : bodyText);
+      // Return concise error to client but include a short id (hash) to correlate logs
+      return new Response(JSON.stringify({ ok:false, error:'TTS upstream failed', status: providerRes ? providerRes.status : 'no-response', key: hash }), { status:502, headers: Object.assign({ 'Content-Type':'application/json' }, CORS) });
+    }
+
+    // Got audio — read bytes
+    const audioBuf = await providerRes.arrayBuffer();
+
+    // Store in R2 asynchronously (if binding exists)
+    if (env.BN_AUDIO) {
+      try {
+        // put with content-type
+        const contentType = providerRes.headers.get('Content-Type') || 'audio/mpeg';
+        await env.BN_AUDIO.put(r2Key, audioBuf, { httpMetadata: { contentType } });
+      } catch (e) {
+        console.warn('[tts] R2 write failed', e);
+        // continue; still return audio to client
+      }
+    }
+
+    // Return audio with cache headers
+    const headers = Object.assign({
+      'Content-Type': providerRes.headers.get('Content-Type') || 'audio/mpeg',
+      'Cache-Control': 'public, max-age=31536000, immutable'
+    }, CORS);
+
+    return new Response(audioBuf, { status: 200, headers });
+
   } catch (err) {
-    return new Response(JSON.stringify({ ok:false, error: String(err) }), { status:500, headers: Object.assign({ "Content-Type": "application/json;charset=utf-8" }, CORS) });
+    console.error('[tts] unexpected error', err);
+    return new Response(JSON.stringify({ ok:false, error:'Internal server error' }), { status:500, headers: Object.assign({ 'Content-Type':'application/json' }, CORS) });
   }
 }
