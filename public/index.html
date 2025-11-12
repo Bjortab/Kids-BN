@@ -1,155 +1,112 @@
 <!doctype html>
 <html lang="sv">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>BN’s Sagovärld</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BN's Sagovärld</title>
   <style>
-    body{background:#111;color:#eaeaea;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;margin:0}
-    .panel{max-width:880px;margin:28px auto;background:#1b1b1b;border:1px solid #2b2b2b;border-radius:12px;padding:20px 22px;box-shadow:0 0 1px #222}
-    .row{display:flex;gap:12px;flex-wrap:wrap;margin:8px 0}
-    .row > *{flex:1}
-    input,select,textarea,button{width:100%;font:inherit;border-radius:8px;border:1px solid #2b2b2b;background:#121212;color:#eaeaea;padding:10px;box-sizing:border-box}
-    textarea{min-height:110px}
-    button{cursor:pointer;border-color:#006d50;background:#005e43}
-    button[disabled]{opacity:.55;cursor:not-allowed}
-    .btn-primary{background:#006d50;border-color:#019a73;font-weight:600}
-    .btn-muted{background:#242424;border-color:#333}
-    .error{display:none;margin-top:8px;background:#300;border:1px solid #600;color:#f5c0c0;padding:10px;border-radius:8px;white-space:pre-wrap}
-    .spinner{display:none;gap:6px;align-items:center;margin-top:8px}
-    .dot{width:8px;height:8px;border-radius:50%;background:#9bd8c9;animation:blink 1s infinite ease-in-out}
-    .dot:nth-child(2){animation-delay:.2s}.dot:nth-child(3){animation-delay:.4s}
-    @keyframes blink{0%,80%,100%{opacity:.25}40%{opacity:1}}
-    pre{white-space:pre-wrap;line-height:1.5}
-    .muted { color:#9aa; font-size:13px }
-    .recorder-controls { display:flex; gap:8px; align-items:center; flex-wrap:wrap }
-    .recorder-status { color:#9aa; font-size:13px; margin-left:6px }
-    .secondary { background:#333; color:#ddd }
+    body {
+      background: #111;
+      color: #eee;
+      font-family: "Segoe UI", -apple-system, sans-serif;
+      margin: 0;
+      padding: 2em;
+    }
+    h1 {
+      text-align: center;
+      margin-bottom: 1em;
+    }
+    label {
+      display: block;
+      margin-top: 1em;
+      font-weight: bold;
+    }
+    input, select, textarea {
+      width: 100%;
+      padding: 0.6em;
+      border-radius: 4px;
+      border: 1px solid #333;
+      background: #222;
+      color: #fff;
+    }
+    button {
+      display: inline-block;
+      background: #146c43;
+      color: #fff;
+      border: none;
+      border-radius: 5px;
+      padding: 0.6em 1.2em;
+      margin-top: 1em;
+      margin-right: 0.5em;
+      cursor: pointer;
+      font-size: 1em;
+    }
+    button:hover { background: #198754; }
+    #error {
+      color: #ff6;
+      font-weight: bold;
+      margin-top: 1em;
+      min-height: 1.2em;
+    }
+    #story-text {
+      white-space: pre-wrap;
+      line-height: 1.5;
+      background: #181818;
+      border-radius: 5px;
+      padding: 1em;
+      margin-top: 1.5em;
+      min-height: 200px;
+    }
   </style>
 </head>
-
-<script>
-  // Inline binder: waits for public/app.js to expose createStory / playTTS
-  window.addEventListener('DOMContentLoaded', function () {
-    function byText(){const n=t=>t.toLowerCase();const btns=[...document.querySelectorAll('button,input[type=button],input[type=submit]')];
-      return (arr)=>btns.find(b=>arr.some(t=>(b.value||b.innerText||'').toLowerCase().includes(n(t))));}
-    const find = byText();
-
-    function bindButtons(){
-      try {
-        const c = find(['skapa saga','skapa & l\u00e4s upp','skapa']);
-        const p = find(['l\u00e4s upp','spela','testa r\u00f6st']);
-        if (c) c.onclick = (e)=>{ e.preventDefault?.(); if (window.createStory) return window.createStory(); console.warn('createStory saknas'); };
-        if (p) p.onclick = (e)=>{ e.preventDefault?.(); if (window.playTTS) return window.playTTS(); console.warn('playTTS saknas'); };
-        console.log('BN inline-binder attempted');
-      } catch (err) {
-        console.warn('BN binder error', err);
-      }
-    }
-
-    if (window.createStory && window.playTTS) {
-      bindButtons();
-    } else {
-      let tries = 0;
-      const iv = setInterval(()=>{
-        tries++;
-        if (window.createStory || window.playTTS) {
-          bindButtons();
-          clearInterval(iv);
-        } else if (tries > 20) {
-          bindButtons();
-          clearInterval(iv);
-        }
-      }, 100);
-    }
-  });
-</script>
-<!-- Extra (DEV) knapp – rör inte din befintliga -->
-<button id="btn-create-ws" type="button">Skapa saga (med world state)</button>
-
-<!-- Ladda tilläggen -->
-<script type="module" src="/public/worldstate.gc.js"></script>
-<script type="module" src="/public/app_ws.dev.js"></script>
 <body>
-  <div class="panel">
-    <h1>BN’s Sagovärld</h1>
-    <small class="muted">…där drömmar blir berättelser</small>
+  <h1>BN’s Sagovärld</h1>
 
-    <div class="row" style="margin-top:12px">
-      <div>
-        <label>Ålder</label>
-        <select data-id="age" id="age">
-          <option value="7-8 år">7–8 år</option>
-          <option value="9-10 år">9–10 år</option>
-          <option value="11-12 år">11–12 år</option>
-          <option value="13-15 år">13–15 år</option>
-        </select>
-      </div>
-      <div>
-        <label>Hjälte (valfritt)</label>
-        <input data-id="hero" id="hero" placeholder="t.ex. Taxen Tage, Draken Holger" />
-      </div>
-      <div style="min-width:150px;max-width:220px">
-        <label>Längd</label>
-        <select id="length" data-id="length">
-          <option value="short">Kort (≈2 min)</option>
-          <option value="medium" selected>Mellan (≈5 min)</option>
-          <option value="long">Lång (≈12 min)</option>
-        </select>
-      </div>
-    </div>
+  <label for="age">Ålder</label>
+  <select id="age">
+    <option>7–8 år</option>
+    <option>9–10 år</option>
+    <option>11–12 år</option>
+    <option>13–15 år</option>
+  </select>
 
-    <div class="row" style="margin-top:12px">
-      <div style="flex:1 1 100%">
-        <label>Sagoförslag (skriv eller tala in)</label>
-        <textarea data-id="prompt" id="prompt" placeholder="Skriv din idé här…"></textarea>
-      </div>
-    </div>
+  <label for="hero">Hjälte (valfritt)</label>
+  <input id="hero" placeholder="t.ex. Taxen Tage, Draken Holger">
 
-    <!-- Röst‑UI: inspelning + transkript -->
-    <div class="row" style="margin-top:12px">
-      <div style="flex:1 1 100%">
-        <div class="recorder-controls" aria-live="polite">
-          <button id="mic" type="button">Starta inspelning</button>
-          <button id="cancel" class="secondary" type="button" style="display:none">Avbryt</button>
-          <span id="rec-status" class="recorder-status">Inaktiv</span>
-        </div>
+  <label for="length">Längd</label>
+  <select id="length">
+    <option>Kort (≈2 min)</option>
+    <option selected>Mellan (≈5 min)</option>
+    <option>Lång (≈10 min)</option>
+  </select>
 
-        <div style="margin-top:10px;">
-          <label class="muted" for="transcript">Transkript (klara att använda som prompt)</label>
-          <textarea id="transcript" placeholder="Här kommer transkriptionen..." aria-label="Transkript"></textarea>
-        </div>
+  <label for="story-input">Sageförslag (skriv eller tala in)</label>
+  <textarea id="story-input" rows="3" placeholder="t.ex. Lotta hittar en magisk bok..."></textarea>
 
-        <div style="margin-top:8px; display:flex; gap:8px; align-items:center">
-          <button id="use-transcript" class="btn-muted" type="button">Använd som prompt</button>
-          <button id="clear-transcript" class="btn-muted secondary" type="button">Rensa</button>
-          <div style="flex:1"></div>
-          <div class="muted">Max inspelningstid: 60 sekunder</div>
-        </div>
-      </div>
-    </div>
-
-    <div class="row" style="margin-top:14px">
-      <button class="btn-primary" data-id="btn-create">Skapa saga</button>
-      <button class="btn-muted" data-id="btn-tts">Läs upp (om saga finns)</button>
-    </div>
-
-    <div class="spinner" data-id="spinner" aria-live="polite">
-      <div class="dot"></div><div class="dot"></div><div class="dot"></div>
-      <span data-id="status" style="margin-left:8px">Arbetar…</span>
-    </div>
-
-    <div class="error" data-id="error"></div>
-
-    <h3 style="margin-top:18px">Berättelse</h3>
-    <pre data-id="story"></pre>
-
-    <h3 style="margin-top:12px">Uppläsning</h3>
-    <audio data-id="audio" controls preload="none" style="width:100%"></audio>
+  <!-- Knappsektionen -->
+  <div class="buttons">
+    <button id="btn-record" type="button">🎙️ Starta inspelning</button>
+    <button id="btn-prompt" type="button">Använd som prompt</button>
+    <button id="btn-clear" type="button">Rensa</button>
+    <button id="btn-create" type="button">Skapa saga</button>
+    <button id="btn-play" type="button">Läs upp (om saga finns)</button>
+    <!-- 🟢 Ny world state-knapp -->
+    <button id="btn-create-ws" type="button">Skapa saga (med world state)</button>
   </div>
 
-  <!-- Ladda recorder klienten först (om du har den), sedan public/app.js -->
-  <script src="/recorder.js"></script>
-  <script src="/app.js"></script>
+  <div id="error"></div>
+  <div id="story-text" data-id="story"></div>
+
+  <h3>Uppläsning</h3>
+  <audio id="audio-player" controls></audio>
+
+  <!-- 📜 Ordningen här är viktig: dina existerande skript först -->
+  <script src="/public/app.js"></script>
+  <script src="/public/recorder.js"></script>
+
+  <!-- 🧩 World state-moduler (GC + DEV) -->
+  <script type="module" src="/public/worldstate.gc.js"></script>
+  <script type="module" src="/public/worldstate.dev.js"></script>
+  <script type="module" src="/public/app_ws.dev.js"></script>
 </body>
 </html>
