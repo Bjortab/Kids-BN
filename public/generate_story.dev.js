@@ -9,7 +9,7 @@ export async function generateStory(userPrompt) {
   const ws = getWorldState();
   const body = {
     prompt: userPrompt,
-    world_state: ws,
+    world_state: getWorldState(),
     world_summary: summarizeWorldState(ws)
   };
 
