@@ -1,95 +1,97 @@
-/* functions/api/generate_story.js — proxy till /generate */
-export async function onRequest(context) {
-  const { request } = context;
+// functions/api/generate_story.js
+// === GC v1.0 — använder world_state och kräver JSON-svar från modellen ===
 
-  const defaultHeaders = {
-    'Content-Type': 'application/json;charset=utf-8',
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type'
-  };
-
-  try {
-    if (request.method === 'OPTIONS') {
-      return new Response(null, { status: 204, headers: defaultHeaders });
-    }
-
-    if (request.method === 'GET') {
-      const info = {
-        ok: true,
-        message: 'generate_story endpoint — använd POST med JSON body: { ageRange, heroName, prompt }',
-        path: '/api/generate_story',
-        note: 'This endpoint proxies the request to /generate which performs the model call.'
-      };
-      return new Response(JSON.stringify(info), { status: 200, headers: defaultHeaders });
-    }
-
-    if (request.method !== 'POST') {
-      return new Response(JSON.stringify({ ok: false, error: `Unsupported method ${request.method}` }), {
-        status: 405,
-        headers: defaultHeaders
-      });
-    }
-
-    const bodyText = await request.text();
-    let payload = {};
-    if (bodyText) {
-      try {
-        payload = JSON.parse(bodyText);
-      } catch (err) {
-        try {
-          const params = new URLSearchParams(bodyText);
-          for (const [k, v] of params) payload[k] = v;
-        } catch (e) {
-          payload = {};
-        }
-      }
-    }
-
-    const target = new URL('/generate', request.url).toString();
+export default {
+  async fetch(req, env) {
     try {
-      const forwardRes = await fetch(target, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
+      const { prompt, world_state, world_summary } = await req.json();
 
-      const text = await forwardRes.text().catch(() => '');
+      const system = `
+Du är en svensk barnboksförfattare för åldern 7–15. Skriv ett kapitel (ca 300–600 ord).
+FÖLJ OBLIGATORISKT:
+1) Kausalitet: inga hopp i tid/plats utan övergång. Förklara orsaker innan effekter.
+2) Konsekvent värld: behåll namn, mål, plats, tid på dygnet enligt world_state.
+3) Inga “floskel-slut” (t.ex. “bring ljus till mörkret”). Avsluta konkret i scenen.
+4) Undvik passiva plattityder; visa handlingar och detaljerade konsekvenser.
+5) Språk: klar, varierad men enkel svenska (7–15).
+6) Absolut inga nya krafter/förmågor utan naturlig foreshadowing.
 
-      if (!forwardRes.ok) {
-        return new Response(text || JSON.stringify({ ok: false, error: `Upstream failed with ${forwardRes.status}` }), {
-          status: 502,
-          headers: defaultHeaders
-        });
-      }
+World state (sammanfattning):
+${world_summary}
 
-      try {
-        const parsed = JSON.parse(text || '{}');
-        return new Response(JSON.stringify(parsed), { status: 200, headers: defaultHeaders });
-      } catch (e) {
-        return new Response(JSON.stringify({ ok: true, story: String(text || '') }), {
-          status: 200,
-          headers: defaultHeaders
-        });
-      }
-    } catch (forwardErr) {
-      console.error('[generate_story] forward error', forwardErr);
-      const word = "berättelseord";
-      const fallback = Array(120).fill(word).join(' ');
-      const result = {
-        ok: false,
-        error: 'Upstream generate call failed',
-        upstreamError: String(forwardErr),
-        note: 'Detta är en fallback placeholder. Åtgärda upstream /generate för riktiga berättelser.',
-        story: fallback
-      };
-      return new Response(JSON.stringify(result), { status: 502, headers: defaultHeaders });
-    }
-  } catch (err) {
-    const errBody = { ok: false, error: String(err), stack: err?.stack?.split('\n')?.slice(0,5) };
-    return new Response(JSON.stringify(errBody), {
-      status: 500,
-      headers: defaultHeaders
-    });
+Om något i användarens prompt strider mot world_state, justera försiktigt men behåll kontinuitet.
+Returnera EXAKT detta JSON-schema, inget annat:
+{
+  "story_text": "själva kapitlet som plain text",
+  "world_state_next": {
+    "protagonists": ["..."],
+    "location": "...",
+    "timeOfDay": "...",
+    "goal": "...",
+    "constraints": { "noSuddenPowers": true, "consistentNames": true, "groundedPhysics": true, "noGenericMoralEnd": true },
+    "recap": "1–2 meningar som summerar detta kapitels viktiga förändring"
   }
 }
+      `.trim();
+
+      // === OpenAI (exempel) ===
+      const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: "gpt-4o-mini",
+          temperature: 0.7,
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: prompt || "" },
+            // ge modellen world_state som “assistant context” för att öka tyngden
+            { role: "assistant", content: `World state JSON: ${JSON.stringify(world_state || {}, null, 2)}` }
+          ]
+        })
+      });
+
+      if (!resp.ok) {
+        const t = await resp.text().catch(() => "");
+        return json({ ok:false, error:"Model error", detail:t.slice(0,800) }, 502);
+      }
+
+      const data = await resp.json();
+      const raw = data?.choices?.[0]?.message?.content || "";
+      // Förväntar oss ren JSON – försök parsa robust
+      const safe = tryParseJSON(raw);
+      if (!safe || !safe.story_text) {
+        // fallback: om modellen råkade svara text, wrappa den
+        return json({
+          ok:true,
+          data:{
+            story_text: typeof raw === "string" ? raw : "Berättelse saknas.",
+            world_state_next: world_state || {}
+          }
+        }, 200);
+      }
+
+      // Mergar constraints från inkommande state om modellen skulle tappa dem
+      if (safe.world_state_next && world_state?.constraints) {
+        safe.world_state_next.constraints = { ...world_state.constraints, ...(safe.world_state_next.constraints||{}) };
+      }
+
+      return json({ ok:true, data: safe }, 200);
+
+    } catch (e) {
+      return json({ ok:false, error:"Server error", detail:String(e) }, 500);
+    }
+
+    function json(obj, status=200) {
+      return new Response(JSON.stringify(obj), {
+        status,
+        headers: { "Content-Type":"application/json", "Access-Control-Allow-Origin":"*" }
+      });
+    }
+    function tryParseJSON(s) {
+      try { return JSON.parse(s); } catch { return null; }
+    }
+  }
+};
