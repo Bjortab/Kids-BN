@@ -1,4 +1,4 @@
-<!doctype html>
+!doctype html>
 <html lang="sv">
 <head>
   <meta charset="utf-8" />
@@ -29,7 +29,7 @@
 </head>
 
 <script>
-  // Inline binder: waits for public/app.js to expose createStory / playTTS
+  // Robust inline binder: waits for app.js to expose window.createStory / window.playTTS
   window.addEventListener('DOMContentLoaded', function () {
     function byText(){const n=t=>t.toLowerCase();const btns=[...document.querySelectorAll('button,input[type=button],input[type=submit]')];
       return (arr)=>btns.find(b=>arr.some(t=>(b.value||b.innerText||'').toLowerCase().includes(n(t))));}
@@ -64,12 +64,7 @@
     }
   });
 </script>
-<!-- Extra (DEV) knapp – rör inte din befintliga -->
-<button id="btn-create-ws" type="button">Skapa saga (med world state)</button>
 
-<!-- Ladda tilläggen -->
-<script type="module" src="/public/worldstate.gc.js"></script>
-<script type="module" src="/public/app_ws.dev.js"></script>
 <body>
   <div class="panel">
     <h1>BN’s Sagovärld</h1>
@@ -79,23 +74,17 @@
       <div>
         <label>Ålder</label>
         <select data-id="age" id="age">
+          <option value="1-2 år">1–2 år</option>
+          <option value="3-4 år">3–4 år</option>
+          <option value="5-6 år">5–6 år</option>
           <option value="7-8 år">7–8 år</option>
           <option value="9-10 år">9–10 år</option>
           <option value="11-12 år">11–12 år</option>
-          <option value="13-15 år">13–15 år</option>
         </select>
       </div>
       <div>
         <label>Hjälte (valfritt)</label>
         <input data-id="hero" id="hero" placeholder="t.ex. Taxen Tage, Draken Holger" />
-      </div>
-      <div style="min-width:150px;max-width:220px">
-        <label>Längd</label>
-        <select id="length" data-id="length">
-          <option value="short">Kort (≈2 min)</option>
-          <option value="medium" selected>Mellan (≈5 min)</option>
-          <option value="long">Lång (≈12 min)</option>
-        </select>
       </div>
     </div>
 
@@ -148,7 +137,7 @@
     <audio data-id="audio" controls preload="none" style="width:100%"></audio>
   </div>
 
-  <!-- Ladda recorder klienten först (om du har den), sedan public/app.js -->
+  <!-- Ladda recorder klienten först, sedan app.js -->
   <script src="/recorder.js"></script>
   <script src="/app.js"></script>
 </body>
