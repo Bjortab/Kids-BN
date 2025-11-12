@@ -101,12 +101,12 @@
   <audio id="audio-player" controls></audio>
 
   <!-- 📜 Ordningen här är viktig: dina existerande skript först -->
-  <script src="/app.js"></script>
-  <script src="/recorder.js"></script>
+  <script src="/public/app.js"></script>
+  <script src="/public/recorder.js"></script>
 
   <!-- 🧩 World state-moduler (GC + DEV) -->
-  <script src="/worldstate.gc.js"></script>
-  <script src="/worldstate.dev.js"></script>
-  <script src="/app_ws.dev.js"></script>
+  <script type="module" src="/public/worldstate.gc.js"></script>
+  <script type="module" src="/public/worldstate.dev.js"></script>
+  <script type="module" src="/public/app_ws.dev.js"></script>
 </body>
 </html>
