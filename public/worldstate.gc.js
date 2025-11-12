@@ -1,53 +1,62 @@
-// === GOLDEN COPY v1.0 — World State Manager (GC) ===
-// ÄNDRA EJ DIREKT — testa i worldstate.dev.js först
+// public/worldstate.gc.js
+// === GC v1.0 — BN-Kids World State (frontend) ===
+// Lagrar världen i localStorage så sagor kan fortsätta med kausalitet.
 
-const WORLD_STATE_KEY = "bn_world_state_v1";
+const WS_KEY = 'bn.world.v1';
+
+const DEFAULT_WS = {
+  protagonists: [],       // ["Frans", "Vimnen"]
+  location: "",           // "Grönskogen", "det gamla tornet"
+  timeOfDay: "",          // "morgon", "kväll"
+  goal: "",               // hjältemål: "rädda vännen", "finna boken"
+  constraints: {          // hårda regler för världen
+    noSuddenPowers: true,
+    consistentNames: true,
+    groundedPhysics: true,
+    noGenericMoralEnd: true
+  },
+  recap: ""               // kort recap från senaste kapitlet
+};
 
 export function getWorldState() {
   try {
-    const raw = localStorage.getItem(WORLD_STATE_KEY);
-    return raw ? JSON.parse(raw) : defaultWorldState();
+    const raw = localStorage.getItem(WS_KEY);
+    return raw ? { ...DEFAULT_WS, ...JSON.parse(raw) } : { ...DEFAULT_WS };
   } catch {
-    return defaultWorldState();
+    return { ...DEFAULT_WS };
   }
 }
 
 export function setWorldState(ws) {
-  localStorage.setItem(WORLD_STATE_KEY, JSON.stringify(ws));
+  try { localStorage.setItem(WS_KEY, JSON.stringify(ws)); } catch {}
 }
 
 export function updateWorldState(patch = {}) {
-  const merged = { ...getWorldState(), ...patch };
-  setWorldState(merged);
-  return merged;
+  const current = getWorldState();
+  const next = structuredClone(current);
+  // enkel merge (1 nivå räcker här)
+  for (const k of Object.keys(patch)) {
+    if (typeof patch[k] === 'object' && patch[k] !== null && !Array.isArray(patch[k])) {
+      next[k] = { ...(current[k] || {}), ...patch[k] };
+    } else {
+      next[k] = patch[k];
+    }
+  }
+  setWorldState(next);
+  return next;
 }
 
 export function resetWorldState() {
-  setWorldState(defaultWorldState());
+  setWorldState({ ...DEFAULT_WS });
   return getWorldState();
 }
 
+// KORT sammanfattning att skicka till modellen (billigt + styrande)
 export function summarizeWorldState(ws = getWorldState()) {
-  // Kort sammanfattning för prompt/kapitel-kontinuitet
-  const parts = [];
-  if (ws.place) parts.push(`plats: ${ws.place}`);
-  if (ws.season) parts.push(`årstid: ${ws.season}`);
-  if (ws.weather) parts.push(`väder: ${ws.weather}`);
-  if (ws.characters?.length) parts.push(`karaktärer: ${ws.characters.join(", ")}`);
-  if (ws.inventory?.length) parts.push(`föremål: ${ws.inventory.join(", ")}`);
-  if (ws.forbidden?.length) parts.push(`förbjudet: ${ws.forbidden.join(", ")}`);
-  if (ws.open_threads?.length) parts.push(`öppna trådar: ${ws.open_threads.join("; ")}`);
-  return parts.join(" | ");
-}
-
-function defaultWorldState() {
-  return {
-    place: "Grönskogen",
-    season: "vår",
-    weather: "fuktigt",
-    characters: [],
-    inventory: [],
-    forbidden: ["magi", "eld utan orsak"],
-    open_threads: []
-  };
+  const names = (ws.protagonists || []).join(", ") || "okänd hjälte";
+  const loc = ws.location || "okänd plats";
+  const tod = ws.timeOfDay || "okänd tid";
+  const goal = ws.goal || "okänt mål";
+  const recap = ws.recap || "Ingen tidigare recap.";
+  return `Hjälte(r): ${names}. Plats: ${loc}. Tid: ${tod}. Mål: ${goal}. Senast: ${recap}. Regler: inga plötsliga nya krafter, konsekvent namngivning, fysik ska hålla (magin får regler), undvik generiska moralslut.`;
 }
