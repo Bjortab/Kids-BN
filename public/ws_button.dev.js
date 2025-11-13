@@ -1,7 +1,7 @@
 // public/ws_button.dev.js
-// BN-Kids WS dev-spår v2 — frikopplad från app.js createstory.
-// - Lägger till en extra knapp bredvid "Skapa saga".
-// - Knappen bygger en world state-sammanfattning + din prompt.
+// BN-Kids WS dev-spår v3 — frikopplad från app.js createstory.
+// - Extra knapp bredvid "Skapa saga".
+// - Bygger world state + barnets önskan till en tydlig prompt.
 // - Anropar /api/generate_story direkt och skriver till [data-id="story"].
 
 (function () {
@@ -28,20 +28,29 @@
   }
 
   function buildSummary(ws, ui) {
-    const hero   = (ui.hero || '').trim()   || 'hjälten';
+    const heroRaw = (ui.hero || '').trim();
+    const hero = heroRaw || 'hjälten';
     const age    = (ui.age || '').trim()    || 'okänd ålder';
     const length = (ui.length || '').trim() || 'okänd längd';
     const recap  = (ws.recap || '').trim()  || 'Ingen tidigare berättelse eller recap ännu.';
 
-    return `Världssammanfattning:
-- Hjälte: ${hero}
+    return {
+      hero,
+      text: `Världssammanfattning:
+- Huvudperson: ${hero}
 - Ålder / nivå: ${age}
-- Önskad längd: ${length}
+- Önskad berättelselängd: ${length}
 - Senaste händelser: ${recap}
-Regler: inga plötsliga nya förmågor utan förklaring, konsekventa namn och platser, fysik/magi ska ha tydliga regler, undvik klyschiga moralslut.`;
+Regler för berättelsen:
+- Huvudpersonen SKA heta "${hero}" genom hela berättelsen.
+- Återanvänd platser och personer från recap om det är rimligt.
+- Inga plötsliga nya krafter eller fakta som motsäger recap.
+- Skriv på tydlig svenska för barn, utan onödiga klyschor.
+- Avsluta berättelsen med ett tydligt, lugnt slut (ingen cliffhanger).`
+    };
   }
 
-  // Egen variant av lengthToMinutes (kopierad logik från app.js)
+  // Egen variant av lengthToMinutes (samma logik som app.js)
   function lengthToMinutesVal(val) {
     const len = (val || '').trim();
     if (!len) return 5;
@@ -114,21 +123,31 @@ Regler: inga plötsliga nya förmågor utan förklaring, konsekventa namn och pl
       };
 
       const ws = loadWS();
-      const basePrompt = promptEl.value || '';
-      const summary = buildSummary(ws, ui);
+      const basePrompt = (promptEl.value || '').trim();
+      const summaryObj = buildSummary(ws, ui);
+      const heroName = summaryObj.hero;
 
-      const combinedPrompt = `${summary}
+      const combinedPrompt = `
+Du är en berättare som skriver en sammanhängande barnsaga på svenska för åldersgruppen ${ui.age || ui.ageValue || '7–8 år'}.
+Huvudpersonen ska alltid heta "${heroName}" genom hela berättelsen.
 
-Berättelseönskan från barnet:
-${basePrompt}`.trim();
+Följ världssammanfattningen noggrant, bryt inte mot tidigare fakta och se till att:
+- namnet "${heroName}" används konsekvent
+- berättelsen får ett tydligt, tryggt slut (ingen cliffhanger)
+- tonen passar barn i åldern ${ui.age || ui.ageValue || '7–8 år'}
+
+${summaryObj.text}
+
+Barnets önskan med sagan:
+${basePrompt || '(ingen extra önskan angiven)'}`.trim();
 
       const mins = lengthToMinutesVal(ui.lengthValue);
       const body = {
         mins,
         lang: 'sv',
         prompt: combinedPrompt,
-        agename: ui.age,
-        hero: ui.hero
+        agename: ui.age || ui.ageValue || '',
+        hero: heroName
       };
 
       try {
