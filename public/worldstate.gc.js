@@ -1,10 +1,9 @@
 // ==========================================================
-// BN-KIDS WS DEV — worldstate.dev.js (v2)
+// BN-KIDS WS DEV — worldstate.dev.js (v2.1)
 // Lokal "bok" i localStorage, kapitel för kapitel
 // ==========================================================
 
 (function () {
-
   const STORAGE_KEY = "bn_kids_ws_book_v1";
 
   // -------------------------------------------------------
@@ -36,7 +35,7 @@
   // -------------------------------------------------------
   // Skapa nytt world-state från UI-formuläret
   // (Använder dina faktiska id:n: age, hero, length, prompt)
-// -------------------------------------------------------
+  // -------------------------------------------------------
   function createWorldFromForm() {
     const ageSel    = document.getElementById("age");
     const heroInput = document.getElementById("hero");
@@ -47,7 +46,14 @@
     const ageText    = (ageSel && ageSel.selectedOptions && ageSel.selectedOptions[0])
       ? ageSel.selectedOptions[0].textContent.trim()
       : "";
-    const hero       = heroInput && heroInput.value ? heroInput.value.trim() : "";
+
+    // Robust hjälte-hantering – så vi ALDRIG kraschar på hero
+    let hero = "";
+    if (heroInput && typeof heroInput.value === "string") {
+      hero = heroInput.value.trim();
+    }
+    if (!hero) hero = "hjälten";
+
     const lengthVal  = lengthSel && lengthSel.value ? lengthSel.value : "";
     const lengthText = (lengthSel && lengthSel.selectedOptions && lengthSel.selectedOptions[0])
       ? lengthSel.selectedOptions[0].textContent.trim()
@@ -56,9 +62,9 @@
 
     return {
       meta: {
-        ageValue: ageValue,
-        ageLabel: ageText,
-        hero: hero,
+        ageValue:   ageValue,
+        ageLabel:   ageText,
+        hero:       hero,
         lengthValue: lengthVal,
         lengthLabel: lengthText
       },
@@ -84,7 +90,7 @@
   // -------------------------------------------------------
   // Bygg WS-prompt baserat på tidigare kapitel
   // (enkel recap-version – vi kan göra den smartare sen)
-// -------------------------------------------------------
+  // -------------------------------------------------------
   function buildWsPrompt(state) {
     if (!state) return "";
 
@@ -125,7 +131,7 @@ Skriv nu KAPITEL ${nextChapter}.
   }
 
   // -------------------------------------------------------
-  // Exportera globalt
+  // Exportera globalt (dev namespace)
   // -------------------------------------------------------
   window.WS_DEV = {
     load: loadWS,
@@ -135,5 +141,4 @@ Skriv nu KAPITEL ${nextChapter}.
     buildWsPrompt,
     reset: resetWS
   };
-
 })();
