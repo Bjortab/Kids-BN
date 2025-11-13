@@ -1,136 +1,123 @@
-// ============================================================
-// BN-KIDS WS DEV — ws_button.dev.js (v2)
+// ==========================================================
+// BN-KIDS WS DEV — ws_button.dev.js (v2.1)
 // Extra blå knapp: "Skapa saga (WS dev)"
-// Kör separat från din vanliga "Skapa saga"
-// ============================================================
+// Återanvänder befintlig createstory()-logik + TTS
+// ==========================================================
 
 (function () {
-
-  function $(s) { return document.querySelector(s); }
-
-  function showSpinner(active, text) {
-    const spinner = document.querySelector("[data-id='spinner']");
-    if (spinner) {
-      spinner.style.display = active ? "flex" : "none";
-      spinner.textContent = active ? (text || "Skapar kapitel (WS dev)...") : "";
-      return;
-    }
-    // fallback – skriv i story-rutan
-    const out = $("[data-id='story']");
-    if (!out) return;
-    if (active) {
-      out.innerHTML = "<p style='opacity:0.6'>⏳ " + (text || "Skapar kapitel (WS dev)...") + "</p>";
-    }
+  function log() {
+    console.log.apply(console, ["[WS DEV]"].concat([].slice.call(arguments)));
   }
 
-  async function createWSChapter() {
-    const errEl   = $("[data-id='error']");
-    const storyEl = $("[data-id='story']");
+  function q(sel) {
+    try { return document.querySelector(sel); } catch (e) { return null; }
+  }
 
-    try {
-      if (!window.WS_DEV) {
-        throw new Error("WS_DEV saknas (worldstate.dev.js inte laddad?)");
-      }
+  function getPromptTextarea() {
+    return q("[data-id='prompt']") || document.getElementById("prompt") || q("textarea");
+  }
 
-      // 1. Ladda befintlig bok eller skapa ny
-      let state = window.WS_DEV.load();
-      if (!state) {
-        state = window.WS_DEV.createWorldFromForm();
-        if (!state) throw new Error("Kunde inte skapa world state från formuläret.");
-      }
+  function getStoryElement() {
+    return q("[data-id='story']") || document.getElementById("story-output") || document.getElementById("story");
+  }
 
-      // 2. Bygg prompt baserat på WS
-      const wsPrompt = window.WS_DEV.buildWsPrompt(state);
-      if (!wsPrompt) throw new Error("WS prompt blev tom.");
-
-      showSpinner(true, "Skapar kapitel (WS dev)...");
-
-      const ageValue = state.meta && state.meta.ageValue ? state.meta.ageValue : "";
-      const heroName = state.meta && state.meta.hero ? state.meta.hero : "";
-
-      const body = {
-        age: ageValue,
-        mins: 5,
-        lang: "sv",
-        prompt: wsPrompt,
-        hero: heroName
-      };
-
-      // 3. Anropa din befintliga backend
-      const res = await fetch("/api/generate_story", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Accept": "application/json" },
-        body: JSON.stringify(body)
-      });
-
-      const text = await res.text();
-      let data;
-      try {
-        data = JSON.parse(text);
-      } catch (e) {
-        console.warn("[WS] ogiltigt JSON-svar:", text.slice(0, 200));
-        throw new Error("WS: ogiltigt JSON-svar från servern.");
-      }
-
-      const chapter =
-        data.story ||
-        data.text ||
-        data.story_text ||
-        (data.data && (data.data.story || data.data.story_text)) ||
-        "";
-
-      if (!chapter) {
-        console.warn("[WS] Svar saknar story-fält", data);
-        throw new Error("WS: servern skickade ingen berättelsetext.");
-      }
-
-      // 4. Spara kapitlet i WS
-      state = window.WS_DEV.addChapterToWS(state, chapter);
+  // Se till att vi har ett world state i localStorage
+  function ensureWorldState() {
+    if (!window.WS_DEV) {
+      console.warn("[WS DEV] WS_DEV saknas på window");
+      return null;
+    }
+    let state = window.WS_DEV.load();
+    if (!state) {
+      state = window.WS_DEV.createWorldFromForm();
       window.WS_DEV.save(state);
-
-      // 5. Visa texten i samma ruta som vanligt
-      if (storyEl) storyEl.textContent = chapter;
-
-      if (errEl) errEl.textContent = "";
-
-    } catch (e) {
-      console.error("[WS dev error]", e);
-      if (errEl) errEl.textContent = e.message || "WS: kunde inte skapa kapitel.";
-      if (storyEl && !storyEl.textContent) {
-        storyEl.textContent = "Något gick fel i WS dev: " + (e.message || e.toString());
-      }
-    } finally {
-      showSpinner(false);
+      log("Skapade nytt world state från formulär");
     }
+    return state;
   }
 
-  function injectWSButton() {
-    // Hitta din befintliga "Skapa saga"-knapp och lägg WS-knapp bredvid
-    const createBtn = document.querySelector("[data-id='btn-create']");
-    if (!createBtn || !createBtn.parentNode) {
-      console.warn("[WS] Hittar inte knappen data-id='btn-create'");
+  function handleWsClick(ev) {
+    try { ev.preventDefault(); } catch (e) {}
+
+    if (!window.WS_DEV) {
+      console.warn("[WS DEV] WS_DEV saknas – avbryter");
+      return;
+    }
+    if (typeof window.createstory !== "function") {
+      console.warn("[WS DEV] window.createstory saknas – kan inte trigga normal flöde");
       return;
     }
 
-    // Skapa bara om den inte redan finns
-    if (document.querySelector("[data-id='btn-create-ws-dev']")) return;
+    const textarea = getPromptTextarea();
+    if (!textarea) {
+      console.warn("[WS DEV] hittar inget prompt-fält");
+      return;
+    }
 
-    const btn = document.createElement("button");
-    btn.setAttribute("data-id", "btn-create-ws-dev");
-    btn.type = "button";
-    btn.textContent = "Skapa saga (WS dev)";
-    btn.className = "btn-secondary"; // blå variant enligt din stil
-    btn.style.marginLeft = "8px";
+    // 1) Säkerställ world state
+    let state = ensureWorldState();
+    if (!state) return;
 
-    btn.addEventListener("click", (e) => {
-      e.preventDefault();
-      createWSChapter();
-    });
+    // 2) Bygg WS-prompt
+    const wsPrompt = window.WS_DEV.buildWsPrompt(state);
+    textarea.value = wsPrompt;
 
-    // Lägg direkt efter din ordinarie skapa-knapp
-    createBtn.parentNode.insertBefore(btn, createBtn.nextSibling);
+    // 3) Kör normal "Skapa saga"-logik
+    log("Kör createstory() med WS-prompt …");
+    try {
+      window.createstory();
+    } catch (e) {
+      console.error("[WS DEV] fel när createstory() kördes", e);
+      return;
+    }
+
+    // 4) Efter en stund: läs ut texten som faktiskt skrevs och lägg till som nytt kapitel
+    setTimeout(function () {
+      try {
+        const storyEl = getStoryElement();
+        if (!storyEl) {
+          console.warn("[WS DEV] hittar inget story-element att läsa ifrån");
+          return;
+        }
+        const txt = (storyEl.textContent || storyEl.innerText || "").trim();
+        if (!txt) {
+          console.warn("[WS DEV] inga story-texter att spara i WS");
+          return;
+        }
+
+        let s = window.WS_DEV.load() || state;
+        s = window.WS_DEV.addChapterToWS(s, txt);
+        window.WS_DEV.save(s);
+
+        log("Kapitel sparat i WS, antal kapitel:", s && s.chapters ? s.chapters.length : "?");
+      } catch (e) {
+        console.warn("[WS DEV] kunde inte uppdatera world state efter kapitel", e);
+      }
+    }, 4000); // 4 sekunder efter klick – kan justeras vid behov
   }
 
-  window.addEventListener("DOMContentLoaded", injectWSButton);
+  function bindWsButton() {
+    const btn = document.getElementById("btn-ws-dev");
+    if (!btn) {
+      console.warn("[WS DEV] hittar inte #btn-ws-dev i DOM:en");
+      return;
+    }
+    btn.addEventListener("click", handleWsClick);
+    log("WS dev-knapp bunden");
+  }
 
+  document.addEventListener("DOMContentLoaded", function () {
+    // Vänta in att app.js hunnit lägga window.createstory
+    let tries = 0;
+    const iv = setInterval(function () {
+      tries++;
+      if (typeof window.createstory === "function") {
+        clearInterval(iv);
+        bindWsButton();
+      } else if (tries > 40) { // ~4 sekunder
+        clearInterval(iv);
+        console.warn("[WS DEV] gav upp att hitta window.createstory");
+      }
+    }, 100);
+  });
 })();
