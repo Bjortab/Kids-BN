@@ -1,7 +1,10 @@
 // ==========================================================
-// BN-KIDS WS DEV — ws_button.dev.js (v2.1)
-// Extra blå knapp: "Skapa saga (WS dev)"
-// Återanvänder befintlig createstory()-logik + TTS
+// BN-KIDS WS DEV — ws_button.dev.js (v3)
+// Blå knapp: "Skapa saga (WS dev)"
+// - Bygger WS-prompt
+// - Anropar /api/generate_story direkt
+// - Lägger texten i berättelserutan
+// - Sparar kapitlet i world state
 // ==========================================================
 
 (function () {
@@ -21,7 +24,64 @@
     return q("[data-id='story']") || document.getElementById("story-output") || document.getElementById("story");
   }
 
-  // Se till att vi har ett world state i localStorage
+  function getErrorElement() {
+    return q("[data-id='error']") || document.getElementById("error");
+  }
+
+  function getSpinnerElement() {
+    return q("[data-id='spinner']") || document.getElementById("spinner");
+  }
+
+  function setWsError(msg) {
+    const el = getErrorElement();
+    if (!el) return;
+    if (msg) {
+      el.textContent = msg;
+      el.style.display = "block";
+    } else {
+      el.textContent = "";
+      el.style.display = "none";
+    }
+  }
+
+  function showWsSpinner() {
+    const s = getSpinnerElement();
+    if (s) s.style.display = "flex";
+  }
+
+  function hideWsSpinner() {
+    const s = getSpinnerElement();
+    if (s) s.style.display = "none";
+  }
+
+  // Hämtar värden från dina select/input (samma ids som app.js)
+  function readFormMeta() {
+    const ageSel    = document.getElementById("age");
+    const heroInput = document.getElementById("hero");
+    const lengthSel = document.getElementById("length");
+
+    const ageValue   = ageSel && ageSel.value ? ageSel.value : "";
+    const ageText    = (ageSel && ageSel.selectedOptions && ageSel.selectedOptions[0])
+      ? ageSel.selectedOptions[0].textContent.trim()
+      : "7–8 år";
+
+    let hero = "";
+    if (heroInput && typeof heroInput.value === "string") {
+      hero = heroInput.value.trim();
+    }
+    if (!hero) hero = "hjälten";
+
+    const lengthVal  = lengthSel && lengthSel.value ? lengthSel.value : "medium";
+
+    // grov mappning lång/kort → minuter, liknar din befintliga logik
+    let mins = 5;
+    if (lengthVal === "short") mins = 2;
+    else if (lengthVal === "long") mins = 10;
+
+    return { ageValue, ageLabel: ageText, hero, lengthValue: lengthVal, mins };
+  }
+
+  // Säkerställ ett world state i localStorage
   function ensureWorldState() {
     if (!window.WS_DEV) {
       console.warn("[WS DEV] WS_DEV saknas på window");
@@ -36,64 +96,94 @@
     return state;
   }
 
-  function handleWsClick(ev) {
+  async function handleWsClick(ev) {
     try { ev.preventDefault(); } catch (e) {}
 
+    setWsError("");
     if (!window.WS_DEV) {
-      console.warn("[WS DEV] WS_DEV saknas – avbryter");
-      return;
-    }
-    if (typeof window.createstory !== "function") {
-      console.warn("[WS DEV] window.createstory saknas – kan inte trigga normal flöde");
+      setWsError("WS_DEV saknas (dev-läge).");
       return;
     }
 
     const textarea = getPromptTextarea();
-    if (!textarea) {
-      console.warn("[WS DEV] hittar inget prompt-fält");
+    const storyEl  = getStoryElement();
+
+    if (!textarea || !storyEl) {
+      setWsError("Kunde inte hitta prompt- eller berättelseruta.");
       return;
     }
 
-    // 1) Säkerställ world state
-    let state = ensureWorldState();
-    if (!state) return;
+    // 1) Läs formulär + world state
+    const meta  = readFormMeta();
+    let state   = ensureWorldState();
+    if (!state) {
+      setWsError("Kunde inte skapa world state.");
+      return;
+    }
 
-    // 2) Bygg WS-prompt
+    // 2) Bygg WS-prompt och skriv in i promptfältet (så du ser vad som går in)
     const wsPrompt = window.WS_DEV.buildWsPrompt(state);
     textarea.value = wsPrompt;
 
-    // 3) Kör normal "Skapa saga"-logik
-    log("Kör createstory() med WS-prompt …");
+    // 3) Skicka till /api/generate_story
+    const body = {
+      age_group: meta.ageLabel || "7–8 år",
+      mins: meta.mins || 5,
+      lang: "sv",
+      prompt: wsPrompt,
+      agentname: meta.hero || "hjälten"
+    };
+
+    showWsSpinner();
+
     try {
-      window.createstory();
-    } catch (e) {
-      console.error("[WS DEV] fel när createstory() kördes", e);
-      return;
-    }
+      const res = await fetch("/api/generate_story", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json"
+        },
+        body: JSON.stringify(body)
+      });
 
-    // 4) Efter en stund: läs ut texten som faktiskt skrevs och lägg till som nytt kapitel
-    setTimeout(function () {
+      const textBody = await res.text();
+      let data = {};
       try {
-        const storyEl = getStoryElement();
-        if (!storyEl) {
-          console.warn("[WS DEV] hittar inget story-element att läsa ifrån");
-          return;
-        }
-        const txt = (storyEl.textContent || storyEl.innerText || "").trim();
-        if (!txt) {
-          console.warn("[WS DEV] inga story-texter att spara i WS");
-          return;
-        }
-
-        let s = window.WS_DEV.load() || state;
-        s = window.WS_DEV.addChapterToWS(s, txt);
-        window.WS_DEV.save(s);
-
-        log("Kapitel sparat i WS, antal kapitel:", s && s.chapters ? s.chapters.length : "?");
+        data = textBody ? JSON.parse(textBody) : {};
       } catch (e) {
-        console.warn("[WS DEV] kunde inte uppdatera world state efter kapitel", e);
+        console.warn("[WS DEV] kunde inte tolka JSON, text:", textBody);
+        setWsError("Servern skickade ogiltigt svar (inte JSON).");
+        return;
       }
-    }, 4000); // 4 sekunder efter klick – kan justeras vid behov
+
+      if (!res.ok) {
+        console.warn("[WS DEV] generate_story fel:", res.status, data);
+        setWsError("Kunde inte skapa kapitel: " + (data.error || res.status));
+        return;
+      }
+
+      const storyText = (data.story || data.text || "").toString().trim();
+      if (!storyText) {
+        console.warn("[WS DEV] generate_story OK men saknar story-fält:", data);
+        setWsError("Servern gav inget berättelsetext-fält.");
+        return;
+      }
+
+      // 4) Visa berättelsen i samma ruta som vanligt
+      storyEl.textContent = storyText;
+
+      // 5) Uppdatera world state med nytt kapitel
+      let s = window.WS_DEV.load() || state;
+      s = window.WS_DEV.addChapterToWS(s, storyText);
+      window.WS_DEV.save(s);
+
+      log("Kapitel sparat i WS, antal kapitel:", s && s.chapters ? s.chapters.length : "?");
+    } catch (err) {
+      console.error("[WS DEV] nätverksfel mot /api/generate_story", err);
+      setWsError("Nätverksfel när kapitel skulle skapas.");
+    } finally {
+      hideWsSpinner();
+    }
   }
 
   function bindWsButton() {
@@ -107,17 +197,6 @@
   }
 
   document.addEventListener("DOMContentLoaded", function () {
-    // Vänta in att app.js hunnit lägga window.createstory
-    let tries = 0;
-    const iv = setInterval(function () {
-      tries++;
-      if (typeof window.createstory === "function") {
-        clearInterval(iv);
-        bindWsButton();
-      } else if (tries > 40) { // ~4 sekunder
-        clearInterval(iv);
-        console.warn("[WS DEV] gav upp att hitta window.createstory");
-      }
-    }, 100);
+    bindWsButton();
   });
 })();
