@@ -1,8 +1,8 @@
 // public/ws_button.dev.js
-// BN-Kids WS dev-spår v1 — rör INTE befintlig prod-logik.
+// BN-Kids WS dev-spår v2 — frikopplad från app.js createstory.
 // - Lägger till en extra knapp bredvid "Skapa saga".
 // - Knappen bygger en world state-sammanfattning + din prompt.
-// - Använder window.createstory(), så allt backend-flöde är oförändrat.
+// - Anropar /api/generate_story direkt och skriver till [data-id="story"].
 
 (function () {
   const STORAGE_KEY = 'bn_kids_ws_v1';
@@ -39,6 +39,16 @@
 - Önskad längd: ${length}
 - Senaste händelser: ${recap}
 Regler: inga plötsliga nya förmågor utan förklaring, konsekventa namn och platser, fysik/magi ska ha tydliga regler, undvik klyschiga moralslut.`;
+  }
+
+  // Egen variant av lengthToMinutes (kopierad logik från app.js)
+  function lengthToMinutesVal(val) {
+    const len = (val || '').trim();
+    if (!len) return 5;
+    if (len === 'short') return 3;
+    if (len === 'medium') return 5;
+    if (len === 'long') return 12;
+    return 5;
   }
 
   function setupObserver() {
@@ -80,12 +90,14 @@ Regler: inga plötsliga nya förmågor utan förklaring, konsekventa namn och pl
 
     createBtn.parentNode.insertBefore(wsBtn, createBtn.nextSibling);
 
-    wsBtn.addEventListener('click', () => {
-      const promptEl  = document.querySelector('[data-id="prompt"]');
-      const ageSel    = document.getElementById('age');
-      const heroEl    = document.getElementById('hero');
-      const lengthSel = document.getElementById('length');
-      const errEl     = document.querySelector('[data-id="error"]');
+    wsBtn.addEventListener('click', async () => {
+      const promptEl   = document.querySelector('[data-id="prompt"]');
+      const ageSel     = document.getElementById('age');
+      const heroEl     = document.getElementById('hero');
+      const lengthSel  = document.getElementById('length');
+      const storyEl    = document.querySelector('[data-id="story"]');
+      const errEl      = document.querySelector('[data-id="error"]');
+      const spinnerEl  = document.querySelector('[data-id="spinner"]');
 
       if (!promptEl) {
         console.warn('[WS] Hittar inte prompt-fältet');
@@ -96,7 +108,9 @@ Regler: inga plötsliga nya förmågor utan förklaring, konsekventa namn och pl
       const ui = {
         hero:   heroEl && heroEl.value ? heroEl.value : '',
         age:    (ageSel && ageSel.selectedOptions[0]) ? ageSel.selectedOptions[0].textContent : '',
-        length: (lengthSel && lengthSel.selectedOptions[0]) ? lengthSel.selectedOptions[0].textContent : ''
+        ageValue: ageSel && ageSel.value ? ageSel.value : '',
+        length: (lengthSel && lengthSel.selectedOptions[0]) ? lengthSel.selectedOptions[0].textContent : '',
+        lengthValue: lengthSel && lengthSel.value ? lengthSel.value : ''
       };
 
       const ws = loadWS();
@@ -108,25 +122,59 @@ Regler: inga plötsliga nya förmågor utan förklaring, konsekventa namn och pl
 Berättelseönskan från barnet:
 ${basePrompt}`.trim();
 
-      if (typeof window.createstory !== 'function') {
-        console.warn('[WS] window.createstory saknas');
-        if (errEl) errEl.textContent = 'WS: createstory-funktion saknas.';
-        return;
-      }
-
-      const originalPrompt = promptEl.value;
-      promptEl.value = combinedPrompt;
+      const mins = lengthToMinutesVal(ui.lengthValue);
+      const body = {
+        mins,
+        lang: 'sv',
+        prompt: combinedPrompt,
+        agename: ui.age,
+        hero: ui.hero
+      };
 
       try {
-        window.createstory();
+        if (errEl) errEl.textContent = '';
+        if (spinnerEl) {
+          spinnerEl.style.display = 'flex';
+          spinnerEl.textContent = 'Skapar WS-berättelse...';
+        }
+        wsBtn.disabled = true;
+
+        const res = await fetch('/api/generate_story', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify(body)
+        });
+
+        const txt = await res.text();
+        let data = {};
+        try {
+          data = JSON.parse(txt);
+        } catch (e) {
+          console.warn('[WS] Kunde inte läsa JSON, body=', txt.slice(0, 200));
+          throw new Error('WS: ogiltigt JSON-svar från servern.');
+        }
+
+        const storyText = data.story || data.text || data.story_text || '';
+        if (!storyText) {
+          console.warn('[WS] Svar saknar story-fält', data);
+          throw new Error('WS: servern skickade ingen berättelsetext.');
+        }
+
+        if (storyEl) storyEl.textContent = storyText;
+
+        // recap uppdateras via observern
       } catch (e) {
-        console.error('[WS] fel vid createstory()', e);
-        if (errEl) errEl.textContent = 'WS: fel vid skapande av saga.';
+        console.error('[WS] fel vid WS-skapande', e);
+        if (errEl) errEl.textContent = e.message || 'WS: kunde inte skapa berättelse.';
       } finally {
-        // Återställ prompten så användaren ser sin egen text igen
-        setTimeout(() => {
-          promptEl.value = originalPrompt;
-        }, 500);
+        if (spinnerEl) {
+          spinnerEl.style.display = 'none';
+          spinnerEl.textContent = '';
+        }
+        wsBtn.disabled = false;
       }
     });
   }
