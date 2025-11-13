@@ -1,62 +1,139 @@
-// public/worldstate.gc.js
-// === GC v1.0 — BN-Kids World State (frontend) ===
-// Lagrar världen i localStorage så sagor kan fortsätta med kausalitet.
+// ==========================================================
+// BN-KIDS WS DEV — worldstate.dev.js (v2)
+// Lokal "bok" i localStorage, kapitel för kapitel
+// ==========================================================
 
-const WS_KEY = 'bn.world.v1';
+(function () {
 
-const DEFAULT_WS = {
-  protagonists: [],       // ["Frans", "Vimnen"]
-  location: "",           // "Grönskogen", "det gamla tornet"
-  timeOfDay: "",          // "morgon", "kväll"
-  goal: "",               // hjältemål: "rädda vännen", "finna boken"
-  constraints: {          // hårda regler för världen
-    noSuddenPowers: true,
-    consistentNames: true,
-    groundedPhysics: true,
-    noGenericMoralEnd: true
-  },
-  recap: ""               // kort recap från senaste kapitlet
-};
+  const STORAGE_KEY = "bn_kids_ws_book_v1";
 
-export function getWorldState() {
-  try {
-    const raw = localStorage.getItem(WS_KEY);
-    return raw ? { ...DEFAULT_WS, ...JSON.parse(raw) } : { ...DEFAULT_WS };
-  } catch {
-    return { ...DEFAULT_WS };
+  // -------------------------------------------------------
+  // Ladda world state (bok) från localStorage
+  // -------------------------------------------------------
+  function loadWS() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") return parsed;
+    } catch (e) {
+      console.warn("[WS] kunde inte läsa world state", e);
+    }
+    return null;
   }
-}
 
-export function setWorldState(ws) {
-  try { localStorage.setItem(WS_KEY, JSON.stringify(ws)); } catch {}
-}
-
-export function updateWorldState(patch = {}) {
-  const current = getWorldState();
-  const next = structuredClone(current);
-  // enkel merge (1 nivå räcker här)
-  for (const k of Object.keys(patch)) {
-    if (typeof patch[k] === 'object' && patch[k] !== null && !Array.isArray(patch[k])) {
-      next[k] = { ...(current[k] || {}), ...patch[k] };
-    } else {
-      next[k] = patch[k];
+  // -------------------------------------------------------
+  // Spara world state
+  // -------------------------------------------------------
+  function saveWS(state) {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch (e) {
+      console.warn("[WS] kunde inte spara world state", e);
     }
   }
-  setWorldState(next);
-  return next;
-}
 
-export function resetWorldState() {
-  setWorldState({ ...DEFAULT_WS });
-  return getWorldState();
-}
+  // -------------------------------------------------------
+  // Skapa nytt world-state från UI-formuläret
+  // (Använder dina faktiska id:n: age, hero, length, prompt)
+// -------------------------------------------------------
+  function createWorldFromForm() {
+    const ageSel    = document.getElementById("age");
+    const heroInput = document.getElementById("hero");
+    const lengthSel = document.getElementById("length");
+    const promptEl  = document.querySelector("[data-id='prompt']");
 
-// KORT sammanfattning att skicka till modellen (billigt + styrande)
-export function summarizeWorldState(ws = getWorldState()) {
-  const names = (ws.protagonists || []).join(", ") || "okänd hjälte";
-  const loc = ws.location || "okänd plats";
-  const tod = ws.timeOfDay || "okänd tid";
-  const goal = ws.goal || "okänt mål";
-  const recap = ws.recap || "Ingen tidigare recap.";
-  return `Hjälte(r): ${names}. Plats: ${loc}. Tid: ${tod}. Mål: ${goal}. Senast: ${recap}. Regler: inga plötsliga nya krafter, konsekvent namngivning, fysik ska hålla (magin får regler), undvik generiska moralslut.`;
-}
+    const ageValue   = ageSel && ageSel.value ? ageSel.value : "";
+    const ageText    = (ageSel && ageSel.selectedOptions && ageSel.selectedOptions[0])
+      ? ageSel.selectedOptions[0].textContent.trim()
+      : "";
+    const hero       = heroInput && heroInput.value ? heroInput.value.trim() : "";
+    const lengthVal  = lengthSel && lengthSel.value ? lengthSel.value : "";
+    const lengthText = (lengthSel && lengthSel.selectedOptions && lengthSel.selectedOptions[0])
+      ? lengthSel.selectedOptions[0].textContent.trim()
+      : "";
+    const prompt     = promptEl && promptEl.value ? promptEl.value.trim() : "";
+
+    return {
+      meta: {
+        ageValue: ageValue,
+        ageLabel: ageText,
+        hero: hero,
+        lengthValue: lengthVal,
+        lengthLabel: lengthText
+      },
+      chapters: [],          // varje kapitel: { text, added_at }
+      last_prompt: prompt,   // ursprunglig barnprompt
+      created_at: Date.now()
+    };
+  }
+
+  // -------------------------------------------------------
+  // Uppdatera world state med nytt kapitel
+  // -------------------------------------------------------
+  function addChapterToWS(state, chapterText) {
+    if (!state || !chapterText) return state || null;
+    if (!Array.isArray(state.chapters)) state.chapters = [];
+    state.chapters.push({
+      text: chapterText,
+      added_at: Date.now()
+    });
+    return state;
+  }
+
+  // -------------------------------------------------------
+  // Bygg WS-prompt baserat på tidigare kapitel
+  // (enkel recap-version – vi kan göra den smartare sen)
+// -------------------------------------------------------
+  function buildWsPrompt(state) {
+    if (!state) return "";
+
+    const hero = (state.meta && state.meta.hero) || "hjälten";
+    const ageLabel = (state.meta && state.meta.ageLabel) || "7–8 år";
+
+    let recap = "Detta är första kapitlet.\n";
+    if (state.chapters && state.chapters.length > 0) {
+      recap = state.chapters
+        .map((c, i) => `Kapitel ${i + 1}: ${c.text}`)
+        .join("\n\n");
+    }
+
+    const nextChapter = (state.chapters ? state.chapters.length : 0) + 1;
+
+    return `
+Du är en barnboksförfattare.
+Du skriver en kapitelbok på svenska för barn i åldern ${ageLabel}.
+Huvudpersonen heter ${hero} och ska alltid kallas "${hero}" genom hela boken.
+
+Här är en sammanfattning av de tidigare kapitlen:
+${recap}
+
+Skriv nu KAPITEL ${nextChapter}.
+- Fortsätt berättelsen logiskt från tidigare händelser.
+- Upprepa inte exakt samma början eller samma scener som redan hänt.
+- Använd samma huvudperson "${hero}" och samma värld.
+- Håll språket enkelt, tydligt och tryggt för barn i åldern ${ageLabel}.
+- Avsluta kapitlet med ett tydligt men gärna lite spännande slut (en krok för nästa kapitel, ingen total reset).
+    `.trim();
+  }
+
+  // -------------------------------------------------------
+  // Nollställ bok (debug)
+  // -------------------------------------------------------
+  function resetWS() {
+    localStorage.removeItem(STORAGE_KEY);
+  }
+
+  // -------------------------------------------------------
+  // Exportera globalt
+  // -------------------------------------------------------
+  window.WS_DEV = {
+    load: loadWS,
+    save: saveWS,
+    createWorldFromForm,
+    addChapterToWS,
+    buildWsPrompt,
+    reset: resetWS
+  };
+
+})();
