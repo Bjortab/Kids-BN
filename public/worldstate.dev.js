@@ -1,57 +1,112 @@
-// === DEV v1.0 — World State Manager (DEV) ===
-// IDENTISKT API som GC, men vi loggar för felsökning
+// ==========================================================
+// BN-KIDS WS DEV — worldstate.dev.js (v1)
+// Lokal "bok" i localStorage, kapitel för kapitel
+// ==========================================================
 
-const WORLD_STATE_KEY = "bn_world_state_v1_dev";
+(function () {
 
-export function getWorldState() {
-  try {
-    const raw = localStorage.getItem(WORLD_STATE_KEY);
-    const ws = raw ? JSON.parse(raw) : defaultWorldState();
-    console.log("🧪 worldstate.get ->", ws);
-    return ws;
-  } catch {
-    return defaultWorldState();
+  const STORAGE_KEY = "bn_kids_ws_book_v1";
+
+  // -------------------------------------------------------
+  // Ladda world state (bok) från localStorage
+  // -------------------------------------------------------
+  function loadWS() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") return parsed;
+    } catch (e) {
+      console.warn("[WS] kunde inte läsa world state", e);
+    }
+    return null;
   }
-}
 
-export function setWorldState(ws) {
-  console.log("🧪 worldstate.set <-", ws);
-  localStorage.setItem(WORLD_STATE_KEY, JSON.stringify(ws));
-}
+  // -------------------------------------------------------
+  // Spara world state
+  // -------------------------------------------------------
+  function saveWS(state) {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch (e) {
+      console.warn("[WS] kunde inte spara world state", e);
+    }
+  }
 
-export function updateWorldState(patch = {}) {
-  const merged = { ...getWorldState(), ...patch };
-  setWorldState(merged);
-  return merged;
-}
+  // -------------------------------------------------------
+  // Skapa nytt world-state från UI-formuläret
+  // -------------------------------------------------------
+  function createWorldFromForm() {
+    const age = (document.querySelector("[data-id='age']")?.value || "").trim();
+    const hero = (document.querySelector("[data-id='hero']")?.value || "").trim();
+    const length = (document.querySelector("[data-id='length']")?.value || "").trim();
+    const prompt = (document.querySelector("[data-id='prompt']")?.value || "").trim();
 
-export function resetWorldState() {
-  setWorldState(defaultWorldState());
-  return getWorldState();
-}
+    return {
+      meta: {
+        age,
+        hero,
+        length,
+      },
+      chapters: [],
+      last_prompt: prompt || "",
+      created_at: Date.now(),
+    };
+  }
 
-export function summarizeWorldState(ws = getWorldState()) {
-  const parts = [];
-  if (ws.place) parts.push(`plats: ${ws.place}`);
-  if (ws.season) parts.push(`årstid: ${ws.season}`);
-  if (ws.weather) parts.push(`väder: ${ws.weather}`);
-  if (ws.characters?.length) parts.push(`karaktärer: ${ws.characters.join(", ")}`);
-  if (ws.inventory?.length) parts.push(`föremål: ${ws.inventory.join(", ")}`);
-  if (ws.forbidden?.length) parts.push(`förbjudet: ${ws.forbidden.join(", ")}`);
-  if (ws.open_threads?.length) parts.push(`öppna trådar: ${ws.open_threads.join("; ")}`);
-  const s = parts.join(" | ");
-  console.log("🧪 worldstate.summary ->", s);
-  return s;
-}
+  // -------------------------------------------------------
+  // Uppdatera world state med nytt kapitel
+  // -------------------------------------------------------
+  function addChapterToWS(state, chapterText) {
+    if (!state || !chapterText) return state;
+    state.chapters.push({
+      text: chapterText,
+      added_at: Date.now(),
+    });
+    return state;
+  }
 
-function defaultWorldState() {
-  return {
-    place: "Grönskogen",
-    season: "vår",
-    weather: "fuktigt",
-    characters: [],
-    inventory: [],
-    forbidden: ["magi", "eld utan orsak"],
-    open_threads: []
+  // -------------------------------------------------------
+  // Bygg WS-prompt baserat på tidigare kapitel
+  // -------------------------------------------------------
+  function buildWsPrompt(state) {
+    if (!state) return "";
+
+    const hero = state.meta.hero || "barnet";
+    const recap = state.chapters
+      .map((c, i) => `Kapitel ${i + 1}: ${c.text}`)
+      .join("\n\n");
+
+    return `
+Du är en barnboksförfattare.
+Du skriver kapitelböcker för barn i åldern ${state.meta.age}.
+Hjälten heter: ${hero}.
+
+Här är recap på tidigare kapitel:
+${recap}
+
+Skriv nästa kapitel som följer handlingen exakt, utan att repetera tidigare innehåll.
+Sluta kapitel ${state.chapters.length + 1} med en tydlig cliffhanger. 
+    `;
+  }
+
+  // -------------------------------------------------------
+  // Nollställ bok (debug)
+  // -------------------------------------------------------
+  function resetWS() {
+    localStorage.removeItem(STORAGE_KEY);
+  }
+
+  // -------------------------------------------------------
+  // Exportera globalt
+  // -------------------------------------------------------
+  window.WS_DEV = {
+    load: loadWS,
+    save: saveWS,
+    createWorldFromForm,
+    addChapterToWS,
+    buildWsPrompt,
+    reset: resetWS,
   };
-}
+
+})();
