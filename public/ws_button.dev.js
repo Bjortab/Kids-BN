@@ -1,11 +1,11 @@
 // public/ws_button.dev.js
-// BN-Kids WS dev-spår v3 — frikopplad från app.js createstory.
+// BN-Kids WS dev – kapitelbok-läge v4
 // - Extra knapp bredvid "Skapa saga".
-// - Bygger world state + barnets önskan till en tydlig prompt.
-// - Anropar /api/generate_story direkt och skriver till [data-id="story"].
+// - World state i localStorage: vem, ålder, vilket kapitel, recap.
+// - Varje klick skriver NÄSTA KAPITEL i samma bok, inte samma saga igen.
 
 (function () {
-  const STORAGE_KEY = 'bn_kids_ws_v1';
+  const STORAGE_KEY = 'bn_kids_ws_book_v1';
 
   function loadWS() {
     try {
@@ -27,26 +27,49 @@
     }
   }
 
+  // Gör en enkel recap av ett kapitel: första + sista meningarna
+  function makeChapterRecap(text) {
+    if (!text) return '';
+    const sentences = text
+      .split(/(?<=[.!?])\s+/)
+      .map(s => s.trim())
+      .filter(Boolean);
+
+    if (!sentences.length) return text.slice(0, 200);
+
+    const first = sentences[0];
+    const last = sentences.length > 1 ? sentences[sentences.length - 1] : '';
+    if (last && last !== first) {
+      return `${first} ${last}`;
+    }
+    return first;
+  }
+
   function buildSummary(ws, ui) {
     const heroRaw = (ui.hero || '').trim();
-    const hero = heroRaw || 'hjälten';
-    const age    = (ui.age || '').trim()    || 'okänd ålder';
-    const length = (ui.length || '').trim() || 'okänd längd';
-    const recap  = (ws.recap || '').trim()  || 'Ingen tidigare berättelse eller recap ännu.';
+    const hero = heroRaw || ws.bookHero || 'hjälten';
+    const ageLabel = (ui.age || ui.ageValue || ws.bookAge || '7–8 år');
+    const chapter = ws.chapter || 0;
+    const nextChapter = chapter + 1;
+    const recap = (ws.recap || '').trim() || 'Inget har hänt ännu, detta är första kapitlet.';
 
     return {
       hero,
-      text: `Världssammanfattning:
-- Huvudperson: ${hero}
-- Ålder / nivå: ${age}
-- Önskad berättelselängd: ${length}
-- Senaste händelser: ${recap}
-Regler för berättelsen:
-- Huvudpersonen SKA heta "${hero}" genom hela berättelsen.
-- Återanvänd platser och personer från recap om det är rimligt.
-- Inga plötsliga nya krafter eller fakta som motsäger recap.
-- Skriv på tydlig svenska för barn, utan onödiga klyschor.
-- Avsluta berättelsen med ett tydligt, lugnt slut (ingen cliffhanger).`
+      nextChapter,
+      text: `Detta är en kapitelbok för barn i åldern ${ageLabel}.
+Huvudpersonen heter ${hero} och ska ALLTID kallas "${hero}" genom hela boken.
+
+Hittills i boken (sammanfattning):
+${recap}
+
+Uppgift:
+- Skriv kapitel ${nextChapter} i samma bok.
+- ANVÄND samma huvudperson "${hero}" och samma värld.
+- Börja direkt i en ny situation eller scen – upprepa inte hur dagen startade, hur soligt det var, eller samma första möte om och om igen.
+- Du får gärna kort nämna vad som hände tidigare ("Efter allt som hänt..."), men nu ska något NYTT hända.
+- Håll koll på vad som är rimligt: ge inte ${hero} plötsligt nya krafter eller fakta som motsäger det som hänt.
+- Avsluta kapitlet med ett tydligt, lugnt slut som känns färdigt, men lämna gärna en liten krok för nästa äventyr.
+- Skriv på tydlig, enkel svenska för barn. Undvik klyschiga fraser och "AI-liknande" formuleringar.`
     };
   }
 
@@ -60,26 +83,6 @@ Regler för berättelsen:
     return 5;
   }
 
-  function setupObserver() {
-    const storyEl = document.querySelector('[data-id="story"]');
-    if (!storyEl || typeof MutationObserver === 'undefined') return;
-
-    const obs = new MutationObserver(() => {
-      const text = (storyEl.textContent || '').trim();
-      if (!text || text.length < 40) return;
-
-      const sentences = text.split(/(?<=[.!?])\s+/).filter(Boolean);
-      const recap = sentences.slice(0, 2).join(' ');
-      if (!recap) return;
-
-      const ws = loadWS();
-      ws.recap = recap;
-      saveWS(ws);
-    });
-
-    obs.observe(storyEl, { childList: true, characterData: true, subtree: true });
-  }
-
   function setupButton() {
     const createBtn = document.querySelector('[data-id="btn-create"]');
     if (!createBtn || !createBtn.parentNode) {
@@ -87,7 +90,7 @@ Regler för berättelsen:
       return;
     }
 
-    // Om knappen redan finns, skapa inte en till
+    // Skapa bara knappen en gång
     if (document.querySelector('[data-id="btn-create-ws"]')) return;
 
     const wsBtn = document.createElement('button');
@@ -124,17 +127,16 @@ Regler för berättelsen:
 
       const ws = loadWS();
       const basePrompt = (promptEl.value || '').trim();
+
       const summaryObj = buildSummary(ws, ui);
-      const heroName = summaryObj.hero;
+      const heroName   = summaryObj.hero;
+      const nextChapter = summaryObj.nextChapter;
 
       const combinedPrompt = `
-Du är en berättare som skriver en sammanhängande barnsaga på svenska för åldersgruppen ${ui.age || ui.ageValue || '7–8 år'}.
-Huvudpersonen ska alltid heta "${heroName}" genom hela berättelsen.
+Du är en barnboksförfattare som skriver en kapitelbok på svenska för åldersgruppen ${ui.age || ui.ageValue || ws.bookAge || '7–8 år'}.
 
-Följ världssammanfattningen noggrant, bryt inte mot tidigare fakta och se till att:
-- namnet "${heroName}" används konsekvent
-- berättelsen får ett tydligt, tryggt slut (ingen cliffhanger)
-- tonen passar barn i åldern ${ui.age || ui.ageValue || '7–8 år'}
+Skriv nu KAPITEL ${nextChapter}.
+Huvudpersonen heter "${heroName}" och ska heta så genom hela kapitlet.
 
 ${summaryObj.text}
 
@@ -146,7 +148,7 @@ ${basePrompt || '(ingen extra önskan angiven)'}`.trim();
         mins,
         lang: 'sv',
         prompt: combinedPrompt,
-        agename: ui.age || ui.ageValue || '',
+        agename: ui.age || ui.ageValue || ws.bookAge || '',
         hero: heroName
       };
 
@@ -154,7 +156,7 @@ ${basePrompt || '(ingen extra önskan angiven)'}`.trim();
         if (errEl) errEl.textContent = '';
         if (spinnerEl) {
           spinnerEl.style.display = 'flex';
-          spinnerEl.textContent = 'Skapar WS-berättelse...';
+          spinnerEl.textContent = 'Skapar kapitel (WS dev)...';
         }
         wsBtn.disabled = true;
 
@@ -184,7 +186,14 @@ ${basePrompt || '(ingen extra önskan angiven)'}`.trim();
 
         if (storyEl) storyEl.textContent = storyText;
 
-        // recap uppdateras via observern
+        // Uppdatera world state för nästa kapitel
+        const newWS = loadWS();
+        newWS.bookHero = heroName;
+        newWS.bookAge  = ui.age || ui.ageValue || newWS.bookAge || '';
+        newWS.chapter  = (newWS.chapter || 0) + 1;
+        newWS.recap    = makeChapterRecap(storyText);
+        saveWS(newWS);
+
       } catch (e) {
         console.error('[WS] fel vid WS-skapande', e);
         if (errEl) errEl.textContent = e.message || 'WS: kunde inte skapa berättelse.';
@@ -200,6 +209,5 @@ ${basePrompt || '(ingen extra önskan angiven)'}`.trim();
 
   document.addEventListener('DOMContentLoaded', () => {
     setupButton();
-    setupObserver();
   });
 })();
