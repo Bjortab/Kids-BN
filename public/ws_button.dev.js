@@ -1,153 +1,158 @@
 // ==========================================================
-// BN-KIDS WS DEV — ws_button.dev.js
-// Hanterar knappen "Skapa saga (WS dev)"
+// BN-KIDS WS DEV — ws_button.dev.js (v3)
+// Extra knapp: "Skapa saga (WS dev)" för kapitelbok
+// Använder window.WS_DEV från worldstate.dev.js
 // ==========================================================
 
 (function () {
-  'use strict';
+  "use strict";
 
-  function $(sel) { return document.querySelector(sel); }
+  const BTN_ID = "btn-ws-dev";
 
-  function getSpinner() {
-    return document.querySelector('[data-id="spinner"]');
+  function log(...args) {
+    console.log("[WS DEV]", ...args);
   }
 
-  function getErrorBox() {
-    return document.querySelector('[data-id="error"]');
+  function q(sel) {
+    return document.querySelector(sel);
   }
 
-  function getStoryEl() {
-    return document.querySelector('[data-id="story"]');
+  function setError(text) {
+    const el = q("[data-id='error']");
+    if (!el) return;
+    el.textContent = text || "";
+    el.style.display = text ? "block" : "none";
   }
 
   function showSpinner(show, text) {
-    const sp = getSpinner();
-    if (!sp) return;
-    sp.style.display = show ? 'block' : 'none';
-
-    const firstSpan = sp.querySelector('span');
-    if (show && text && firstSpan) {
-      firstSpan.textContent = text;
-    }
+    const wrap = q("[data-id='spinner']");
+    const status = q("[data-id='status']");
+    if (!wrap) return;
+    wrap.style.display = show ? "flex" : "none";
+    if (status && text) status.textContent = text;
   }
 
-  function setError(msg) {
-    const el = getErrorBox();
-    if (!el) return;
-    if (!msg) {
-      el.style.display = 'none';
-      el.textContent = '';
-    } else {
-      el.style.display = 'block';
-      el.textContent = msg;
-    }
+  function setButtonsDisabled(disabled) {
+    const normalBtn = q("[data-id='btn-create']");
+    const ttsBtn = q("[data-id='btn-tts']");
+    const wsBtn = document.getElementById(BTN_ID);
+    if (normalBtn) normalBtn.disabled = disabled;
+    if (ttsBtn) ttsBtn.disabled = disabled;
+    if (wsBtn) wsBtn.disabled = disabled;
   }
 
   // -------------------------------------------------------
-  // Anropar ditt vanliga /api/generate_story men med WS-prompt
+  // Huvudhandler för WS-knappen
   // -------------------------------------------------------
-  async function callGenerateStoryWsDev(wsPrompt) {
-    // Hämta samma parametrar som din vanliga createstory använder
-    const ageSel    = document.getElementById('age');
-    const heroInput = document.getElementById('hero');
-    const lengthSel = document.getElementById('length');
-
-    const age  = ageSel?.value || '';
-    const hero = (heroInput?.value || '').trim();
-    const mins = lengthSel?.value || 'medium';
-    const lang = 'sv';
-
-    const body = {
-      age,
-      hero,
-      prompt: wsPrompt,
-      mins,
-      lang,
-      mode: 'ws_dev'
-    };
-
-    const res = await fetch('/api/generate_story', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
-      body: JSON.stringify(body)
-    });
-
-    if (!res.ok) {
-      const txt = await res.text().catch(() => '');
-      throw new Error('generate_story WS dev failed: ' + res.status + ' ' + txt.slice(0, 200));
-    }
-
-    let data;
-    try {
-      data = await res.json();
-    } catch (e) {
-      const txt = await res.text().catch(() => '');
-      throw new Error('Kunde inte läsa JSON från WS dev: ' + txt.slice(0, 200));
-    }
-
-    if (!data || !data.story) {
-      throw new Error('WS dev-svar saknar story-fält.');
-    }
-
-    return data.story;
-  }
-
-  // -------------------------------------------------------
-  // Klick på "Skapa saga (WS dev)"
-  // -------------------------------------------------------
-  async function handleWsClick(ev) {
+  async function handleClick(ev) {
     ev.preventDefault();
-    setError('');
 
     if (!window.WS_DEV) {
-      setError('WS_DEV saknas – dev-kod kunde inte laddas.');
+      console.warn("[WS DEV] saknar WS_DEV-objekt");
+      setError("Tekniskt fel: WS_DEV saknas.");
       return;
     }
 
-    // Skapa / ladda world state baserat på form
-    const world = window.WS_DEV.loadOrCreateFromForm();
-    const wsPrompt = window.WS_DEV.buildWsPrompt(world);
-
-    showSpinner(true, 'Skapar kapitel…');
-    const btn = ev.currentTarget;
-    const prevDisabled = btn.disabled;
-    btn.disabled = true;
-
     try {
-      const storyText = await callGenerateStoryWsDev(wsPrompt);
+      setError("");
+      showSpinner(true, "Skapar kapitel med world state …");
+      setButtonsDisabled(true);
 
-      // Spara kapitlet i world state
-      const updated = window.WS_DEV.addChapterToWS(world, storyText);
-      console.log('[WS DEV] chapters now:', updated && updated.chapters);
+      // 1) Ladda ev tidigare bok
+      let state = window.WS_DEV.load();
 
-      // Visa senaste kapitel i rutan
-      const storyEl = getStoryEl();
-      if (storyEl) {
-        storyEl.textContent = storyText;
+      // 2) Om ingen bok: skapa ny från form
+      if (!state) {
+        log("ingen bok i storage → skapar ny");
+        state = window.WS_DEV.createWorldFromForm();
       }
-    } catch (e) {
-      console.error('[WS DEV] error', e);
-      setError('Något gick fel i WS dev: ' + (e.message || e));
+
+      // 3) Läs in ev nytt önskemål från prompt-fältet
+      const promptEl = q("[data-id='prompt']");
+      const wish = promptEl && promptEl.value
+        ? promptEl.value.trim()
+        : "";
+
+      // Spara senaste önskemålet i state (för info)
+      state.lastWish = wish;
+
+      // 4) Bygg WS-prompt (recap + ev önskemål)
+      const wsPrompt = window.WS_DEV.buildWsPrompt(state, { wish });
+
+      // 5) Förbered body till /api/generate_story
+      const ageSel = document.getElementById("age");
+      const lengthSel = document.getElementById("length");
+
+      const ageValue = ageSel && ageSel.value ? ageSel.value : "";
+      const lengthVal = lengthSel && lengthSel.value ? lengthSel.value : "";
+
+      const body = {
+        age: ageValue,
+        hero: state.meta && state.meta.hero ? state.meta.hero : "hjälten",
+        length: lengthVal,
+        lang: "sv",
+        prompt: wsPrompt,
+        agentName: "ws-dev"
+      };
+
+      // 6) Anropa samma endpoint som vanliga "Skapa saga"
+      const res = await fetch("/api/generate_story", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json"
+        },
+        body: JSON.stringify(body)
+      });
+
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        console.warn("[WS DEV] generate_story fel", res.status, txt);
+        throw new Error("Kunde inte skapa kapitel (ws-dev): " + res.status);
+      }
+
+      const data = await res.json().catch(() => null);
+      const storyText =
+        (data && data.story) ||
+        (data && data.text) ||
+        "";
+
+      if (!storyText) {
+        console.warn("[WS DEV] tom story-respons", data);
+        throw new Error("Tom berättelse från servern.");
+      }
+
+      // 7) Lägg till kapitel i state + spara
+      state = window.WS_DEV.addChapterToWS(state, storyText);
+      window.WS_DEV.save(state);
+
+      log("chapters now:", (state.chapters || []).map((c, i) => i + 1));
+
+      // 8) Visa aktuellt kapitel i UI:t
+      const storyEl = q("[data-id='story']");
+      if (storyEl) storyEl.textContent = storyText;
+
+    } catch (err) {
+      console.error("[WS DEV] fel i ws-knapp", err);
+      setError(err && err.message ? err.message : "Tekniskt fel i WS dev.");
     } finally {
-      btn.disabled = prevDisabled;
       showSpinner(false);
+      setButtonsDisabled(false);
     }
   }
 
   // -------------------------------------------------------
-  // Binda knappen när DOM är redo
+  // Binda knappen när DOM är klar
   // -------------------------------------------------------
-  document.addEventListener('DOMContentLoaded', function () {
-    const btn = document.getElementById('btn-ws-dev');
+  function bindWsButton() {
+    const btn = document.getElementById(BTN_ID);
     if (!btn) {
-      console.warn('[WS DEV] hittar inte btn-ws-dev i DOM:en');
+      console.warn("[WS DEV] hittar inte WS-knapp i DOM: id=", BTN_ID);
       return;
     }
-    btn.addEventListener('click', handleWsClick);
-    console.log('[WS DEV] WS-knapp bunden');
-  });
+    btn.addEventListener("click", handleClick);
+    log("WS-knapp bunden");
+  }
 
+  document.addEventListener("DOMContentLoaded", bindWsButton);
 })();
