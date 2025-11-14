@@ -4,27 +4,32 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>BN's Sagovärld</title>
-
   <style>
     body {
       background:#111;
-      color:#eaeaea;
-      font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;
+      color:#eee;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+        Roboto, Arial, sans-serif;
       margin:0;
     }
     .panel {
       max-width:880px;
       margin:20px auto;
-      background:#1b1b1b;
+      background:#181818;
       border-radius:12px;
       padding:20px 22px;
       box-shadow:0 0 10px #222;
+      box-sizing:border-box;
     }
     .row {
       display:flex;
+      gap:12px;
       flex-wrap:wrap;
       margin-top:12px;
-      gap:8px;
+    }
+    .flex1 {
+      flex:1;
+      min-width:0;
     }
     input, select, textarea, button {
       width:100%;
@@ -37,161 +42,183 @@
       box-sizing:border-box;
     }
     textarea {
-      min-height:120px;
+      min-height:180px;
     }
     button {
       cursor:pointer;
-      border-color:#006d5b;
-      background:#006d5b;
+      border-color:#006050;
+      background:#006050;
     }
     button[disabled] {
       opacity:.55;
       cursor:not-allowed;
     }
     .btn-primary {
-      background:#0ea56d;
-      border-color:#137357;
+      background:#0e8d56;
+      border-color:#0e8d56;
       font-weight:600;
     }
     .btn-secondary {
-      background:#262c3c;
-      border-color:#3d475f;
-      color:#eaeaea;
-    }
-    .btn-muted {
-      background:#242a30;
-      border-color:#303840;
-      color:#ccc;
-    }
-    .error {
-      display:none;
-      margin-top:10px;
-      margin-bottom:10px;
-      border:1px solid #c60;
-      padding:10px;
-      border-radius:8px;
-      background:#180b0b;
-      color:#ffb38c;
-      white-space:pre-wrap;
+      background:#242b36;
+      border-color:#444f60;
     }
     .spinner {
       display:none;
-      margin-top:10px;
+      margin-top:8px;
+      padding:8px;
+      background:#303030;
+      border-radius:8px;
+      border:1px solid #606060;
+      color:#e5e5e5;
       font-size:14px;
-      opacity:.85;
+      white-space:pre-wrap;
     }
-    .spinner > span {
+    .spinner[data-active="1"] {
+      display:block;
+    }
+    .spinner-badge {
       display:inline-block;
-      animation:blink 1.5s infinite ease-in-out;
+      width:10px;
+      height:10px;
+      border-radius:999px;
+      border:2px solid #ccc;
+      margin-right:6px;
+      box-sizing:border-box;
     }
-    .spinner > span:nth-child(2) { animation-delay:.4s; }
-    .spinner > span:nth-child(3) { animation-delay:.8s; }
-    @keyframes blink {
-      0% { opacity:.2; }
+    .spinner-badge::before {
+      content:"";
+      display:block;
+      width:100%;
+      height:100%;
+      border-radius:inherit;
+      background:#00d07a;
+      animation:spinnerBlink 1s infinite ease-in-out;
+    }
+    @keyframes spinnerBlink {
+      0% { opacity:0.2; }
       50% { opacity:1; }
-      100% { opacity:.2; }
+      100% { opacity:0.2; }
     }
     pre {
       white-space:pre-wrap;
       line-height:1.5;
     }
-    audio {
-      width:100%;
-      margin-top:12px;
+    h1 {
+      margin:0 0 4px 0;
     }
-    .recorder-row {
+    .controls-row {
+      display:flex;
+      gap:12px;
+      align-items:center;
+      flex-wrap:wrap;
+      margin-top:18px;
+    }
+    .recorder-controls {
       display:flex;
       gap:8px;
       align-items:center;
       flex-wrap:wrap;
     }
     .recorder-status {
-      color:#aaa;
+      color:#999;
       font-size:13px;
       margin-left:6px;
     }
-    .badge {
-      background:#333;
-      color:#ddd;
-      padding:2px 8px;
-      border-radius:999px;
-      font-size:11px;
+    .error {
+      background:#331;
+      color:#fdd;
+      padding:8px 10px;
+      border-radius:8px;
+      margin-top:12px;
+      display:none;
+    }
+    .muted {
+      color:#aaa;
+    }
+    .sr-only {
+      position:absolute;
+      width:1px;
+      height:1px;
+      padding:0;
+      margin:-1px;
+      overflow:hidden;
+      clip:rect(0,0,0,0);
+      white-space:nowrap;
+      border:0;
     }
   </style>
-
-  <script>
-    // Inline binder: väntar på att public/app.js exponerar createstory() / playTTS()
-    document.addEventListener('DOMContentLoaded', function () {
-      function findButtonByText(term) {
-        const t = term.toLowerCase();
-        const btns = Array.from(
-          document.querySelectorAll('button,input[type=button],input[type=submit]')
-        );
-        return btns.find(b =>
-          (b.value || b.innerText || '').toLowerCase().includes(t)
-        );
-      }
-
-      function bindButtons() {
-        try {
-          const createBtn = findButtonByText('skapa saga');
-          const ttsBtn = findButtonByText('läs upp');
-
-          if (createBtn) {
-            createBtn.onclick = function (ev) {
-              ev.preventDefault();
-              if (window.createstory) return window.createstory();
-              console.warn('createstory saknas');
-            };
-          } else {
-            console.warn('[BN inline] binder: kunde inte hitta "Skapa saga"-knapp');
-          }
-
-          if (ttsBtn) {
-            ttsBtn.onclick = function (ev) {
-              ev.preventDefault();
-              if (window.playTTS) return window.playTTS();
-              console.warn('playTTS saknas');
-            };
-          } else {
-            console.warn('[BN inline] binder: kunde inte hitta "Läs upp"-knapp');
-          }
-        } catch (err) {
-          console.warn('[BN binder error]', err);
-        }
-      }
-
-      if (window.createstory && window.playTTS) {
-        bindButtons();
-      } else {
-        let tries = 0;
-        const iv = setInterval(function () {
-          tries++;
-          if (window.createstory && window.playTTS) {
-            bindButtons();
-            clearInterval(iv);
-          } else if (tries > 20) {
-            clearInterval(iv);
-            bindButtons();
-          }
-        }, 100);
-      }
-    });
-  </script>
-
-  <!-- DEV: world state + WS-knapp (kapitelboksläge) -->
-  <script src="worldstate.dev.js"></script>
-  <script src="ws_button.dev.js"></script>
 </head>
+
+<!-- Inline binder: väntar på att public/app.js ska exponera createstory / playTTS -->
+<script>
+  window.addEventListener("DOMContentLoaded", function () {
+    function byText(txt) {
+      const term = txt.toLowerCase();
+      const btns = Array.from(
+        document.querySelectorAll("button,input[type=button],input[type=submit]")
+      );
+      return btns.find((b) =>
+        (b.value || b.innerText || "").toLowerCase().includes(term)
+      );
+    }
+
+    function bindButtons() {
+      try {
+        const createBtn = byText("skapa saga");
+        const ttsBtn = byText("läs upp");
+
+        if (createBtn && window.createstory) {
+          createBtn.addEventListener("click", function (e) {
+            if (e) e.preventDefault();
+            window.createstory();
+          });
+        } else {
+          console.warn("[BN] createstory saknas?");
+        }
+
+        if (ttsBtn && window.playTTS) {
+          ttsBtn.addEventListener("click", function (e) {
+            if (e) e.preventDefault();
+            window.playTTS();
+          });
+        } else {
+          console.warn("[BN] playTTS saknas?");
+        }
+
+        console.log("[BN] inline-binder attempted");
+      } catch (err) {
+        console.warn("[BN] binder error", err);
+      }
+    }
+
+    if (window.createstory && window.playTTS) {
+      bindButtons();
+    } else {
+      let tries = 0;
+      const iv = setInterval(function () {
+        tries++;
+        if (window.createstory && window.playTTS) {
+          bindButtons();
+          clearInterval(iv);
+        } else if (tries > 20) {
+          clearInterval(iv);
+        }
+      }, 100);
+    }
+  });
+</script>
+
+<!-- WS dev-stöd -->
+<script src="worldstate.dev.js"></script>
+<script src="ws_button.dev.js"></script>
 
 <body>
   <div class="panel">
     <h1>BN's Sagovärld</h1>
     <small class="muted">…där drömmar blir berättelser</small>
 
-    <!-- Ålder / hjälte / längd -->
     <div class="row" style="margin-top:12px;">
-      <div style="flex:1;">
+      <div class="flex1">
         <label>Ålder</label>
         <select data-id="age" id="age">
           <option value="4-6">4–6 år</option>
@@ -201,99 +228,136 @@
         </select>
       </div>
 
-      <div style="flex:1;">
+      <div class="flex1">
         <label>Hjälte (valfritt)</label>
-        <input data-id="hero" id="hero" placeholder="t.ex. Taxen Tage, Draken Holger" />
+        <input
+          data-id="hero"
+          id="hero"
+          placeholder="t.ex. Taxen Tage, Draken Holger"
+        />
       </div>
 
-      <div style="flex:1; min-width:150px; max-width:220px;">
+      <div class="flex1">
         <label>Längd</label>
         <select data-id="length" id="length">
           <option value="short">Kort (&lt;2 min)</option>
           <option value="medium" selected>Medium (≈5 min)</option>
-          <option value="long">Lång (≈12 min)</option>
+          <option value="long">Lång (&gt;12 min)</option>
         </select>
       </div>
     </div>
 
-    <!-- Promptfält -->
     <div class="row" style="margin-top:12px;">
-      <div style="flex:1;">
+      <div class="flex1">
         <label>Sagoförslag (skriv eller tala in)</label>
-        <textarea data-id="prompt" placeholder="Skriv din idé här…"></textarea>
+        <textarea
+          data-id="prompt"
+          id="prompt"
+          placeholder="Skriv din idé här…"
+        ></textarea>
       </div>
     </div>
 
     <!-- Röst-UI: inspelning + transkript -->
-    <div class="row" style="margin-top:12px;">
-      <div style="flex:1 1 100%;">
-        <label>Inaktiv
-          <span class="recorder-status" id="rec-status"></span>
-        </label>
+    <div style="margin-top:18px;">
+      <label class="sr-only" for="transcript">
+        Transkript (läs att använda som prompt)
+      </label>
+
+      <div class="controls-row">
+        <div class="recorder-controls" aria-live="polite">
+          <button id="rec-btn" type="button" class="btn-primary">
+            Starta inspelning
+          </button>
+          <button
+            id="rec-cancel"
+            type="button"
+            class="btn-secondary"
+            style="display:none"
+          >
+            Avbryt
+          </button>
+          <span id="rec-status" class="recorder-status">Inaktiv</span>
+        </div>
+
+        <div class="flex1" style="text-align:right;">
+          <small class="muted">
+            Max inspelningstid: <strong>60 sekunder</strong>
+          </small>
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:12px;">
+        <textarea
+          id="transcript"
+          data-id="transcript"
+          placeholder="Här kommer transkriptionen…"
+          aria-label="Transkript"
+        ></textarea>
+      </div>
+
+      <div class="controls-row">
+        <button
+          id="use-transcript"
+          class="btn-secondary"
+          type="button"
+          data-id="btn-use-transcript"
+        >
+          Använd som prompt
+        </button>
+        <button
+          id="clear-transcript"
+          class="btn-secondary"
+          type="button"
+          data-id="btn-clear-transcript"
+        >
+          Rensa
+        </button>
       </div>
     </div>
 
-    <div class="recorder-row">
-      <button id="rec-start" type="button" class="btn-primary">Starta inspelning</button>
-      <button id="rec-cancel" type="button" class="btn-secondary" style="display:none;">
-        Avbryt/behåll
-      </button>
-      <button id="rec-use" type="button" class="btn-secondary" style="display:none;">
-        Använd som prompt
-      </button>
-    </div>
-
-    <div class="row" style="margin-top:10px;">
-      <div style="flex:1;">
-        <label>Transkript (läs att använda som prompt)</label>
-        <textarea id="transcript" placeholder="Här kommer transkriptionen…" aria-label="Transkript"></textarea>
-      </div>
-    </div>
-
-    <div class="row" style="margin-top:10px; align-items:center;">
-      <button id="use-transcript" class="btn-muted" type="button">
-        Använd som prompt
-      </button>
-      <button id="clear-transcript" class="btn-secondary" type="button">
-        Rensa
-      </button>
-      <span class="badge">Max inspelningstid: 60 sekunder</span>
-    </div>
-
-    <!-- Knappar: vanlig, WS dev, TTS -->
+    <!-- Skapa saga / WS dev / TTS -->
     <div class="row" style="margin-top:18px;">
-      <!-- Vanlig saga (GC) -->
       <button class="btn-primary" data-id="btn-create">
         Skapa saga
       </button>
-
-      <!-- WS dev-läge (kapitelbok) -->
-      <button class="btn-secondary" id="btn-ws-dev" data-id="btn-ws-dev">
+      <button class="btn-secondary" data-id="btn-ws-dev">
         Skapa saga (WS dev)
       </button>
-
-      <!-- TTS -->
       <button class="btn-secondary" data-id="btn-tts">
         Läs upp (om saga finns)
       </button>
     </div>
 
-    <!-- Spinner + felruta -->
-    <div class="spinner" data-id="spinner" aria-live="polite">
-      <span>Genererar saga</span><span>.</span><span>.</span><span>.</span>
+    <!-- Spinner / status för generering -->
+    <div
+      class="spinner"
+      data-id="spinner"
+      aria-live="polite"
+      aria-atomic="true"
+    >
+      <span class="spinner-badge"></span>
+      <span data-id="spinner-text">Skapar berättelse…</span>
     </div>
 
+    <!-- Felmeddelande -->
     <div class="error" data-id="error"></div>
 
-    <!-- Berättelse + audio -->
+    <!-- Story + audio -->
     <h3 style="margin-top:18px;">Berättelse</h3>
-    <pre data-id="story"></pre>
+    <pre data-id="story" id="story-output"></pre>
 
-    <h4>Uppläsning</h4>
-    <audio data-id="audio" controls preload="none" style="margin-bottom:5px;"></audio>
+    <h3>Uppläsning</h3>
+    <audio
+      data-id="audio"
+      id="tts-audio"
+      controls
+      preload="none"
+      style="width:100%;"
+    ></audio>
   </div>
 
-  <!-- Klienten först (nu du har dem), sedan public/app.js -->
+  <!-- Ladda recorder-klienten först (om du har den), sedan public/app.js -->
   <script src="recorder.js"></script>
   <script src="app.js"></script>
 </body>
