@@ -1,6 +1,5 @@
-<script>
 // ==========================================================
-// BN-KIDS WS DEV — worldstate.dev.js (v3)
+// BN-KIDS WS DEV — worldstate.dev.js (v3b)
 // Håller koll på "boken" i localStorage, kapitel för kapitel
 // ==========================================================
 
@@ -36,7 +35,7 @@
   // -------------------------------------------------------
   // Skapa nytt world-state från UI-formuläret
   // (använder dina riktiga id:n + data-id)
-// -------------------------------------------------------
+  // -------------------------------------------------------
   function createWorldFromForm() {
     const ageSel    = document.getElementById("age");
     const heroInput = document.getElementById("hero");
@@ -94,8 +93,7 @@
 
   // -------------------------------------------------------
   // Liten summarizer: ta de 1–2 första meningarna per kapitel
-  // så modellen fattar vad som hänt utan att drunkna i text.
-// -------------------------------------------------------
+  // -------------------------------------------------------
   function summarizeChapter(text) {
     if (!text) return "";
     const parts = text.split(/(?<=[.!?])\s+/);
@@ -181,4 +179,3 @@ VIKTIGT:
   };
 
 })();
-</script>
