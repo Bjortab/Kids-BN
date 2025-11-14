@@ -1,10 +1,9 @@
 // ==========================================================
-// BN-KIDS WS DEV — worldstate.dev.js (v5 GC)
+// BN-KIDS WS DEV — worldstate.dev.js (v6)
 // Kapitelbok i localStorage + bättre kapitel-logik
 // - Varje klick på WS-knappen = nytt kapitel i samma bok
-// - Kapitlen ska ha tydlig början och tydligt avslut
-// - Innehåller nu även loadOrCreateFromForm + addChapterAndSave
-//   som ws_button.dev.js förväntar sig
+// - Kortare recap så kapitlet hinner avslutas
+// - Tydligare styrning för "sista kapitlet"
 // ==========================================================
 
 (function () {
@@ -68,7 +67,7 @@
         lengthLabel: lengthText || "Mellan (≈5 min)"
       },
       chapters: [],          // varje kapitel: { text, added_at }
-      last_prompt: prompt,   // ursprunglig barnprompt
+      last_prompt: prompt,   // ursprunglig/ senaste barnprompt
       created_at: Date.now()
     };
   }
@@ -87,9 +86,26 @@
   }
 
   // -------------------------------------------------------
+  // Hjälpare för kortare recap så kapitlet hinner bli klart
+  // -------------------------------------------------------
+  function snippetStart(txt, maxLen) {
+    if (!txt) return "";
+    const clean = txt.replace(/\s+/g, " ").trim();
+    if (clean.length <= maxLen) return clean;
+    return clean.slice(0, maxLen) + " …";
+  }
+
+  function snippetEnd(txt, maxLen) {
+    if (!txt) return "";
+    const clean = txt.replace(/\s+/g, " ").trim();
+    if (clean.length <= maxLen) return clean;
+    return "… " + clean.slice(clean.length - maxLen);
+  }
+
+  // -------------------------------------------------------
   // Bygg WS-prompt baserat på tidigare kapitel
-  //  - Ser till att varje kapitel får tydlig början och slut
-  //  - Tar ev. "önskemål" med som extra instruktion
+  //  - Kort recap (början + slut) istället för full text
+  //  - Tydligare instruktion om längd + avslut
   // -------------------------------------------------------
   function buildWsPrompt(state, wishOrOpts) {
     if (!state) return "";
@@ -108,22 +124,49 @@
     const chapters = Array.isArray(state.chapters) ? state.chapters : [];
     const nextChapter = chapters.length + 1;
 
-    // Enkel recap: vi skickar in texten som är,
-    // men prefixar med "Kapitel X:" så modellen förstår strukturen.
-    let recap = "Detta är första kapitlet.\n";
-    if (chapters.length > 0) {
-      recap = chapters
-        .map((c, i) => `Kapitel ${i + 1} (kort sammanfattning av tidigare text):\n${c.text}`)
-        .join("\n\n");
+    // ---- Ny, kort recap: början + slut på senaste kapitel ----
+    let recap;
+    if (chapters.length === 0) {
+      recap = "Detta är början av berättelsen. Inga tidigare kapitel finns ännu.\n";
+    } else {
+      const first = chapters[0].text || "";
+      const last  = chapters[chapters.length - 1].text || "";
+
+      const firstShort = snippetStart(first, 220);
+      const lastShort  = snippetEnd(last, 260);
+
+      recap =
+        "Så här började berättelsen (kort sammanfattning):\n" +
+        firstShort +
+        "\n\n" +
+        "Så här slutade det senaste kapitlet (fortsätt härifrån, inte från början):\n" +
+        lastShort +
+        "\n";
     }
 
     // Extra instruktion om detta kapitlet ska kännas som "sista"
     const wishLower = wishText.toLowerCase();
     const isMaybeLast =
       wishLower.includes("sista kapitlet") ||
-      wishLower.includes("avsluta berättelsen");
+      wishLower.includes("avsluta berättelsen") ||
+      wishLower.includes("avsluta boken") ||
+      wishLower.includes("slutet på berättelsen") ||
+      wishLower.includes("slutet på boken");
 
     const lengthHint = (state.meta && state.meta.lengthLabel) || "Mellan (≈5 min)";
+
+    const baseLengthInstr =
+      "Skriv ett kapitel på ungefär 8–14 meningar. " +
+      "Det är viktigare att kapitlet känns komplett än att det är långt. " +
+      "Om du märker att du börjar närma dig slutet av din text, " +
+      "avrunda kapitlet med en fullständig mening istället för att fortsätta.";
+
+    const endingInstr = isMaybeLast
+      ? "Detta ska vara SISTA kapitlet i boken. Knyt ihop de viktigaste trådarna, " +
+        "ge ett lugnt och hoppfullt slut och lämna inte kvar stora obesvarade frågor. " +
+        "Starta inte ett helt nytt äventyr i slutet."
+      : "Detta är ett MITTENKAPITEL. Avsluta kapitlet med en hel mening och en mjuk krok " +
+        "som gör att man vill läsa nästa kapitel, men börja inte om berättelsen från början.";
 
     // Själva systemprompten till modellen
     const prompt = `
@@ -134,71 +177,61 @@ Huvudpersonen heter ${hero} och ska alltid kallas "${hero}" genom hela boken.
 Barnets ursprungliga idé (från starten av boken) är:
 "${state.last_prompt || ""}"
 
-Här är en översikt över vad som hänt i tidigare kapitel:
+Här är en kort översikt över vad som hänt i berättelsen hittills:
 ${recap}
 
-Du ska nu skriva KAPITEL ${nextChapter}.
+Du ska nu skriva KAPITEL ${nextChapter} i SAMMA berättelse.
 
 Viktigt om strukturen för kapitlet:
-- Börja kapitlet med 1–3 meningar som knyter an till slutet av föregående kapitel
-  (t.ex. hur det kändes, vart de var på väg, vad de nu vill göra),
-  men upprepa inte hela föregående scen.
-- Efter den korta återkopplingen ska du föra berättelsen vidare
-  till en NY scen, ny händelse eller ny utveckling.
-- Skriv kapitlet så att det fungerar fristående: det ska ha en tydlig början,
-  en mitt och ett slut.
+- Fortsätt direkt från slutet av föregående kapitel (utifrån stycket ovan).
+- Starta inte om med en helt ny dag eller en helt ny historia om samma figur.
+- Upprepa inte samma morgon, samma första skoldag eller samma skattjakt som redan hänt.
+- Skriv kapitlet så att det har en tydlig början, en mitt och ett slut.
+
+Längd:
+- ${baseLengthInstr}
+- Kapitlet ska ungefär motsvara ${lengthHint} i högläsningstid för barn.
 
 Tydligt slut:
 - Avsluta alltid kapitlet med en fullständig mening som slutar med punkt.
-- Lämna gärna en mjuk krok mot nästa kapitel (en känsla, en fråga eller en ny insikt),
-  men börja aldrig skriva nästa scen.
 - Avsluta inte mitt i en mening.
+
+${endingInstr}
 
 Tonalitet:
 - Språket ska vara enkelt, tydligt och tryggt för barn i åldern ${ageLabel}.
 - Håll en positiv och hoppfull ton, även när det är lite spännande.
 - Undvik brutalt våld, död eller skrämmande detaljer.
 
-Längd:
-- Skriv ett kapitel som ungefär motsvarar ${lengthHint} högläsningstid.
-- Det är viktigare att kapitlet känns komplett än att det är exakt en viss längd.
-
-Önskemål från barnet (om något av detta finns, väv in det naturligt i kapitlet):
+Önskemål från barnet (väv in detta naturligt i kapitlet, utan att starta om berättelsen):
 ${wishText ? `- "${wishText}"` : "- (inga extra önskemål just nu)"}
-
-${isMaybeLast
-  ? "Detta kapitlet får gärna kännas som ett sista, avrundande kapitel där berättelsen knyts ihop på ett lugnt och fint sätt."
-  : "Lämna utrymme för fler äventyr i framtida kapitel, men utan att göra detta kapitel ofullständigt."
-}
     `.trim();
 
     return prompt;
   }
 
   // -------------------------------------------------------
-  // NYTT: ladda befintlig bok eller skapa ny från formulär
-  // -------------------------------------------------------
+  // Ladda befintlig bok eller skapa ny från formuläret
+  // (används av ws_button.dev.js)
+// -------------------------------------------------------
   function loadOrCreateFromForm() {
     let state = loadWS();
-    if (state && typeof state === "object") {
-      return state;
-    }
+    if (state && typeof state === "object") return state;
     state = createWorldFromForm();
     saveWS(state);
     return state;
   }
 
   // -------------------------------------------------------
-  // NYTT: lägg till kapitel + spara direkt
-  // -------------------------------------------------------
+  // Lägg till kapitel + spara direkt
+  // (används av ws_button.dev.js)
+// -------------------------------------------------------
   function addChapterAndSave(state, chapterText, wishText) {
     let next = addChapterToWS(state, chapterText);
     if (!next) return state;
-
     if (wishText && typeof wishText === "string") {
       next.last_wish = wishText.trim();
     }
-
     saveWS(next);
     return next;
   }
@@ -215,16 +248,16 @@ ${isMaybeLast
   }
 
   // -------------------------------------------------------
-  // Exportera globalt
+  // Exportera globalt — API som ws_button.dev.js förväntar sig
   // -------------------------------------------------------
   window.WS_DEV = {
     load: loadWS,
     save: saveWS,
-    createWorldFromForm: createWorldFromForm,
-    addChapterToWS: addChapterToWS,
-    buildWsPrompt: buildWsPrompt,
+    createWorldFromForm,
+    addChapterToWS,
+    buildWsPrompt,
     reset: resetWS,
-    loadOrCreateFromForm: loadOrCreateFromForm,
-    addChapterAndSave: addChapterAndSave
+    loadOrCreateFromForm,
+    addChapterAndSave
   };
 })();
