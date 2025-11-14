@@ -1,8 +1,10 @@
 // ==========================================================
-// BN-KIDS WS DEV — worldstate.dev.js (v4)
+// BN-KIDS WS DEV — worldstate.dev.js (v5b)
 // Kapitelbok i localStorage + bättre kapitel-logik
 // - Varje klick på WS-knappen = nytt kapitel i samma bok
 // - Kapitlen ska ha tydlig början och tydligt avslut
+// - Stöd för "sista kapitlet" (manuellt + auto efter flera kapitel)
+// - Inkluderar helper: loadOrCreateFromForm (används av ws_button.dev.js)
 // ==========================================================
 
 (function () {
@@ -72,6 +74,22 @@
   }
 
   // -------------------------------------------------------
+  // Helper: ladda befintlig bok eller skapa ny från formuläret
+  // (DETTA är funktionen ws_button.dev.js ropar på)
+// -------------------------------------------------------
+  function loadOrCreateFromForm() {
+    let state = loadWS();
+    if (!state) {
+      state = createWorldFromForm();
+      saveWS(state);
+      console.log("[WS DEV] skapade ny bok från formulär");
+    } else {
+      console.log("[WS DEV] laddade befintlig bok", state);
+    }
+    return state;
+  }
+
+  // -------------------------------------------------------
   // Uppdatera world state med nytt kapitel
   // -------------------------------------------------------
   function addChapterToWS(state, chapterText) {
@@ -88,6 +106,7 @@
   // Bygg WS-prompt baserat på tidigare kapitel
   //  - Ser till att varje kapitel får tydlig början och slut
   //  - Tar ev. "önskemål" med som extra instruktion
+  //  - Kan markera att detta är "sista kapitlet"
   // -------------------------------------------------------
   function buildWsPrompt(state, wishOrOpts) {
     if (!state) return "";
@@ -115,15 +134,26 @@
         .join("\n\n");
     }
 
-    // Extra instruktion om detta kapitlet ska kännas som "sista"
-    // (du kan styra det från din prompt/önskemål, t.ex. "nu sista kapitlet")
-    const isMaybeLast =
-      wishText.toLowerCase().includes("sista kapitlet") ||
-      wishText.toLowerCase().includes("avsluta berättelsen");
-
     const lengthHint = (state.meta && state.meta.lengthLabel) || "Mellan (≈5 min)";
 
+    // --- Logik för sista kapitlet -------------------------
+    const wishLower = wishText.toLowerCase();
+    const mentionsLast =
+      wishLower.includes("sista kapitlet") ||
+      wishLower.includes("avsluta berättelsen") ||
+      wishLower.includes("avsluta boken") ||
+      wishLower.includes("slutet på berättelsen") ||
+      wishLower.includes("slutet på boken");
+
+    // Auto: om vi redan har många kapitel, föreslå naturligt slut
+    const AUTO_LAST_AFTER_CHAPTERS = 5; // kan justeras senare
+    const autoLast = chapters.length >= AUTO_LAST_AFTER_CHAPTERS;
+
+    const isLastChapter = mentionsLast || autoLast;
+
+    // ------------------------------------------------------
     // Själva systemprompten till modellen
+    // ------------------------------------------------------
     const prompt = `
 Du är en varm och trygg barnboksförfattare.
 Du skriver en kapitelbok på svenska för barn i åldern ${ageLabel}.
@@ -137,7 +167,7 @@ ${recap}
 
 Du ska nu skriva KAPITEL ${nextChapter}.
 
-Viktigt om strukturen för kapitlet:
+Struktur för kapitlet:
 - Börja kapitlet med 1–3 meningar som knyter an till slutet av föregående kapitel
   (t.ex. hur det kändes, vart de var på väg, vad de nu vill göra),
   men upprepa inte hela föregående scen.
@@ -146,11 +176,19 @@ Viktigt om strukturen för kapitlet:
 - Skriv kapitlet så att det fungerar fristående: det ska ha en tydlig början,
   en mitt och ett slut.
 
-Tydligt slut:
+Tydligt slut för kapitlet:
 - Avsluta alltid kapitlet med en fullständig mening som slutar med punkt.
-- Lämna gärna en mjuk krok mot nästa kapitel (en känsla, en fråga eller en ny insikt),
-  men börja aldrig skriva nästa scen.
 - Avsluta inte mitt i en mening.
+
+Om detta är sista kapitlet i boken:
+- Knyt ihop de viktigaste trådarna i berättelsen.
+- Ge ett lugnt, fint och hoppfullt slut.
+- Lämna inte kvar stora obesvarade frågor.
+- Efter detta kapitel ska det kännas som att boken är färdig.
+${isLastChapter
+  ? "Behandla detta kapitel som SISTA kapitlet i boken."
+  : "Lämna gärna en mjuk krok mot framtida äventyr, men gör ändå kapitlet komplett i sig själv."
+}
 
 Tonalitet:
 - Språket ska vara enkelt, tydligt och tryggt för barn i åldern ${ageLabel}.
@@ -163,11 +201,6 @@ Längd:
 
 Önskemål från barnet (om något av detta finns, väv in det naturligt i kapitlet):
 ${wishText ? `- "${wishText}"` : "- (inga extra önskemål just nu)"}
-
-${isMaybeLast
-  ? "Detta kapitlet får gärna kännas som ett sista, avrundande kapitel där berättelsen knyts ihop på ett lugnt och fint sätt."
-  : "Lämna utrymme för fler äventyr i framtida kapitel, men utan att göra detta kapitel ofullständigt."
-}
     `.trim();
 
     return prompt;
@@ -191,6 +224,7 @@ ${isMaybeLast
     load: loadWS,
     save: saveWS,
     createWorldFromForm: createWorldFromForm,
+    loadOrCreateFromForm: loadOrCreateFromForm, // <- viktig för ws_button.dev.js
     addChapterToWS: addChapterToWS,
     buildWsPrompt: buildWsPrompt,
     reset: resetWS
