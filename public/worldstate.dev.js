@@ -1,8 +1,9 @@
 // ==========================================================
-// BN-KIDS WS DEV — worldstate.dev.js (v3.1)
+// BN-KIDS WS DEV — worldstate.dev.js (v3.2)
 // Lokal "bok" i localStorage, kapitel för kapitel
 // - Kortare recap per kapitel (mindre tjat)
 // - Tar hänsyn till barnets önskemål via "Sagoförslag"
+// - Bättre hjälte-hantering (alltid riktigt namn, inte "hjälten/vännen")
 // - Exponerar loadOrCreateFromForm() för ws_button.dev.js
 // ==========================================================
 
@@ -66,12 +67,12 @@
       meta: {
         ageValue: ageValue,
         ageLabel: ageText,
-        hero: hero,
+        hero: hero,                // kan vara tomt, hanteras i buildWsPrompt
         lengthValue: lengthVal,
         lengthLabel: lengthText
       },
-      chapters: [],          // varje kapitel: { text, added_at }
-      last_prompt: prompt,   // ursprunglig idé / barnprompt
+      chapters: [],                // varje kapitel: { text, added_at }
+      last_prompt: prompt,         // ursprunglig idé / barnprompt
       created_at: Date.now()
     };
   }
@@ -111,7 +112,6 @@
     const trimmed = text.trim();
     if (!trimmed) return "";
 
-    // Dela på meningar (väldigt enkel splitter)
     const sentences = trimmed.split(/(?<=[\.\!\?…])\s+/);
     const firstTwo = sentences.slice(0, 2).join(" ");
     const recap = firstTwo.length > 400 ? firstTwo.slice(0, 400) + "…" : firstTwo;
@@ -123,12 +123,34 @@
   // Bygg WS-prompt baserat på tidigare kapitel
   // - Kort recap per kapitel
   // - Tar med barnets önskemål för NÄSTA kapitel
+  // - Säkerställer att huvudpersonen har ett riktigt namn
   // -------------------------------------------------------
   function buildWsPrompt(state) {
     if (!state) return "";
 
-    const hero =
-      (state.meta && state.meta.hero && state.meta.hero.trim()) || "hjälten";
+    const rawHero =
+      state.meta && typeof state.meta.hero === "string"
+        ? state.meta.hero.trim()
+        : "";
+
+    let hero = rawHero;
+    let heroInstruction = "";
+
+    if (!hero) {
+      // Inget namn ifyllt → modellen får hitta på ETT namn
+      hero = "huvudpersonen";
+      heroInstruction = `
+Hitta på ETT tydligt namn på huvudpersonen (t.ex. "Lina" eller "Oskar").
+Använd DET namnet konsekvent genom hela kapitlet.
+Kalla inte huvudpersonen bara "hjälten", "vännen", "pojken" eller "flickan".`;
+    } else {
+      // Namn ifyllt → använd exakt det
+      heroInstruction = `
+Huvudpersonen heter ${hero}.
+Använd exakt namnet "${hero}" genom hela kapitlet.
+Kalla inte huvudpersonen bara "hjälten", "vännen", "pojken" eller "flickan".`;
+    }
+
     const ageLabel =
       (state.meta && state.meta.ageLabel && state.meta.ageLabel.trim()) ||
       "7–8 år";
@@ -148,7 +170,6 @@
     const chapters = Array.isArray(state.chapters) ? state.chapters : [];
 
     if (chapters.length === 0) {
-      // Första kapitlet – utgå från ursprunglig idé om den finns
       const baseIdea =
         (state.last_prompt && String(state.last_prompt).trim()) || "";
       if (baseIdea) {
@@ -161,7 +182,6 @@
           "Detta är början på berättelsen. Inget har hänt än – detta är kapitel 1.";
       }
     } else {
-      // Senare kapitel – kort recap per kapitel
       recapSection = chapters
         .map((c, i) => {
           const recap = makeChapterRecap(c.text);
@@ -174,11 +194,10 @@
 
     const nextChapter = chapters.length + 1;
 
-    // Bygg huvudprompten
     let prompt = `
 Du är en barnboksförfattare.
 Du skriver en kapitelbok på svenska för barn i åldern ${ageLabel}.
-Huvudpersonen heter ${hero} och ska alltid kallas "${hero}" genom hela boken.
+${heroInstruction}
 
 Här är en sammanfattning av de tidigare kapitlen:
 ${recapSection}
@@ -189,12 +208,10 @@ Viktigt:
 - Fortsätt berättelsen logiskt från tidigare händelser.
 - Upprepa inte samma början, samma magiska föremål eller exakt samma scener om och om igen.
 - Låt nya platser, personer, problem och lösningar dyka upp, men håll kvar samma värld och ton.
-- Använd samma huvudperson "${hero}" och samma vänskaper/relationer som redan etablerats.
 - Håll språket enkelt, tydligt och tryggt för barn i åldern ${ageLabel}.
 - Avsluta kapitlet med ett tydligt men gärna lite spännande slut (en krok för nästa kapitel, ingen total reset).
 `.trim();
 
-    // Lägg till barnets önskemål för nästa kapitel om det finns
     if (nextWish) {
       prompt += `
 
