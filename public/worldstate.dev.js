@@ -1,12 +1,12 @@
 // ==========================================================
 // BN-KIDS WS DEV — worldstate.dev.js (v3)
-// Kapitelbok i localStorage + önskemål per kapitel
+// Lokal "bok" i localStorage, kapitel för kapitel
 // ==========================================================
 
 (function () {
   "use strict";
 
-  const STORAGE_KEY = "bn_kids_ws_book_v3";
+  const STORAGE_KEY = "bn_kids_ws_book_v1";
 
   // -------------------------------------------------------
   // Ladda world state (bok) från localStorage
@@ -18,7 +18,7 @@
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed === "object") return parsed;
     } catch (e) {
-      console.warn("[WS DEV] kunde inte läsa world state", e);
+      console.warn("[WS] kunde inte läsa world state", e);
     }
     return null;
   }
@@ -30,12 +30,13 @@
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     } catch (e) {
-      console.warn("[WS DEV] kunde inte spara world state", e);
+      console.warn("[WS] kunde inte spara world state", e);
     }
   }
 
   // -------------------------------------------------------
-  // Skapa nytt world state från UI-formuläret
+  // Skapa nytt world-state från UI-formuläret
+  // (använder dina id:n: age, hero, length, prompt)
   // -------------------------------------------------------
   function createWorldFromForm() {
     const ageSel    = document.getElementById("age");
@@ -43,41 +44,35 @@
     const lengthSel = document.getElementById("length");
     const promptEl  = document.querySelector("[data-id='prompt']");
 
-    const ageValue = ageSel && ageSel.value ? ageSel.value : "";
-    const ageText =
+    const ageValue   = (ageSel && ageSel.value) || "";
+    const ageText    =
       ageSel &&
       ageSel.selectedOptions &&
-      ageSel.selectedOptions[0] &&
-      ageSel.selectedOptions[0].textContent
+      ageSel.selectedOptions[0]
         ? ageSel.selectedOptions[0].textContent.trim()
         : "";
-
-    const hero =
+    const hero       =
       heroInput && heroInput.value ? heroInput.value.trim() : "";
-
-    const lengthVal = lengthSel && lengthSel.value ? lengthSel.value : "";
+    const lengthVal  = (lengthSel && lengthSel.value) || "";
     const lengthText =
       lengthSel &&
       lengthSel.selectedOptions &&
-      lengthSel.selectedOptions[0] &&
-      lengthSel.selectedOptions[0].textContent
+      lengthSel.selectedOptions[0]
         ? lengthSel.selectedOptions[0].textContent.trim()
         : "";
-
-    const basePrompt =
+    const prompt     =
       promptEl && promptEl.value ? promptEl.value.trim() : "";
 
     return {
       meta: {
-        ageValue,
-        ageLabel: ageText || "7–8 år",
-        hero: hero || "hjälten",
+        ageValue:   ageValue,
+        ageLabel:   ageText,
+        hero:       hero,
         lengthValue: lengthVal,
-        lengthLabel: lengthText || "Mellan (≈5 min)"
+        lengthLabel: lengthText
       },
-      chapters: [],               // varje kapitel: { text, added_at }
-      basePrompt,                 // ursprunglig idé från barnet
-      lastWish: "",               // senaste önskemål för nästa kapitel
+      chapters: [],          // varje kapitel: { text, added_at }
+      last_prompt: prompt,   // ursprunglig barnprompt / önskemål
       created_at: Date.now()
     };
   }
@@ -96,80 +91,81 @@
   }
 
   // -------------------------------------------------------
-  // Bygg WS-prompt baserat på tidigare kapitel + ev önskemål
-  // options: { wish?: string }
+  // Bygg WS-prompt baserat på tidigare kapitel + barnets önskemål
+  //  - använder sista kapitlets slut som “ankare”
   // -------------------------------------------------------
-  function buildWsPrompt(state, options) {
+  function buildWsPrompt(state, wishText) {
     if (!state) return "";
 
-    const hero = (state.meta && state.meta.hero) || "hjälten";
-    const ageLabel = (state.meta && state.meta.ageLabel) || "7–8 år";
+    const hero =
+      (state.meta && state.meta.hero && state.meta.hero.trim()) ||
+      "hjälten";
+    const ageLabel =
+      (state.meta && state.meta.ageLabel && state.meta.ageLabel.trim()) ||
+      "7–8 år";
 
+    let recap = "";
     const chapters = Array.isArray(state.chapters)
       ? state.chapters
       : [];
 
-    let recap;
-    if (chapters.length === 0) {
-      // Första kapitlet – använd basprompten
-      recap = state.basePrompt
-        ? `Barnets idé till berättelsen är: "${state.basePrompt}".`
-        : "Barnet vill ha ett nytt äventyr.";
+    if (!chapters.length) {
+      // Första kapitlet – använd barnets ursprungliga idé
+      const base = (state.last_prompt || "").trim();
+      recap = base
+        ? `Barnets önskan för berättelsen är:\n"${base}".`
+        : "Detta är början på en ny berättelse.";
     } else {
-      // Gör en ganska kort recap av tidigare kapitel
-      recap = chapters
-        .map((c, i) => {
-          // Ta bara första ~300 tecknen per kapitel för att inte svälla
-          const t = (c.text || "").trim().replace(/\s+/g, " ");
-          const short = t.slice(0, 300);
-          return `Kapitel ${i + 1}: ${short}${t.length > 300 ? " …" : ""}`;
-        })
-        .join("\n\n");
+      // Senaste kapitlets slut – ta de sista ~3 meningarna
+      const last = String(chapters[chapters.length - 1].text || "")
+        .trim()
+        .replace(/\s+/g, " ");
+
+      const parts = last.split(/(?<=[.!?])\s+/);
+      const tail = parts.slice(-3).join(" ");
+      recap = `Senaste kapitlet slutade ungefär så här:\n"${tail}"`;
     }
 
     const nextChapter = chapters.length + 1;
 
-    const wish = options && options.wish
-      ? options.wish.trim()
-      : "";
-
-    let wishText = "";
+    let wishBlock = "";
+    const wish = (wishText || "").trim();
     if (wish) {
-      wishText = `
-Barnets önskemål för nästa kapitel:
+      wishBlock = `
+Barnet har önskat följande till berättelsen:
 "${wish}".
-`.trim();
+Väv in detta naturligt i kapitlet utan att starta om historien.`;
     }
 
-    // Själva prompten till modellen
-    const prompt = `
-Du är en trygg, varm och tydlig barnboksförfattare.
-Du skriver en kapitelbok på svenska för barn i åldern ${ageLabel}.
-Huvudpersonen heter ${hero} och ska ALLTID kallas exakt "${hero}" genom hela boken.
+    const prompt = [
+      `Du är en erfaren barnboksförfattare på svenska för barn i åldern ${ageLabel}.`,
+      `Du skriver en kapitelbok där huvudpersonen heter ${hero} och alltid ska kallas "${hero}" i texten.`,
+      ``,
+      `Berättelsen hittills:`,
+      recap,
+      ``,
+      `Nu ska du skriva KAPITEL ${nextChapter}.`,
+      `Fortsätt exakt där förra kapitlet slutade i tid och plats.`,
+      `Starta INTE om historien från början. Upprepa inte samma “solig morgon”, “skogen” eller “skatt” igen om det redan hänt.`,
+      `Håll dig till samma värld, samma figurer och samma ton.`,
+      `Skriv i ett lugnt, tydligt och tryggt språk som passar ett barn i åldern ${ageLabel}.`,
+      `Avsluta kapitlet med en tydlig scen som leder vidare mot nästa kapitel, gärna med en liten cliffhanger men inget brutalt slut.`,
+      wishBlock
+    ].join("\n");
 
-Bakgrund och tidigare kapitel:
-${recap}
-
-${wishText ? wishText + "\n\n" : ""}Skriv nu KAPITEL ${nextChapter}.
-
-Regler:
-- Fortsätt berättelsen logiskt från tidigare händelser.
-- Upprepa INTE exakt samma början, miljö eller händelser som tidigare kapitel.
-- Använd samma huvudperson "${hero}" och samma värld.
-- Håll språket enkelt, tydligt och tryggt för barn i åldern ${ageLabel}.
-- Undvik våld, blod, död och läskiga detaljer.
-- Avsluta kapitlet med en tydlig krok eller förväntan inför nästa kapitel,
-  inte med ett "allt är klart och över"-slut.
-`.trim();
-
-    return prompt;
+    return prompt.trim();
   }
 
   // -------------------------------------------------------
-  // Nollställ bok (debug i console)
+  // Nollställ bok (debug)
   // -------------------------------------------------------
   function resetWS() {
-    localStorage.removeItem(STORAGE_KEY);
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+      console.log("[WS DEV] world state reset (localStorage cleared)");
+    } catch (e) {
+      console.warn("[WS] kunde inte nollställa world state", e);
+    }
   }
 
   // -------------------------------------------------------
@@ -183,4 +179,5 @@ Regler:
     buildWsPrompt,
     reset: resetWS
   };
+
 })();
