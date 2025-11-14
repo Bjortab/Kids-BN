@@ -1,8 +1,9 @@
 // ==========================================================
-// BN-KIDS WS DEV — worldstate.dev.js (v3)
+// BN-KIDS WS DEV — worldstate.dev.js (v3.1)
 // Lokal "bok" i localStorage, kapitel för kapitel
 // - Kortare recap per kapitel (mindre tjat)
 // - Tar hänsyn till barnets önskemål via "Sagoförslag"
+// - Exponerar loadOrCreateFromForm() för ws_button.dev.js
 // ==========================================================
 
 (function () {
@@ -76,6 +77,19 @@
   }
 
   // -------------------------------------------------------
+  // Helper: ladda befintlig bok, eller skapa ny från formuläret
+  // (denna är vad ws_button.dev.js anropar)
+  // -------------------------------------------------------
+  function loadOrCreateFromForm() {
+    let state = loadWS();
+    if (!state) {
+      state = createWorldFromForm();
+      saveWS(state);
+    }
+    return state;
+  }
+
+  // -------------------------------------------------------
   // Uppdatera world state med nytt kapitel
   // -------------------------------------------------------
   function addChapterToWS(state, chapterText) {
@@ -97,7 +111,7 @@
     const trimmed = text.trim();
     if (!trimmed) return "";
 
-    // Dela på meningar (mycket enkel svensk/engelsk splitter)
+    // Dela på meningar (väldigt enkel splitter)
     const sentences = trimmed.split(/(?<=[\.\!\?…])\s+/);
     const firstTwo = sentences.slice(0, 2).join(" ");
     const recap = firstTwo.length > 400 ? firstTwo.slice(0, 400) + "…" : firstTwo;
@@ -208,6 +222,7 @@ Försök väva in detta på ett naturligt sätt i handlingen, utan att bryta log
     load: loadWS,
     save: saveWS,
     createWorldFromForm,
+    loadOrCreateFromForm,
     addChapterToWS,
     buildWsPrompt,
     reset: resetWS
