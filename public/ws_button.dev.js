@@ -1,6 +1,5 @@
-<script>
 // ==========================================================
-// BN-KIDS WS DEV — ws_button.dev.js (v3)
+// BN-KIDS WS DEV — ws_button.dev.js (v3b)
 // Hanterar "Skapa saga (WS dev)"-knappen
 // ==========================================================
 
@@ -52,7 +51,7 @@
       wsSetError("");
       wsShowSpinner(true);
 
-      const formWorld = window.WS_DEV.createWorldFromForm();
+      const formWorld  = window.WS_DEV.createWorldFromForm();
       const formValues = wsReadFormValues();
 
       // Ladda ev befintlig bok
@@ -69,8 +68,7 @@
 
       const isFirstChapter = !state.chapters || state.chapters.length === 0;
 
-      // "Önskan mitt i" – vi tolkar nuvarande promptfält som önskan
-      // (om det inte är första kapitlet; då är det bara startprompt)
+      // "Önskan mitt i" – nuvarande promptfält som önskan
       const userWish = isFirstChapter ? "" : formValues.prompt;
 
       const wsPrompt = window.WS_DEV.buildWsPrompt(state, userWish);
@@ -119,10 +117,12 @@
       state = window.WS_DEV.addChapterToWS(state, storyText);
       window.WS_DEV.save(state);
 
-      console.log("[WS DEV] chapters now:",
+      console.log(
+        "[WS DEV] chapters now:",
         Array.isArray(state.chapters)
           ? state.chapters.map((c, i) => i + 1)
-          : []);
+          : []
+      );
 
     } catch (err) {
       console.error("[WS DEV] fel i WS-flödet", err);
@@ -154,4 +154,3 @@
   }
 
 })();
-</script>
