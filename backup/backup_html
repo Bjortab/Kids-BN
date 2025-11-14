@@ -302,3 +302,370 @@ Back up nr 2 med ditklistrat kod rad 214 - 219
 </html>
 
 fungerande kod med koppling till WS och button
+
+
+<!doctype html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>BN's Sagovärld</title>
+  <style>
+    body {
+      background:#111;
+      color:#eee;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+        Roboto, Arial, sans-serif;
+      margin:0;
+    }
+    .panel {
+      max-width:880px;
+      margin:20px auto;
+      background:#181818;
+      border-radius:12px;
+      padding:20px 22px;
+      box-shadow:0 0 10px #222;
+      box-sizing:border-box;
+    }
+    .row {
+      display:flex;
+      gap:12px;
+      flex-wrap:wrap;
+      margin-top:12px;
+    }
+    .flex1 {
+      flex:1;
+      min-width:0;
+    }
+    input, select, textarea, button {
+      width:100%;
+      font:inherit;
+      border-radius:8px;
+      border:1px solid #2b2b2b;
+      background:#121212;
+      color:#eaeaea;
+      padding:10px;
+      box-sizing:border-box;
+    }
+    textarea {
+      min-height:180px;
+    }
+    button {
+      cursor:pointer;
+      border-color:#006050;
+      background:#006050;
+    }
+    button[disabled] {
+      opacity:.55;
+      cursor:not-allowed;
+    }
+    .btn-primary {
+      background:#0e8d56;
+      border-color:#0e8d56;
+      font-weight:600;
+    }
+    .btn-secondary {
+      background:#242b36;
+      border-color:#444f60;
+    }
+    .spinner {
+      display:none;
+      margin-top:8px;
+      padding:8px;
+      background:#303030;
+      border-radius:8px;
+      border:1px solid #606060;
+      color:#e5e5e5;
+      font-size:14px;
+      white-space:pre-wrap;
+    }
+    .spinner[data-active="1"] {
+      display:block;
+    }
+    .spinner-badge {
+      display:inline-block;
+      width:10px;
+      height:10px;
+      border-radius:999px;
+      border:2px solid #ccc;
+      margin-right:6px;
+      box-sizing:border-box;
+    }
+    .spinner-badge::before {
+      content:"";
+      display:block;
+      width:100%;
+      height:100%;
+      border-radius:inherit;
+      background:#00d07a;
+      animation:spinnerBlink 1s infinite ease-in-out;
+    }
+    @keyframes spinnerBlink {
+      0% { opacity:0.2; }
+      50% { opacity:1; }
+      100% { opacity:0.2; }
+    }
+    pre {
+      white-space:pre-wrap;
+      line-height:1.5;
+    }
+    h1 {
+      margin:0 0 4px 0;
+    }
+    .controls-row {
+      display:flex;
+      gap:12px;
+      align-items:center;
+      flex-wrap:wrap;
+      margin-top:18px;
+    }
+    .recorder-controls {
+      display:flex;
+      gap:8px;
+      align-items:center;
+      flex-wrap:wrap;
+    }
+    .recorder-status {
+      color:#999;
+      font-size:13px;
+      margin-left:6px;
+    }
+    .error {
+      background:#331;
+      color:#fdd;
+      padding:8px 10px;
+      border-radius:8px;
+      margin-top:12px;
+      display:none;
+    }
+    .muted {
+      color:#aaa;
+    }
+    .sr-only {
+      position:absolute;
+      width:1px;
+      height:1px;
+      padding:0;
+      margin:-1px;
+      overflow:hidden;
+      clip:rect(0,0,0,0);
+      white-space:nowrap;
+      border:0;
+    }
+  </style>
+</head>
+
+<!-- Inline binder: väntar på att public/app.js ska exponera createstory / playTTS -->
+<script>
+  window.addEventListener("DOMContentLoaded", function () {
+    function byText(txt) {
+      const term = txt.toLowerCase();
+      const btns = Array.from(
+        document.querySelectorAll("button,input[type=button],input[type=submit]")
+      );
+      return btns.find((b) =>
+        (b.value || b.innerText || "").toLowerCase().includes(term)
+      );
+    }
+
+    function bindButtons() {
+      try {
+        const createBtn = byText("skapa saga");
+        const ttsBtn = byText("läs upp");
+
+        if (createBtn && window.createstory) {
+          createBtn.addEventListener("click", function (e) {
+            if (e) e.preventDefault();
+            window.createstory();
+          });
+        } else {
+          console.warn("[BN] createstory saknas?");
+        }
+
+        if (ttsBtn && window.playTTS) {
+          ttsBtn.addEventListener("click", function (e) {
+            if (e) e.preventDefault();
+            window.playTTS();
+          });
+        } else {
+          console.warn("[BN] playTTS saknas?");
+        }
+
+        console.log("[BN] inline-binder attempted");
+      } catch (err) {
+        console.warn("[BN] binder error", err);
+      }
+    }
+
+    if (window.createstory && window.playTTS) {
+      bindButtons();
+    } else {
+      let tries = 0;
+      const iv = setInterval(function () {
+        tries++;
+        if (window.createstory && window.playTTS) {
+          bindButtons();
+          clearInterval(iv);
+        } else if (tries > 20) {
+          clearInterval(iv);
+        }
+      }, 100);
+    }
+  });
+</script>
+
+<!-- WS dev-stöd -->
+<script src="worldstate.dev.js"></script>
+<script src="ws_button.dev.js"></script>
+
+<body>
+  <div class="panel">
+    <h1>BN's Sagovärld</h1>
+    <small class="muted">…där drömmar blir berättelser</small>
+
+    <div class="row" style="margin-top:12px;">
+      <div class="flex1">
+        <label>Ålder</label>
+        <select data-id="age" id="age">
+          <option value="4-6">4–6 år</option>
+          <option value="7-8" selected>7–8 år</option>
+          <option value="9-11">9–11 år</option>
+          <option value="12-15">12–15 år</option>
+        </select>
+      </div>
+
+      <div class="flex1">
+        <label>Hjälte (valfritt)</label>
+        <input
+          data-id="hero"
+          id="hero"
+          placeholder="t.ex. Taxen Tage, Draken Holger"
+        />
+      </div>
+
+      <div class="flex1">
+        <label>Längd</label>
+        <select data-id="length" id="length">
+          <option value="short">Kort (&lt;2 min)</option>
+          <option value="medium" selected>Medium (≈5 min)</option>
+          <option value="long">Lång (&gt;12 min)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:12px;">
+      <div class="flex1">
+        <label>Sagoförslag (skriv eller tala in)</label>
+        <textarea
+          data-id="prompt"
+          id="prompt"
+          placeholder="Skriv din idé här…"
+        ></textarea>
+      </div>
+    </div>
+
+    <!-- Röst-UI: inspelning + transkript -->
+    <div style="margin-top:18px;">
+      <label class="sr-only" for="transcript">
+        Transkript (läs att använda som prompt)
+      </label>
+
+      <div class="controls-row">
+        <div class="recorder-controls" aria-live="polite">
+          <button id="rec-btn" type="button" class="btn-primary">
+            Starta inspelning
+          </button>
+          <button
+            id="rec-cancel"
+            type="button"
+            class="btn-secondary"
+            style="display:none"
+          >
+            Avbryt
+          </button>
+          <span id="rec-status" class="recorder-status">Inaktiv</span>
+        </div>
+
+        <div class="flex1" style="text-align:right;">
+          <small class="muted">
+            Max inspelningstid: <strong>60 sekunder</strong>
+          </small>
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:12px;">
+        <textarea
+          id="transcript"
+          data-id="transcript"
+          placeholder="Här kommer transkriptionen…"
+          aria-label="Transkript"
+        ></textarea>
+      </div>
+
+      <div class="controls-row">
+        <button
+          id="use-transcript"
+          class="btn-secondary"
+          type="button"
+          data-id="btn-use-transcript"
+        >
+          Använd som prompt
+        </button>
+        <button
+          id="clear-transcript"
+          class="btn-secondary"
+          type="button"
+          data-id="btn-clear-transcript"
+        >
+          Rensa
+        </button>
+      </div>
+    </div>
+
+    <!-- Skapa saga / WS dev / TTS -->
+    <div class="row" style="margin-top:18px;">
+      <button class="btn-primary" data-id="btn-create">
+        Skapa saga
+      </button>
+      <button class="btn-secondary" data-id="btn-ws-dev">
+        Skapa saga (WS dev)
+      </button>
+      <button class="btn-secondary" data-id="btn-tts">
+        Läs upp (om saga finns)
+      </button>
+    </div>
+
+    <!-- Spinner / status för generering -->
+    <div
+      class="spinner"
+      data-id="spinner"
+      aria-live="polite"
+      aria-atomic="true"
+    >
+      <span class="spinner-badge"></span>
+      <span data-id="spinner-text">Skapar berättelse…</span>
+    </div>
+
+    <!-- Felmeddelande -->
+    <div class="error" data-id="error"></div>
+
+    <!-- Story + audio -->
+    <h3 style="margin-top:18px;">Berättelse</h3>
+    <pre data-id="story" id="story-output"></pre>
+
+    <h3>Uppläsning</h3>
+    <audio
+      data-id="audio"
+      id="tts-audio"
+      controls
+      preload="none"
+      style="width:100%;"
+    ></audio>
+  </div>
+
+  <!-- Ladda recorder-klienten först (om du har den), sedan public/app.js -->
+  <script src="recorder.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
+
