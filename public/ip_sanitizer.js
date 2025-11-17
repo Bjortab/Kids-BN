@@ -1,14 +1,12 @@
 // ==========================================================
-// BN-KIDS — IP SANITIZER (v1)
+// BN-KIDS — IP SANITIZER (v2)
 // - Bygger ovanpå BNKidsIP från ip_blocklist.js
 // - Exponerar:
 //    - BNKidsIP.sanitizePrompt(originalPrompt, options?)
-//      → {
-//           sanitizedPrompt,
-//           hadIP,
-//           blockedTerms,
-//           explanationPrefix
-//         }
+//    - BNKidsIP.cleanOutputText(text, options?)
+// ----------------------------------------------------------
+// sanitizePrompt() -> filtrerar BARNETS PROMPT
+// cleanOutputText() -> filtrerar MODELLENS SVAR (sagotext)
 // ==========================================================
 (function (global) {
   "use strict";
@@ -38,7 +36,8 @@
   }
 
   // --------------------------------------------------------
-  // BNKidsIP.sanitizePrompt(originalPrompt, options?)
+  // sanitizePrompt(originalPrompt, options?)
+  //  - Filtrerar barnets prompt före LLM-anrop
   // --------------------------------------------------------
   BNKidsIP.sanitizePrompt = function sanitizePrompt(originalPrompt, options) {
     const prompt = originalPrompt || "";
@@ -81,6 +80,41 @@
       hadIP,
       blockedTerms,
       explanationPrefix
+    };
+  };
+
+  // --------------------------------------------------------
+  // cleanOutputText(text, options?)
+  //  - Filtrerar modellens sagotext EFTER LLM-anrop
+  //  - Ersätter alla blockerade termer med replacement
+  // --------------------------------------------------------
+  BNKidsIP.cleanOutputText = function cleanOutputText(text, options) {
+    const inputText = text || "";
+    const replacement =
+      (options && options.replacement) || DEFAULT_REPLACEMENT;
+
+    const blockedTerms = BNKidsIP.detectBlockedTerms(inputText);
+    const hadIP = blockedTerms.length > 0;
+
+    if (!hadIP) {
+      return {
+        cleanedText: inputText,
+        hadIPInOutput: false,
+        blockedOutputTerms: []
+      };
+    }
+
+    let cleaned = inputText;
+    blockedTerms.forEach(function (term) {
+      if (!term) return;
+      const pattern = new RegExp(escapeRegExp(term), "gi");
+      cleaned = cleaned.replace(pattern, replacement);
+    });
+
+    return {
+      cleanedText: cleaned,
+      hadIPInOutput: true,
+      blockedOutputTerms: blockedTerms
     };
   };
 
