@@ -358,7 +358,16 @@
   </div>
 
   <!-- Ladda recorder-klienten först (om du har den), sedan public/app.js -->
-  <script src="recorder.js"></script>
-  <script src="app.js"></script>
+  <!-- IP-skydd + StoryEngine (alltid aktivt) -->
+<script src="/ip_blocklist.js"></script>
+<script src="/ip_sanitizer.js"></script>
+<script src="/story_engine.dev.js"></script>
+<script src="/generateStory.ip.js"></script>
+
+<!-- BN-Kids GC/DEV (dina befintliga filer) -->
+<script src="/worldstate.gc.js"></script>
+<script src="/ws_button.gc.js"></script>
+<script src="/worldstate.dev.js"></script>
+<script src="/ws_button.dev.js"></script>
 </body>
 </html>
