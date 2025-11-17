@@ -1,14 +1,21 @@
-// ==========================================================
-// BN-KIDS — generateStory IP WRAPPER + STORY ENGINE (v5)
-// - IP-skydd + kapitelmotor i samma pipeline
-// - Rensar både PROMPT och UTGÅENDE TEXT från IP (t.ex. LEGO)
-// - "Obs! Jag kan inte använda riktiga sagokaraktärer…":
-//    * visas bara om barnets prompt innehöll IP
-//    * och bara i första kapitlet (chapterIndex === 1)
-// - NYTT: om StoryEngine råkar lämna en JSON-klump med
-//   { "chapterPlan": [...], "chapterText": "..." } som text,
-//   så plockar vi ut *bara* chapterText innan vi visar kapitlet.
-// ==========================================================
+// =====================================================================
+// BN-KIDS — generateStoryWithIPFilter (GC v7)
+// Kopplar ihop:
+//   1) IP-skydd (sanering av prompt + blockering av IP i output)
+//   2) StoryEngine v7 (logisk kapitelmotor)
+//   3) Korrekt textleverans till UI:t (ingen JSON-klump, ingen dubbeltext)
+//
+// Ny logik i v7:
+//   - Förklaringen “Obs! jag kan inte använda riktiga figurer…”
+//         → visas ENDAST om barnet faktiskt skrev IP
+//         → visas ENDAST i kapitel 1
+//   - Utgående text rensas från LEGO, Disney, Marvel osv
+//   - Om modellen råkar lämna JSON → vi plockar ut chapterText
+//   - Aldrig två sagor samtidigt (response alltid enkel och clean)
+//
+// Exponeras globalt som: window.generateStoryWithIPFilter
+// =====================================================================
+
 (function (global) {
   "use strict";
 
@@ -16,147 +23,125 @@
   const BNStoryEngine = global.BNStoryEngine;
 
   if (!BNStoryEngine || typeof BNStoryEngine.generateChapter !== "function") {
-    console.error(
-      "BN-KIDS generateStory.ip.js: BNStoryEngine.generateChapter saknas. " +
-      "Kontrollera att story_engine.dev.js laddas före generateStory.ip.js."
-    );
+    console.error("generateStory.ip.js: StoryEngine saknas – kontrollera load order.");
   }
-
   if (!BNKidsIP || typeof BNKidsIP.sanitizePrompt !== "function") {
-    console.error(
-      "BN-KIDS generateStory.ip.js: BNKidsIP.sanitizePrompt saknas. " +
-      "Kontrollera att ip_blocklist.js och ip_sanitizer.js laddas före generateStory.ip.js."
-    );
+    console.error("generateStory.ip.js: IP-sanitizer saknas – kontrollera load order.");
   }
 
-  function uniqueArray(arr) {
-    return Array.from(new Set(arr.filter(Boolean)));
-  }
-
-  // Försök plocka ut ren chapterText ur en JSON-sträng
-  function extractChapterTextFromJsonString(text) {
-    if (!text || typeof text !== "string") return null;
+  // -----------------------------------------------------------
+  // Hjälp: rensa ut JSON-klump om modellen råkar svara så
+  // -----------------------------------------------------------
+  function extractChapterTextFromPossibleJson(text) {
+    if (typeof text !== "string") return text;
 
     const trimmed = text.trim();
-    if (!trimmed.startsWith("{") || trimmed.indexOf("\"chapterText\"") === -1) {
-      return null;
-    }
+    if (!trimmed.startsWith("{")) return text;
+    if (!trimmed.includes("\"chapterText\"")) return text;
 
     try {
-      const obj = JSON.parse(trimmed);
-      if (obj && typeof obj.chapterText === "string") {
-        return obj.chapterText;
-      }
-    } catch (e) {
-      // ignore
-    }
-    return null;
+      const j = JSON.parse(trimmed);
+      if (j && typeof j.chapterText === "string") return j.chapterText;
+    } catch (_) {}
+
+    return text;
   }
 
-  // --------------------------------------------------------
-  // generateStoryWithIPFilter(rawPrompt, options?)
-  // --------------------------------------------------------
+
+  // -----------------------------------------------------------
+  // Main wrapper: generateStoryWithIPFilter(prompt, options)
+  // -----------------------------------------------------------
   async function generateStoryWithIPFilter(rawPrompt, options) {
     options = options || {};
 
     if (!BNStoryEngine || typeof BNStoryEngine.generateChapter !== "function") {
-      throw new Error(
-        "generateStoryWithIPFilter: BNStoryEngine.generateChapter saknas. " +
-        "Se till att story_engine.dev.js laddas före generateStory.ip.js."
-      );
+      throw new Error("generateStoryWithIPFilter: StoryEngine saknas.");
     }
-
     if (!BNKidsIP || typeof BNKidsIP.sanitizePrompt !== "function") {
-      throw new Error(
-        "generateStoryWithIPFilter: BNKidsIP.sanitizePrompt saknas. " +
-        "Kontrollera att ip_blocklist.js och ip_sanitizer.js laddas före generateStory.ip.js."
-      );
+      throw new Error("generateStoryWithIPFilter: IP-sanitizer saknas.");
     }
 
-    const raw = rawPrompt || "";
-
-    // 1) IP-skydd + sanering av PROMPT
-    const sanitizedResult = BNKidsIP.sanitizePrompt(raw);
-    const sanitizedPrompt = sanitizedResult.sanitizedPrompt;
-    const hadIPInPrompt   = !!sanitizedResult.hadIP;
-    const blockedPrompt   = sanitizedResult.blockedTerms || [];
-    const explanationPref = sanitizedResult.explanationPrefix || "";
-
-    // 2) WorldState + StoryState
-    const ws = options.worldState;
-    if (!ws) {
-      throw new Error(
-        "generateStoryWithIPFilter: options.worldState saknas. " +
-        "Skicka in ditt worldstate-objekt i anropet."
-      );
-    }
-
+    const worldState   = options.worldState;
     const storyStateIn = options.storyState || {};
-    const chapterIndex = (typeof options.chapterIndex === "number")
-      ? options.chapterIndex
-      : 1;
+    const chapterIndex = options.chapterIndex || 1;
 
-    // Lägg in sanerade prompten som extra signal i worldState
-    const effectiveWorldState = Object.assign({}, ws, {
+    if (!worldState) {
+      throw new Error("generateStoryWithIPFilter: worldState saknas i options.");
+    }
+
+    // -------------------------------------------------------
+    // 1) Sanera barnets prompt (IP-skydd)
+    // -------------------------------------------------------
+    const ipSanitized = BNKidsIP.sanitizePrompt(rawPrompt || "");
+    const sanitizedPrompt = ipSanitized.sanitizedPrompt;
+    const hadIPInPrompt   = ipSanitized.hadIP;
+    const blockedPrompt   = ipSanitized.blockedTerms || [];
+    const explanationPref = ipSanitized.explanationPrefix || "";
+
+    // stoppa in sanerad prompt i worldState så motor får info
+    const effectiveWorldState = Object.assign({}, worldState, {
       _userPrompt: sanitizedPrompt
     });
 
-    // 3) Kör BN Story Engine
-    const engineResult = await BNStoryEngine.generateChapter({
+    // -------------------------------------------------------
+    // 2) Kör BN Story Engine v7
+    // -------------------------------------------------------
+    const engine = await BNStoryEngine.generateChapter({
       apiUrl: options.apiUrl || "/api/generate_story",
       worldState: effectiveWorldState,
       storyState: storyStateIn,
-      chapterIndex: chapterIndex,
-      maxChars: options.maxChars || 1600,
-      language: options.language || "sv",
-      audience: options.audience || "7-12",
-      styleHints: options.styleHints || []
+      chapterIndex: chapterIndex
     });
 
-    // 4) Se till att vi har ren kapiteltext, inte JSON-klump
-    let chapterText =
-      engineResult.chapterText ||
-      engineResult.rawModelText ||
-      "";
+    let chapterText = engine.chapterText || "";
 
-    const fromJson = extractChapterTextFromJsonString(chapterText);
-    if (fromJson) {
-      chapterText = fromJson;
-    }
+    // -------------------------------------------------------
+    // 3) Om modellen råkar svara JSON → plocka ut ren text
+    // -------------------------------------------------------
+    chapterText = extractChapterTextFromPossibleJson(chapterText);
 
-    // 5) IP-skydd på UTGÅENDE TEXT (modellens svar)
+    // -------------------------------------------------------
+    // 4) IP-skydd även på utgående text (blockera LEGO etc)
+    // -------------------------------------------------------
     let hadIPInOutput = false;
     let blockedOutput = [];
-    if (BNKidsIP.cleanOutputText) {
-      const out = BNKidsIP.cleanOutputText(chapterText);
-      chapterText   = out.cleanedText || chapterText;
-      hadIPInOutput = !!out.hadIPInOutput;
-      blockedOutput = out.blockedOutputTerms || [];
+
+    if (typeof BNKidsIP.cleanOutputText === "function") {
+      const cleaned = BNKidsIP.cleanOutputText(chapterText);
+      chapterText   = cleaned.cleanedText || chapterText;
+      hadIPInOutput = cleaned.hadIPInOutput || false;
+      blockedOutput = cleaned.blockedOutputTerms || [];
     }
 
-    const hadIPTotal = hadIPInPrompt || hadIPInOutput;
-    const blockedAll = uniqueArray([].concat(blockedPrompt, blockedOutput));
+    const blockedAll = Array.from(
+      new Set([].concat(blockedPrompt, blockedOutput))
+    );
 
-    // 6) Lägg på förklaringen ENDAST om prompten hade IP + första kapitlet
+    // -------------------------------------------------------
+    // 5) Lägg bara till förklaringen EN GÅNG, i kapitel 1,
+    //    och BARA om prompten hade upphovsrättsskyddat IP
+    // -------------------------------------------------------
     let finalText = chapterText;
-    if (hadIPInPrompt && explanationPref && chapterIndex === 1) {
+    if (hadIPInPrompt && chapterIndex === 1 && explanationPref) {
       finalText = explanationPref + "\n\n" + chapterText;
     }
 
+    // -------------------------------------------------------
+    // 6) Returnera stabilt paket
+    // -------------------------------------------------------
     return {
       text: finalText,
-      hadIP: hadIPTotal,
+      hadIP: (hadIPInOutput || hadIPInPrompt),
       hadIPInPrompt: hadIPInPrompt,
       hadIPInOutput: hadIPInOutput,
       blockedTerms: blockedAll,
-      storyState: engineResult.storyState,
-      chapterPlan: engineResult.chapterPlan,
-      engineVersion: engineResult.engineVersion
+      storyState: engine.storyState || storyStateIn,
+      engineVersion: engine.engineVersion
     };
   }
 
-  // --------------------------------------------------------
+  // -----------------------------------------------------------
   // Exponera globalt
-  // --------------------------------------------------------
+  // -----------------------------------------------------------
   global.generateStoryWithIPFilter = generateStoryWithIPFilter;
 })(window);
