@@ -1,20 +1,10 @@
 // ==========================================================
-// BN-KIDS — generateStory IP WRAPPER + STORY ENGINE (v2)
+// BN-KIDS — generateStory IP WRAPPER + STORY ENGINE (v4)
 // - IP-skydd + kapitelmotor i samma pipeline
-// - Använder:
-//     - BNKidsIP.sanitizePrompt(prompt)
-//     - BNStoryEngine.generateChapter(options)
-//
-// Exponerar globalt:
-//    - generateStoryWithIPFilter(rawPrompt, options?)
-//      → {
-//           text,          // färdigt kapitel (ev. med förklaring först)
-//           hadIP,         // true/false
-//           blockedTerms,  // ["pippi långstrump", ...]
-//           storyState,    // uppdaterad röd tråd
-//           chapterPlan,   // kapitelplan
-//           engineVersion  // BN Story Engine version
-//         }
+// - Rensar både PROMPT och UTGÅENDE TEXT från IP (t.ex. LEGO)
+// - "Obs! Jag kan inte använda riktiga sagokaraktärer…":
+//    * visas bara om barnets prompt innehöll IP
+//    * och bara i första kapitlet (chapterIndex === 1)
 // ==========================================================
 (function (global) {
   "use strict";
@@ -36,9 +26,13 @@
     );
   }
 
+  function uniqueArray(arr) {
+    return Array.from(new Set(arr.filter(Boolean)));
+  }
+
   // --------------------------------------------------------
   // generateStoryWithIPFilter(rawPrompt, options?)
-// --------------------------------------------------------
+  // --------------------------------------------------------
   async function generateStoryWithIPFilter(rawPrompt, options) {
     options = options || {};
 
@@ -58,12 +52,12 @@
 
     const raw = rawPrompt || "";
 
-    // 1) IP-skydd + sanering
+    // 1) IP-skydd + sanering av PROMPT
     const sanitizedResult = BNKidsIP.sanitizePrompt(raw);
     const sanitizedPrompt = sanitizedResult.sanitizedPrompt;
-    const hadIP           = sanitizedResult.hadIP;
-    const blockedTerms    = sanitizedResult.blockedTerms;
-    const explanationPref = sanitizedResult.explanationPrefix;
+    const hadIPInPrompt   = !!sanitizedResult.hadIP;
+    const blockedPrompt   = sanitizedResult.blockedTerms || [];
+    const explanationPref = sanitizedResult.explanationPrefix || "";
 
     // 2) WorldState + StoryState
     const ws = options.worldState;
@@ -84,8 +78,9 @@
       _userPrompt: sanitizedPrompt
     });
 
+    // 3) Kör BN Story Engine
     const engineResult = await BNStoryEngine.generateChapter({
-      apiUrl: options.apiUrl || "/api/story",
+      apiUrl: options.apiUrl || "/api/generate_story",
       worldState: effectiveWorldState,
       storyState: storyStateIn,
       chapterIndex: chapterIndex,
@@ -95,17 +90,33 @@
       styleHints: options.styleHints || []
     });
 
-    let finalText = engineResult.chapterText || "";
+    let chapterText = engineResult.chapterText || "";
 
-    // 3) Lägg på förklaringen om barnet använde IP
-    if (hadIP && explanationPref) {
-      finalText = explanationPref + "\n\n" + finalText;
+    // 4) IP-skydd på UTGÅENDE TEXT (modellens svar)
+    let hadIPInOutput = false;
+    let blockedOutput = [];
+    if (BNKidsIP.cleanOutputText) {
+      const out = BNKidsIP.cleanOutputText(chapterText);
+      chapterText   = out.cleanedText || chapterText;
+      hadIPInOutput = !!out.hadIPInOutput;
+      blockedOutput = out.blockedOutputTerms || [];
+    }
+
+    const hadIPTotal = hadIPInPrompt || hadIPInOutput;
+    const blockedAll = uniqueArray([].concat(blockedPrompt, blockedOutput));
+
+    // 5) Lägg på förklaringen ENDAST om prompten hade IP + första kapitlet
+    let finalText = chapterText;
+    if (hadIPInPrompt && explanationPref && chapterIndex === 1) {
+      finalText = explanationPref + "\n\n" + chapterText;
     }
 
     return {
       text: finalText,
-      hadIP: hadIP,
-      blockedTerms: blockedTerms,
+      hadIP: hadIPTotal,
+      hadIPInPrompt: hadIPInPrompt,
+      hadIPInOutput: hadIPInOutput,
+      blockedTerms: blockedAll,
       storyState: engineResult.storyState,
       chapterPlan: engineResult.chapterPlan,
       engineVersion: engineResult.engineVersion
