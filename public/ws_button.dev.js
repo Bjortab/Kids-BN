@@ -1,6 +1,8 @@
 // ==========================================================
-// BN-KIDS WS DEV — ws_button.dev.js (v3 GC)
+// BN-KIDS WS DEV — ws_button.dev.js (v4 GC + StoryEngine/IP)
 // Extra knapp "Skapa saga (WS dev)" som använder worldstate
+// - Om generateStoryWithIPFilter finns → använd nya motorn
+// - Annars fallback till gamla /api/generate_story-flödet
 // ==========================================================
 
 (function () {
@@ -98,6 +100,7 @@
     // 2) Bygg WS-prompt (inkl. recap + nytt önskemål)
     const wsPrompt = window.WS_DEV.buildWsPrompt(state, newWish);
 
+    // Body används i fallback-läget (gamla API:t)
     const body = {
       age: ageVal,
       hero: hero,
@@ -110,35 +113,88 @@
     if (createBtn) createBtn.disabled = true;
 
     try {
-      const res = await fetch("/api/generate_story", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json"
-        },
-        body: JSON.stringify(body)
-      });
+      // ====================================================
+      // NYTT: Använd StoryEngine + IP-filter om det finns
+      // ====================================================
+      if (typeof window.generateStoryWithIPFilter === "function") {
+        log("använder generateStoryWithIPFilter + BNStoryEngine");
 
-      const raw = await res.text();
-      let data;
-      try {
-        data = JSON.parse(raw);
-      } catch (e) {
-        throw new Error("Kunde inte tolka JSON: " + raw.slice(0, 200));
+        const chaptersCount = state.chapters ? state.chapters.length : 0;
+        const chapterIndex = chaptersCount + 1;
+
+        // worldState = befintlig state + lite extra metadata
+        const worldState = Object.assign({}, state, {
+          meta: Object.assign({}, state.meta || {}, {
+            hero: hero,
+            age: ageVal,
+            length: lenVal,
+            lang: "sv"
+          }),
+          ws: Object.assign({}, state.ws || {}, {
+            wsPrompt: wsPrompt,
+            lastWish: newWish
+          })
+        });
+
+        const storyStateIn = state.storyState || {};
+
+        const result = await window.generateStoryWithIPFilter(wsPrompt, {
+          worldState: worldState,
+          storyState: storyStateIn,
+          chapterIndex: chapterIndex,
+          apiUrl: "/api/story", // nya BN-story-endpointen
+          maxChars: 1600,
+          language: "sv",
+          audience: "7-12"
+        });
+
+        const chapterText = result.text || "";
+        if (storyEl) storyEl.textContent = chapterText;
+
+        // spara uppdaterat storyState i state
+        state.storyState = result.storyState || storyStateIn;
+
+        // 3) Uppdatera bok + spara (som tidigare)
+        state = window.WS_DEV.addChapterAndSave(state, chapterText, newWish);
+
+        const count = state.chapters ? state.chapters.length : 0;
+        log("chapters now (StoryEngine):", Array.from({ length: count }, (_, i) => i + 1));
+      } else {
+        // ====================================================
+        // FALLBACK: Gamla flödet /api/generate_story (oförändrat)
+        // ====================================================
+        log("generateStoryWithIPFilter saknas, använder /api/generate_story");
+
+        const res = await fetch("/api/generate_story", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json"
+          },
+          body: JSON.stringify(body)
+        });
+
+        const raw = await res.text();
+        let data;
+        try {
+          data = JSON.parse(raw);
+        } catch (e) {
+          throw new Error("Kunde inte tolka JSON: " + raw.slice(0, 200));
+        }
+
+        if (!data || !data.story) {
+          throw new Error("Saknar story-fält i svar");
+        }
+
+        const chapterText = data.story;
+        if (storyEl) storyEl.textContent = chapterText;
+
+        // 3) Uppdatera bok + spara
+        state = window.WS_DEV.addChapterAndSave(state, chapterText, newWish);
+
+        const count = state.chapters ? state.chapters.length : 0;
+        log("chapters now (legacy):", Array.from({ length: count }, (_, i) => i + 1));
       }
-
-      if (!data || !data.story) {
-        throw new Error("Saknar story-fält i svar");
-      }
-
-      const chapterText = data.story;
-      if (storyEl) storyEl.textContent = chapterText;
-
-      // 3) Uppdatera bok + spara
-      state = window.WS_DEV.addChapterAndSave(state, chapterText, newWish);
-
-      const count = state.chapters ? state.chapters.length : 0;
-      log("chapters now:", Array.from({ length: count }, (_, i) => i + 1));
     } catch (err) {
       console.error("[WS DEV] fel:", err);
       const errorEl = $('[data-id="error"]');
