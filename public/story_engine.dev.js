@@ -1,14 +1,17 @@
 // ==========================================================
-// BN-KIDS — STORY ENGINE DEV (v2)
+// BN-KIDS — STORY ENGINE DEV (v3)
 // - Bygger kapitel ovanpå befintligt /api/generate_story
 // - Försöker läsa JSON { chapterPlan, chapterText, storyState }
 // - Om ingen JSON hittas → använder hela svaret som kapiteltext
 //   och behåller storyState som det är.
+// - Extra fokus på:
+//   * Naturlig, korrekt svenska
+//   * Inga konstiga logikhål (t.ex. stjärnor i en tunnel utan förklaring)
 // ==========================================================
 (function (global) {
   "use strict";
 
-  const ENGINE_VERSION = "bn-story-engine-v2";
+  const ENGINE_VERSION = "bn-story-engine-v3";
 
   // ----------------------------------------------------------
   // Hjälpfunktion: försök klippa texten vid sista fullständiga
@@ -42,6 +45,7 @@
   function _trimUnfinishedSentence(text) {
     let t = text.trim();
 
+    // Ta bort avslutande kommatecken / kolon / semikolon
     t = t.replace(/[,:;]\s*$/u, "");
 
     const parts = t.split(/\s+/u);
@@ -74,11 +78,17 @@
 
     const styleText = styleHints.length
       ? styleHints.map(function (s, i) { return (i + 1) + ". " + s; }).join("\n")
-      : "- Levande, konkret, mycket dialog.\n- Enkla meningar men inte bebisspråk.";
+      : [
+          "- Skriv som en skicklig svensk barnboksförfattare.",
+          "- Naturlig, korrekt svenska med bra flyt och tydlig grammatik.",
+          "- Enkla meningar som är lätta att läsa högt, men inte bebisspråk.",
+          "- Mycket konkret handling, dialog och känslor.",
+          "- Undvik svengelska och konstiga, maskinella formuleringar."
+        ].join("\n");
 
     const langText =
       language === "sv"
-        ? "Skriv på tydlig, naturlig svenska."
+        ? "Skriv på naturlig, korrekt svenska som låter som en mänsklig författare."
         : "Write in clear, natural language.";
 
     const continueRule = [
@@ -93,6 +103,15 @@
       "  och liknande floskler.",
       "- Avsluta i stället kapitlet med en konkret, levande scen eller oväntad detalj",
       "  som gör läsaren nyfiken på nästa kapitel (en naturlig cliffhanger)."
+    ].join("\n");
+
+    const logicRule = [
+      "- Undvik logiska glapp. Om något ovanligt händer (t.ex. stjärnor som lyser i en tunnel,",
+      "  magiskt ljus, märkliga väsen) måste du förklara HUR och VARFÖR det är möjligt i berättelsen.",
+      "- Exempel: magiska kristaller som lyser, lampor som satts upp, projektioner från en maskin,",
+      "  eller annan enkel, barnvänlig förklaring.",
+      "- Skriv aldrig att något bara \"händer\" utan att ge en kort, tydlig orsak i berättelsen.",
+      "- Var alltid konkret: visa vad som händer istället för att beskriva det vagt."
     ].join("\n");
 
     return [
@@ -111,6 +130,9 @@
       "",
       "Regler för fortsättning:",
       continueRule,
+      "",
+      "Regler för logik och konsekvens:",
+      logicRule,
       "",
       "Struktur:",
       "1. Om du kan: skapa först en kort kapitelplan (\"chapterPlan\") med 3–7 punkter.",
