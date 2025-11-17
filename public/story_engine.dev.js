@@ -1,17 +1,111 @@
 // ==========================================================
-// BN-KIDS — STORY ENGINE DEV (v3)
+// BN-KIDS — STORY ENGINE DEV (v4)
 // - Bygger kapitel ovanpå befintligt /api/generate_story
 // - Försöker läsa JSON { chapterPlan, chapterText, storyState }
 // - Om ingen JSON hittas → använder hela svaret som kapiteltext
-//   och behåller storyState som det är.
 // - Extra fokus på:
 //   * Naturlig, korrekt svenska
 //   * Inga konstiga logikhål (t.ex. stjärnor i en tunnel utan förklaring)
+//   * Olika kapitel-längder beroende på ålder:
+//       7–8  → kortare kapitel
+//       9–10 → lite längre
+//       11–12 → medel
+//       13–14 → längre
+//       15   → längst
 // ==========================================================
 (function (global) {
   "use strict";
 
-  const ENGINE_VERSION = "bn-story-engine-v3";
+  const ENGINE_VERSION = "bn-story-engine-v4";
+
+  // ----------------------------------------------------------
+  // Åldersband & max längd per kapitel
+  // ----------------------------------------------------------
+  function classifyAgeBand(ageRaw, fallbackAudience) {
+    let s = "";
+
+    if (ageRaw !== undefined && ageRaw !== null) {
+      s = String(ageRaw).trim();
+    } else if (fallbackAudience) {
+      s = String(fallbackAudience).trim();
+    }
+
+    let a = null;
+    let b = null;
+
+    if (!s) {
+      // Default: mellanålder
+      return {
+        band: "11-12",
+        display: "11–12",
+        maxChars: 1200
+      };
+    }
+
+    // Försök tolka format som "7-8" eller "9–10"
+    let m = s.match(/^(\d{1,2})\s*[-–]\s*(\d{1,2})$/);
+    if (m) {
+      a = parseInt(m[1], 10);
+      b = parseInt(m[2], 10);
+    } else {
+      // Annars: plocka första talet i strängen (t.ex. "7 år", "ålder 10")
+      let n = s.match(/(\d{1,2})/);
+      if (n) {
+        a = parseInt(n[1], 10);
+        b = a;
+      }
+    }
+
+    if (a === null || isNaN(a)) {
+      return {
+        band: "11-12",
+        display: "11–12",
+        maxChars: 1200
+      };
+    }
+
+    if (b === null || isNaN(b)) {
+      b = a;
+    }
+
+    const avg = (a + b) / 2;
+
+    if (avg <= 8) {
+      return {
+        band: "7-8",
+        display: "7–8",
+        maxChars: 700
+      };
+    }
+    if (avg <= 10) {
+      return {
+        band: "9-10",
+        display: "9–10",
+        maxChars: 900
+      };
+    }
+    if (avg <= 12) {
+      return {
+        band: "11-12",
+        display: "11–12",
+        maxChars: 1200
+      };
+    }
+    if (avg <= 14) {
+      return {
+        band: "13-14",
+        display: "13–14",
+        maxChars: 1500
+      };
+    }
+
+    // 15+ → tonåring
+    return {
+      band: "15",
+      display: "15",
+      maxChars: 1700
+    };
+  }
 
   // ----------------------------------------------------------
   // Hjälpfunktion: försök klippa texten vid sista fullständiga
@@ -69,7 +163,7 @@
       storyState,
       chapterIndex,
       language = "sv",
-      audience = "7-12",
+      audience = "7–12",   // display-text, t.ex. "7–8"
       styleHints = []
     } = options;
 
@@ -111,7 +205,8 @@
       "- Exempel: magiska kristaller som lyser, lampor som satts upp, projektioner från en maskin,",
       "  eller annan enkel, barnvänlig förklaring.",
       "- Skriv aldrig att något bara \"händer\" utan att ge en kort, tydlig orsak i berättelsen.",
-      "- Var alltid konkret: visa vad som händer istället för att beskriva det vagt."
+      "- Håll dig till en tydlig huvudscen i kapitlet. Blanda inte in slumpmässiga nya element",
+      "  som inte hänger ihop med resten av kapitlet."
     ].join("\n");
 
     return [
@@ -256,9 +351,9 @@
     const worldState   = options.worldState;
     const storyStateIn = options.storyState || {};
     const chapterIndex = options.chapterIndex;
-    const maxChars     = options.maxChars || 1600;
+    const maxCharsOpt  = options.maxChars || 1600;
     const language     = options.language || "sv";
-    const audience     = options.audience || "7-12";
+    const audienceOpt  = options.audience || "7-12";
     const styleHints   = options.styleHints || [];
     const apiUrl       = options.apiUrl || "/api/generate_story";
 
@@ -271,16 +366,17 @@
       );
     }
 
+    const meta    = (worldState && worldState.meta) || {};
+    const ageInfo = classifyAgeBand(meta.age, audienceOpt);
+
     const prompt = buildEnginePrompt({
       worldState,
       storyState: storyStateIn,
       chapterIndex,
       language,
-      audience,
+      audience: ageInfo.display,
       styleHints
     });
-
-    const meta = (worldState && worldState.meta) || {};
 
     const payload = {
       // gamla fält som /api/generate_story förväntar sig
@@ -320,14 +416,19 @@
       chapterPlan = [];
     }
 
-    chapterText = truncateToWholeSentence(chapterText, maxChars);
+    // Åldersstyrd max-längd
+    const effectiveMaxChars = Math.min(maxCharsOpt, ageInfo.maxChars);
+    chapterText = truncateToWholeSentence(chapterText, effectiveMaxChars);
 
     return {
       chapterText: chapterText,
       storyState: updatedStoryState,
       chapterPlan: chapterPlan,
       rawModelText: modelText,
-      engineVersion: ENGINE_VERSION
+      engineVersion: ENGINE_VERSION,
+      ageBand: ageInfo.band,
+      ageDisplay: ageInfo.display,
+      maxCharsUsed: effectiveMaxChars
     };
   }
 
@@ -337,7 +438,8 @@
   const BNStoryEngine = {
     ENGINE_VERSION: ENGINE_VERSION,
     generateChapter: generateChapter,
-    truncateToWholeSentence: truncateToWholeSentence
+    truncateToWholeSentence: truncateToWholeSentence,
+    classifyAgeBand: classifyAgeBand
   };
 
   global.BNStoryEngine = BNStoryEngine;
