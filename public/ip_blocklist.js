@@ -1,5 +1,5 @@
 // ==========================================================
-// BN-KIDS — IP BLOCKLIST (v1)
+// BN-KIDS — IP BLOCKLIST (v2)
 // - Håller koll på upphovsrättsskyddade namn/termer
 // - Exponerar:
 //    - BNKidsIP.BLOCKED_IP_TERMS
@@ -37,6 +37,14 @@
     "jedi",
     "sith",
     "lightsaber",
+
+    // Darth Vader + vanliga felstavningar
+    "darth vader",
+    "dark vader",
+    "dart vader",
+    "dart vador",
+    "dart wader",
+
     "marvel",
     "avengers",
     "iron man",
@@ -61,8 +69,12 @@
     "fortnite",
     "roblox",
 
-    // Generella varumärkes- / franchise-ord
+    // LEGO + leksaker
     "lego",
+    "lego-gubbar",
+    "lego gubbar",
+
+    // Generella varumärkes- / franchise-ord
     "barbie",
     "hello kitty",
     "angry birds",
@@ -83,7 +95,7 @@
   // detectBlockedTerms(text):
   //  - returnerar en array med alla träffade IP-termer
   //    (i lowercase, utan dubbletter)
-  // --------------------------------------------------------
+// --------------------------------------------------------
   BNKidsIP.detectBlockedTerms = function detectBlockedTerms(text) {
     const norm = BNKidsIP.normalize(text);
     if (!norm) return [];
