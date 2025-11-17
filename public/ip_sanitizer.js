@@ -14,12 +14,10 @@
   const BNKidsIP = global.BNKidsIP || {};
   const DEFAULT_REPLACEMENT = "din favoritfigur";
 
-  // Hjälpfunktion för att escap:a regex-specialtecken
   function escapeRegExp(str) {
     return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
 
-  // Bygg instruktion till LLM om originalitet
   function buildLLMInstruction(hadIP) {
     let base =
       "Viktigt: Berättelsen får inte använda eller efterlikna upphovsrättsskyddade figurer, världar eller varumärken. " +
@@ -36,8 +34,7 @@
   }
 
   // --------------------------------------------------------
-  // sanitizePrompt(originalPrompt, options?)
-  //  - Filtrerar barnets prompt före LLM-anrop
+  // Filtrera PROMPTEN före LLM-anrop
   // --------------------------------------------------------
   BNKidsIP.sanitizePrompt = function sanitizePrompt(originalPrompt, options) {
     const prompt = originalPrompt || "";
@@ -50,7 +47,6 @@
     let sanitized = prompt;
 
     if (hadIP) {
-      // Ersätt alla träffar (case-insensitive) med t.ex. "din favoritfigur"
       let work = sanitized;
 
       blockedTerms.forEach(function (term) {
@@ -62,12 +58,10 @@
       sanitized = work;
     }
 
-    // Lägg på hårda instruktioner om originellt innehåll
     const llmInstruction = buildLLMInstruction(hadIP);
     const sanitizedPrompt =
       sanitized.trim() + "\n\n" + llmInstruction.trim();
 
-    // Förklaringen till barnet om IP användes
     let explanationPrefix = "";
     if (hadIP) {
       explanationPrefix =
@@ -84,9 +78,7 @@
   };
 
   // --------------------------------------------------------
-  // cleanOutputText(text, options?)
-  //  - Filtrerar modellens sagotext EFTER LLM-anrop
-  //  - Ersätter alla blockerade termer med replacement
+  // Filtrera MODELLENS SVAR efter LLM-anrop
   // --------------------------------------------------------
   BNKidsIP.cleanOutputText = function cleanOutputText(text, options) {
     const inputText = text || "";
@@ -118,6 +110,5 @@
     };
   };
 
-  // Exponera globalt
   global.BNKidsIP = BNKidsIP;
 })(window);
