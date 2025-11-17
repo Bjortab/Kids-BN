@@ -1,21 +1,14 @@
 // ==========================================================
-// BN-KIDS — STORY ENGINE DEV (v1)
-// En fristående sagomotor ovanpå ditt LLM-API.
-// - Gör kapitelplan + kapiteltext i ETT anrop
-// - Håller röd tråd via storyState
-// - Klipper ALDRIG mitt i en mening
-// - Undviker floskler som "nu förstod han att äventyret bara hade börjat"
-// - Utgår från att berättelsen FORTSÄTTER om du inte säger åt den att avsluta.
-//
-// Exponeras som window.BNStoryEngine:
-//   - BNStoryEngine.ENGINE_VERSION
-//   - BNStoryEngine.generateChapter(options)
-//   - BNStoryEngine.truncateToWholeSentence(text, maxChars)
+// BN-KIDS — STORY ENGINE DEV (v2)
+// - Bygger kapitel ovanpå befintligt /api/generate_story
+// - Försöker läsa JSON { chapterPlan, chapterText, storyState }
+// - Om ingen JSON hittas → använder hela svaret som kapiteltext
+//   och behåller storyState som det är.
 // ==========================================================
 (function (global) {
   "use strict";
 
-  const ENGINE_VERSION = "bn-story-engine-v1";
+  const ENGINE_VERSION = "bn-story-engine-v2";
 
   // ----------------------------------------------------------
   // Hjälpfunktion: försök klippa texten vid sista fullständiga
@@ -27,7 +20,6 @@
     let trimmed = text.trim();
 
     if (!maxChars || trimmed.length <= maxChars) {
-      // Klipp ändå bort uppenbart ofärdigt skräp i slutet
       return _trimUnfinishedSentence(trimmed);
     }
 
@@ -121,7 +113,7 @@
       continueRule,
       "",
       "Struktur:",
-      "1. Skapa först en kort kapitelplan (\"chapterPlan\") med 3–7 punkter.",
+      "1. Om du kan: skapa först en kort kapitelplan (\"chapterPlan\") med 3–7 punkter.",
       "2. Skriv sedan \"chapterText\" utifrån planen.",
       "   - Kapitlet ska kännas komplett, men lämna plats för fortsättning.",
       "   - Använd tydliga meningar, med fokus på handling, dialog och känslor.",
@@ -136,12 +128,14 @@
       ssJson,
       "",
       "VIKTIGT:",
-      "- Svara med ENDAST giltig JSON i följande format, inget annat runtomkring:",
+      "- Om du svarar i JSON-form, använd formatet:",
       "{",
       "  \"chapterPlan\": [\"kort punkt 1\", \"kort punkt 2\", \"...\"],",
       "  \"chapterText\": \"själva kapitlet som löpande text...\",",
       "  \"storyState\": { \"nyckel\": \"värde\", \"...\" : \"...\" }",
-      "}"
+      "}",
+      "- Om du *inte* svarar i JSON-form går det också bra: skriv då bara kapiteltexten.",
+      "- Svara aldrig med annan metadata runtomkring (inga förklaringar före eller efter)."
     ].join("\n");
   }
 
@@ -202,15 +196,16 @@
   }
 
   // ----------------------------------------------------------
-  // Litet fetch-lager
+  // Litet fetch-lager – riktas mot /api/generate_story
   // ----------------------------------------------------------
   async function callStoryApi(apiUrl, payload) {
-    const url = apiUrl || "/api/story";
+    const url = apiUrl || "/api/generate_story";
 
     const res = await fetch(url, {
       method: "POST",
       headers: {
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "Accept": "application/json"
       },
       body: JSON.stringify(payload)
     });
@@ -232,7 +227,7 @@
 
   // ----------------------------------------------------------
   // Huvudfunktion: generateChapter(options)
-// ----------------------------------------------------------
+  // ----------------------------------------------------------
   async function generateChapter(options) {
     options = options || {};
 
@@ -243,7 +238,7 @@
     const language     = options.language || "sv";
     const audience     = options.audience || "7-12";
     const styleHints   = options.styleHints || [];
-    const apiUrl       = options.apiUrl || "/api/story";
+    const apiUrl       = options.apiUrl || "/api/generate_story";
 
     if (!worldState) {
       throw new Error("BNStoryEngine.generateChapter: worldState saknas.");
@@ -263,29 +258,45 @@
       styleHints
     });
 
+    const meta = (worldState && worldState.meta) || {};
+
     const payload = {
+      // gamla fält som /api/generate_story förväntar sig
+      age: meta.age,
+      hero: meta.hero,
+      length: meta.length,
+      lang: language || "sv",
+      // vår riktiga superprompt
+      prompt: prompt,
+      // extra meta som backend kan ignorera
       engineVersion: ENGINE_VERSION,
       mode: "bn_story_engine",
-      promptType: "chapter_with_plan_and_state",
       chapterIndex: chapterIndex,
       worldState: worldState,
-      storyState: storyStateIn,
-      prompt: prompt
+      storyState: storyStateIn
     };
 
     const rawResponse = await callStoryApi(apiUrl, payload);
     const modelText   = extractModelText(rawResponse);
 
+    // Först: försök tolka JSON-svar
     const json = extractJsonFromText(modelText);
-    if (!json) {
-      throw new Error(
-        "BNStoryEngine: Kunde inte tolka JSON från modellens svar."
-      );
-    }
 
-    let chapterText = (typeof json.chapterText === "string") ? json.chapterText : "";
-    const updatedStoryState = json.storyState || storyStateIn || {};
-    const chapterPlan = Array.isArray(json.chapterPlan) ? json.chapterPlan : [];
+    let chapterText;
+    let updatedStoryState;
+    let chapterPlan;
+
+    if (json && typeof json === "object") {
+      // "riktigt" story-engine-svar
+      chapterText = (typeof json.chapterText === "string") ? json.chapterText : "";
+      updatedStoryState = json.storyState || storyStateIn || {};
+      chapterPlan = Array.isArray(json.chapterPlan) ? json.chapterPlan : [];
+    } else {
+      // fallback: använd hela svaret som kapiteltext
+      chapterText = modelText || "";
+      updatedStoryState = storyStateIn || {};
+      chapterPlan = [];
+    }
 
     chapterText = truncateToWholeSentence(chapterText, maxChars);
 
