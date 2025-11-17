@@ -1,5 +1,5 @@
 // ==========================================================
-// BN-KIDS WS DEV — ws_button.dev.js (v4 GC + StoryEngine/IP)
+// BN-KIDS WS DEV — ws_button.dev.js (v5 GC + StoryEngine/IP)
 // Extra knapp "Skapa saga (WS dev)" som använder worldstate
 // - Om generateStoryWithIPFilter finns → använd nya motorn
 // - Annars fallback till gamla /api/generate_story-flödet
@@ -142,7 +142,7 @@
           worldState: worldState,
           storyState: storyStateIn,
           chapterIndex: chapterIndex,
-          apiUrl: "/api/story", // nya BN-story-endpointen
+          apiUrl: "/api/generate_story", // <-- viktig ändring
           maxChars: 1600,
           language: "sv",
           audience: "7-12"
