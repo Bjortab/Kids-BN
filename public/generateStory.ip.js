@@ -1,10 +1,13 @@
 // ==========================================================
-// BN-KIDS — generateStory IP WRAPPER + STORY ENGINE (v4)
+// BN-KIDS — generateStory IP WRAPPER + STORY ENGINE (v5)
 // - IP-skydd + kapitelmotor i samma pipeline
 // - Rensar både PROMPT och UTGÅENDE TEXT från IP (t.ex. LEGO)
 // - "Obs! Jag kan inte använda riktiga sagokaraktärer…":
 //    * visas bara om barnets prompt innehöll IP
 //    * och bara i första kapitlet (chapterIndex === 1)
+// - NYTT: om StoryEngine råkar lämna en JSON-klump med
+//   { "chapterPlan": [...], "chapterText": "..." } som text,
+//   så plockar vi ut *bara* chapterText innan vi visar kapitlet.
 // ==========================================================
 (function (global) {
   "use strict";
@@ -28,6 +31,26 @@
 
   function uniqueArray(arr) {
     return Array.from(new Set(arr.filter(Boolean)));
+  }
+
+  // Försök plocka ut ren chapterText ur en JSON-sträng
+  function extractChapterTextFromJsonString(text) {
+    if (!text || typeof text !== "string") return null;
+
+    const trimmed = text.trim();
+    if (!trimmed.startsWith("{") || trimmed.indexOf("\"chapterText\"") === -1) {
+      return null;
+    }
+
+    try {
+      const obj = JSON.parse(trimmed);
+      if (obj && typeof obj.chapterText === "string") {
+        return obj.chapterText;
+      }
+    } catch (e) {
+      // ignore
+    }
+    return null;
   }
 
   // --------------------------------------------------------
@@ -90,9 +113,18 @@
       styleHints: options.styleHints || []
     });
 
-    let chapterText = engineResult.chapterText || "";
+    // 4) Se till att vi har ren kapiteltext, inte JSON-klump
+    let chapterText =
+      engineResult.chapterText ||
+      engineResult.rawModelText ||
+      "";
 
-    // 4) IP-skydd på UTGÅENDE TEXT (modellens svar)
+    const fromJson = extractChapterTextFromJsonString(chapterText);
+    if (fromJson) {
+      chapterText = fromJson;
+    }
+
+    // 5) IP-skydd på UTGÅENDE TEXT (modellens svar)
     let hadIPInOutput = false;
     let blockedOutput = [];
     if (BNKidsIP.cleanOutputText) {
@@ -105,7 +137,7 @@
     const hadIPTotal = hadIPInPrompt || hadIPInOutput;
     const blockedAll = uniqueArray([].concat(blockedPrompt, blockedOutput));
 
-    // 5) Lägg på förklaringen ENDAST om prompten hade IP + första kapitlet
+    // 6) Lägg på förklaringen ENDAST om prompten hade IP + första kapitlet
     let finalText = chapterText;
     if (hadIPInPrompt && explanationPref && chapterIndex === 1) {
       finalText = explanationPref + "\n\n" + chapterText;
