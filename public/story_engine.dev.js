@@ -1,14 +1,18 @@
 // ===============================================================
-// BN-KIDS — STORY ENGINE (GC v7)
-// Fullt omskriven för stabil logik, inga hittepå-element,
-// tydliga åldersnivåer, korrekt svenska och bättre flow.
+// BN-KIDS — STORY ENGINE (GC-RESTORE v1)
+// ---------------------------------------------------------------
+// Detta är en REN och LÅG-NIVÅ engine som INTE överstyr WS-systemet.
 //
-// Viktiga nycklar:
-// - Kapitellängd styrs hårt av åldersband
-// - Ingen spontan fakta (ex: hundens namn) — allt måste förklaras
-// - Logik måste hänga ihop (stjärnor i tunneln kräver orsak)
-// - Barnets värld styr berättelsen; inga slumpinslag
-// - Inga floskler (“äventyret hade bara börjat”, osv)
+// Syfte:
+//  - INGA egna kapitelmallar
+//  - INGA egna recaps
+//  - INGA egna strukturscheman
+//  - INGEN egen åldersstyrning
+//  - INGA extra krav som kan sabotera flow
+//
+// WS_DEV (worldstate.dev.js) bygger hela kapitlet: recap, längd, logik.
+// Den här filen skickar bara prompten vidare till /api/generate_story,
+// tar emot svaret och ger tillbaka det oförändrat (förutom trim).
 //
 // Exponeras som: window.BNStoryEngine
 // ===============================================================
@@ -16,130 +20,18 @@
 (function (global) {
   "use strict";
 
-  const ENGINE_VERSION = "bn-story-engine-v7";
+  const ENGINE_VERSION = "bn-story-engine-gc-restore-v1";
 
   // --------------------------------------------------------------
-  // Åldersintervall → mål-längd och stil
-  // --------------------------------------------------------------
-  const AGE_BANDS = {
-    "7-8":   { maxChars: 600,  wordGoal: 90,  tone: "väldigt enkel, mjuk, tydlig, konkret" },
-    "9-10":  { maxChars: 900,  wordGoal: 140, tone: "enkel, äventyrlig, tydlig, lite mer detaljer" },
-    "11-12": { maxChars: 1200, wordGoal: 180, tone: "vardagsmagi, känslor, dialog, logik" },
-    "13-14": { maxChars: 1500, wordGoal: 230, tone: "mer detaljerad, känslor, personlig utveckling" },
-    "15":    { maxChars: 1800, wordGoal: 280, tone: "tonåring, djupare tankar, konsekvenser, mer dialog" }
-  };
-
-  // --------------------------------------------------------------
-  // Beräkna åldersband från meta.age
-  // --------------------------------------------------------------
-  function determineAgeBand(ageInput) {
-    if (!ageInput) return AGE_BANDS["11-12"]; // fallback
-
-    let ageStr = String(ageInput);
-    let m = ageStr.match(/(\d{1,2})/);
-    if (!m) return AGE_BANDS["11-12"];
-
-    const age = parseInt(m[1], 10);
-
-    if (age <= 8) return AGE_BANDS["7-8"];
-    if (age <= 10) return AGE_BANDS["9-10"];
-    if (age <= 12) return AGE_BANDS["11-12"];
-    if (age <= 14) return AGE_BANDS["13-14"];
-    return AGE_BANDS["15"];
-  }
-
-  // --------------------------------------------------------------
-  // Trimma bort halv mening
-  // --------------------------------------------------------------
-  function trimToWholeSentence(text) {
-    let t = (text || "").trim();
-    const lastDot = Math.max(t.lastIndexOf("."), t.lastIndexOf("!"), t.lastIndexOf("?"));
-    if (lastDot !== -1) return t.slice(0, lastDot + 1);
-    return t;
-  }
-
-  // --------------------------------------------------------------
-  // BYGG SUPERMOTORN-PROMPT
-  // --------------------------------------------------------------
-  function buildPrompt(opts) {
-    const { worldState, storyState, chapterIndex, ageBand } = opts;
-
-    return [
-      `Du är BN-KIDS sagomotor (${ENGINE_VERSION}).`,
-      `Skriv kapitel ${chapterIndex} för målgruppen ${ageBand.wordGoal} ord.`,
-      "",
-      "VIKTIGA KRAV:",
-      "- Skriv på perfekt och naturlig svenska.",
-      "- Inga floskler som 'äventyret hade bara börjat'.",
-      "- Använd logik: allt som händer ska ha en tydlig orsak.",
-      "- Uppfinn INTE fakta som barnet inte har sagt.",
-      "- Om något behöver få ett namn (som ett djur), låt karaktärerna NAMNGE det i kapitlet.",
-      "- Om något ovanligt händer (tunnel, ljus, magi) → förklara varför.",
-      "",
-      "STIL enligt åldern:",
-      ageBand.tone,
-      "",
-      "WORLDSTATE (använd detta, men hitta inte på extra fakta):",
-      JSON.stringify(worldState, null, 2),
-      "",
-      "STORYSTATE (bygg vidare logiskt):",
-      JSON.stringify(storyState || {}, null, 2),
-      "",
-      "STRUKTUR DU SKA FÖLJA:",
-      "1. 1–2 meningars recap av förra kapitlet.",
-      "2. EN huvudscen som utvecklar berättelsen.",
-      "3. Dialog + känslor.",
-      "4. Tydlig konkret avslutning utan floskler.",
-      "",
-      "SVARSFORMAT:",
-      "{ \"chapterText\": \"...\", \"storyState\": { ... } }"
-    ].join("\n");
-  }
-
-  // --------------------------------------------------------------
-  // Hämta text från API-svar (OpenAI/Mistral kompatibelt)
-  // --------------------------------------------------------------
-  function extractModelText(apiResponse) {
-    if (!apiResponse) return "";
-    if (typeof apiResponse === "string") return apiResponse;
-    if (typeof apiResponse.text === "string") return apiResponse.text;
-    if (typeof apiResponse.story === "string") return apiResponse.story;
-
-    try {
-      if (apiResponse.choices &&
-          apiResponse.choices[0] &&
-          apiResponse.choices[0].message &&
-          typeof apiResponse.choices[0].message.content === "string") {
-        return apiResponse.choices[0].message.content;
-      }
-    } catch (_) {}
-
-    return JSON.stringify(apiResponse);
-  }
-
-  // --------------------------------------------------------------
-  // Försök tolka JSON från modellen
-  // --------------------------------------------------------------
-  function extractJson(text) {
-    if (!text) return null;
-    const first = text.indexOf("{");
-    const last  = text.lastIndexOf("}");
-    if (first === -1 || last === -1) return null;
-
-    try {
-      return JSON.parse(text.slice(first, last + 1));
-    } catch (_) {
-      return null;
-    }
-  }
-
-  // --------------------------------------------------------------
-  // API-anrop
+  // API-ANROP — gör absolut inget extra
   // --------------------------------------------------------------
   async function callApi(apiUrl, payload) {
     const r = await fetch(apiUrl, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "Accept": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+      },
       body: JSON.stringify(payload)
     });
 
@@ -153,7 +45,43 @@
   }
 
   // --------------------------------------------------------------
-  // HUVUD: GENERATE CHAPTER
+  // Extrahera text från API-svar (OpenAI / Mistral / egen backend)
+  // --------------------------------------------------------------
+  function extractModelText(apiResponse) {
+    if (!apiResponse) return "";
+
+    if (typeof apiResponse.story === "string") return apiResponse.story;
+    if (typeof apiResponse.text === "string") return apiResponse.text;
+    if (typeof apiResponse === "string") return apiResponse;
+
+    try {
+      if (
+        apiResponse.choices &&
+        apiResponse.choices[0] &&
+        apiResponse.choices[0].message &&
+        typeof apiResponse.choices[0].message.content === "string"
+      ) {
+        return apiResponse.choices[0].message.content;
+      }
+    } catch (_) {}
+
+    return JSON.stringify(apiResponse);
+  }
+
+  // --------------------------------------------------------------
+  // Trim till hel mening (tar bort rå output som slutar mitt i)
+  // --------------------------------------------------------------
+  function trimToWholeSentence(text) {
+    if (!text) return "";
+    let t = text.trim();
+    const lastDot = Math.max(t.lastIndexOf("."), t.lastIndexOf("!"), t.lastIndexOf("?"));
+    if (lastDot !== -1) return t.slice(0, lastDot + 1);
+    return t;
+  }
+
+  // --------------------------------------------------------------
+  // HUVUD: generateChapter
+  // Gör: skickar bara prompten vidare → tar emot text → returnerar
   // --------------------------------------------------------------
   async function generateChapter(opts) {
     const {
@@ -165,55 +93,33 @@
 
     if (!worldState) throw new Error("BNStoryEngine: worldState saknas.");
 
-    const meta = worldState.meta || {};
-    const ageBand = determineAgeBand(meta.age);
-
-    const prompt = buildPrompt({
+    const payload = {
+      prompt: worldState._finalPrompt || "",   // WS_DEV sätter detta
       worldState,
       storyState,
       chapterIndex,
-      ageBand
-    });
-
-    const payload = {
-      prompt,
-      age: meta.age,
-      hero: meta.hero,
-      length: meta.length,
-      engineVersion: ENGINE_VERSION,
-      worldState,
-      storyState,
-      chapterIndex
+      engineVersion: ENGINE_VERSION
     };
 
+    // -- 1) Anropa API --
     const apiRaw = await callApi(apiUrl, payload);
-    const modelText = extractModelText(apiRaw);
-    const json = extractJson(modelText);
 
-    let chapterText;
-    let newState;
+    // -- 2) Ta ut ren text --
+    let chapterText = extractModelText(apiRaw);
 
-    if (json && json.chapterText) {
-      chapterText = json.chapterText;
-      newState = json.storyState || storyState;
-    } else {
-      chapterText = modelText;
-      newState = storyState;
-    }
+    // -- 3) Trimma snyggt --
+    chapterText = trimToWholeSentence(chapterText);
 
-    // trim till hel mening
-    chapterText = trimToWholeSentence(
-      chapterText.slice(0, ageBand.maxChars)
-    );
-
+    // -- 4) Returnera absolut ingenting extra --
     return {
       chapterText,
-      storyState: newState,
-      engineVersion: ENGINE_VERSION,
-      ageBand: ageBand
+      storyState,
+      engineVersion: ENGINE_VERSION
     };
   }
 
+  // --------------------------------------------------------------
+  // Exportera globalt
   // --------------------------------------------------------------
   global.BNStoryEngine = {
     generateChapter,
