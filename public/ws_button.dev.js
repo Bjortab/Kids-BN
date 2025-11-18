@@ -1,9 +1,10 @@
 // ==========================================================
-// BN-KIDS WS DEV — ws_button.dev.js (GC v7)
+// BN-KIDS WS DEV — ws_button.dev.js (GC v7.2)
 // - Extra knapp "Skapa saga (WS dev)" som använder worldstate
 // - Kopplad till WS_DEV.* (load, buildWsPrompt, addChapterAndSave)
-// - Lägger till request-lock så bara SENASTE svaret får skriva
-//   till sagarutan (fixar "två sagor"-problemet).
+// - Request-lock så bara SENASTE svaret får skriva till sagarutan
+// - stopPropagation() så inga andra klick-handlers triggas
+//   (fixar buggen med "två sagor" på ett klick).
 // ==========================================================
 
 (function () {
@@ -69,7 +70,9 @@
   }
 
   async function handleWsClick(ev) {
+    // Viktigt: stoppa allt så inga andra handlers körs
     ev.preventDefault();
+    ev.stopPropagation();
 
     if (!window.WS_DEV) {
       log("WS_DEV finns inte på window");
@@ -152,7 +155,11 @@
       }
 
       const chapterText = data.story;
-      if (storyEl) storyEl.textContent = chapterText;
+
+      if (storyEl) {
+        log("skriver saga till storyEl från WS-dev, requestId:", myRequestId);
+        storyEl.textContent = chapterText;
+      }
 
       // 3) Uppdatera bok + spara
       state = window.WS_DEV.addChapterAndSave(state, chapterText, newWish);
