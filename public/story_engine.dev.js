@@ -1,49 +1,70 @@
 // ===============================================================
-// BN-KIDS — STORY ENGINE (GC v7.1)
-// Fullt omskriven för stabil logik, inga hittepå-element,
-// tydliga åldersnivåer, korrekt svenska och bättre flow.
+// BN-KIDS — STORY ENGINE (GC v8)
+// - Håller ordning på kapitel (ingen omstart mitt i boken)
+// - Åldersband 7–8, 9–10, 11–12, 13–14, 15 med olika längd/stil
+// - Försöker undvika att upprepa exakt samma händelse
+// - Trim till hel mening inom max tecken per åldersband
 //
-// v7.1: Skärpt "sista kapitlet"-logik
-//  - Läser barnets senaste önskan (_userPrompt / last_prompt)
-//  - Om barnet vill avsluta boken → hårda regler:
-//      * avsluta den PÅGÅENDE konflikten
-//      * INTE starta ett nytt äventyr
-//      * knyta ihop trådarna från recapen
-//
-// Viktiga nycklar (oförändrade):
-// - Kapitellängd styrs hårt av åldersband
-// - Ingen spontan fakta (ex: hundens namn) — allt måste förklaras
-// - Logik måste hänga ihop (stjärnor i tunneln kräver orsak)
-// - Barnets värld styr berättelsen; inga slumpinslag
-// - Inga floskler (“äventyret hade bara börjat”, osv)
-//
-// Exponeras som: window.BNStoryEngine
+// Exponeras som: window.BNStoryEngine.generateChapter(opts)
 // ===============================================================
-
 (function (global) {
   "use strict";
 
-  const ENGINE_VERSION = "bn-story-engine-v7.1";
+  const ENGINE_VERSION = "bn-story-engine-v8";
 
-  // --------------------------------------------------------------
-  // Åldersintervall → mål-längd och stil
-  // --------------------------------------------------------------
+  // ------------------------------------------------------------
+  // Åldersband – olika längd & stil
+  // ------------------------------------------------------------
   const AGE_BANDS = {
-    "7-8":   { maxChars: 600,  wordGoal: 90,  tone: "väldigt enkel, mjuk, tydlig, konkret" },
-    "9-10":  { maxChars: 900,  wordGoal: 140, tone: "enkel, äventyrlig, tydlig, lite mer detaljer" },
-    "11-12": { maxChars: 1200, wordGoal: 180, tone: "vardagsmagi, känslor, dialog, logik" },
-    "13-14": { maxChars: 1500, wordGoal: 230, tone: "mer detaljerad, känslor, personlig utveckling" },
-    "15":    { maxChars: 1800, wordGoal: 280, tone: "tonåring, djupare tankar, konsekvenser, mer dialog" }
+    "7-8": {
+      label: "7–8 år",
+      maxChars: 650,
+      wordGoal: 100,
+      tone:
+        "mycket enkel, trygg, konkret, korta meningar, några få detaljer. Fokus på känslor och tydliga händelser."
+    },
+    "9-10": {
+      label: "9–10 år",
+      maxChars: 900,
+      wordGoal: 150,
+      tone:
+        "enkel men lite mer äventyrlig, mer dialog och detaljer, ändå tydligt språk utan svåra ord."
+    },
+    "11-12": {
+      label: "11–12 år",
+      maxChars: 1200,
+      wordGoal: 200,
+      tone:
+        "vardagsmagi, känslor, vänskap, tydlig logik och orsak–verkan. Lagom med beskrivningar."
+    },
+    "13-14": {
+      label: "13–14 år",
+      maxChars: 1500,
+      wordGoal: 260,
+      tone:
+        "mer detaljerad, inre tankar, relationer och konsekvenser. Fortfarande barnvänligt men inte barnsligt."
+    },
+    "15": {
+      label: "15 år",
+      maxChars: 1900,
+      wordGoal: 320,
+      tone:
+        "tonårsnivå: mer reflektion, känslor, dilemman och konsekvenser. Ändå positiv, utan rått våld."
+    }
   };
 
-  // --------------------------------------------------------------
-  // Beräkna åldersband från meta.age
-  // --------------------------------------------------------------
+  // ------------------------------------------------------------
+  // Åldersband utifrån meta.age (kan vara '7-8', '7–8 år', '15' osv)
+  // ------------------------------------------------------------
   function determineAgeBand(ageInput) {
-    if (!ageInput) return AGE_BANDS["11-12"]; // fallback
+    if (!ageInput) return AGE_BANDS["11-12"];
 
-    let ageStr = String(ageInput);
-    let m = ageStr.match(/(\d{1,2})/);
+    const str = String(ageInput);
+    // Direkt match om vi råkar ha nyckeln
+    if (AGE_BANDS[str]) return AGE_BANDS[str];
+
+    // Plocka ut första talet
+    const m = str.match(/(\d{1,2})/);
     if (!m) return AGE_BANDS["11-12"];
 
     const age = parseInt(m[1], 10);
@@ -55,132 +76,121 @@
     return AGE_BANDS["15"];
   }
 
-  // --------------------------------------------------------------
-  // Trimma bort halv mening
-  // --------------------------------------------------------------
+  // ------------------------------------------------------------
+  // Trimma av till sista fullständiga mening
+  // ------------------------------------------------------------
   function trimToWholeSentence(text) {
     let t = (text || "").trim();
-    const lastDot = Math.max(t.lastIndexOf("."), t.lastIndexOf("!"), t.lastIndexOf("?"));
-    if (lastDot !== -1) return t.slice(0, lastDot + 1);
-    return t;
+    if (!t) return "";
+
+    const lastDot = t.lastIndexOf(".");
+    const lastExc = t.lastIndexOf("!");
+    const lastQ   = t.lastIndexOf("?");
+
+    const last = Math.max(lastDot, lastExc, lastQ);
+    if (last === -1) return t;
+
+    return t.slice(0, last + 1);
   }
 
-  // --------------------------------------------------------------
-  // Avgör om barnet försöker säga "sista kapitlet"
-  // Läser både _userPrompt (senaste ws-prompten) och last_prompt.
-  // --------------------------------------------------------------
-  function detectLastChapterIntent(worldState, storyState, chapterIndex) {
-    let src = "";
-
-    if (worldState) {
-      if (typeof worldState._userPrompt === "string") {
-        src += " " + worldState._userPrompt;
-      }
-      if (typeof worldState.last_prompt === "string") {
-        src += " " + worldState.last_prompt;
-      }
-    }
-    if (storyState && typeof storyState.lastWish === "string") {
-      src += " " + storyState.lastWish;
-    }
-
-    src = src.toLowerCase();
-
-    const hasLastWords =
-      src.includes("sista kapitlet") ||
-      src.includes("sista kapitlet.") ||
-      src.includes("avsluta berättelsen") ||
-      src.includes("avsluta boken") ||
-      src.includes("slutet på berättelsen") ||
-      src.includes("slutet på boken");
-
-    // Om barnet tydligt har sagt att detta är sista kapitlet
-    // så gäller det, oavsett kapitelnummer.
-    if (hasLastWords) return true;
-
-    // Extra försvar: om kapitlet är högt (t.ex. 7+) och inget nytt
-    // önskemål verkar ha kommit, kan modellen ändå få "mittkapitel".
-    // Här väljer vi att INTE gissa sista kapitlet själv.
-    return false;
-  }
-
-  // --------------------------------------------------------------
-  // BYGG SUPERMOTORN-PROMPT
-  // --------------------------------------------------------------
+  // ------------------------------------------------------------
+  // Bygg systemprompt till modellen
+  // worldState.meta förväntas innehålla åtminstone age/hero/length
+  // storyState kan innehålla sammanfattningar / tidigare kapitel
+  // ------------------------------------------------------------
   function buildPrompt(opts) {
     const { worldState, storyState, chapterIndex, ageBand } = opts;
 
-    const isLastChapter = detectLastChapterIntent(worldState, storyState, chapterIndex);
+    const meta = worldState && worldState.meta ? worldState.meta : {};
+    const hero = meta.hero || "hjälten";
+    const baseIdea =
+      worldState && (worldState.seedPrompt || worldState.prompt || worldState._userPrompt || "");
+    const ageLabel = ageBand.label || "11–12 år";
 
-    const worldStateSafe = worldState || {};
-    const storyStateSafe = storyState || {};
+    // Försök hitta tidigare kapitel / sammanfattning i storyState
+    const prevSummary =
+      (storyState && storyState.summary) ||
+      (storyState && storyState.overview) ||
+      "";
 
-    const baseLines = [
-      `Du är BN-KIDS sagomotor (${ENGINE_VERSION}).`,
-      `Skriv kapitel ${chapterIndex} för målgruppen cirka ${ageBand.wordGoal} ord.`,
-      "",
-      "VIKTIGA KRAV:",
-      "- Skriv på perfekt och naturlig svenska.",
-      "- Inga floskler som 'äventyret hade bara börjat'.",
-      "- Använd logik: allt som händer ska ha en tydlig orsak.",
-      "- Uppfinn INTE fakta som barnet inte har sagt.",
-      "- Om något behöver få ett namn (som ett djur eller ett föremål), låt karaktärerna NAMNGE det i kapitlet.",
-      "- Om något ovanligt händer (tunnel, ljus, magi) → förklara varför.",
-      "",
-      "STIL enligt åldern:",
-      ageBand.tone,
-      "",
-      "WORLDSTATE (använd detta, men hitta inte på extra fakta):",
-      JSON.stringify(worldStateSafe, null, 2),
-      "",
-      "STORYSTATE (bygg vidare logiskt):",
-      JSON.stringify(storyStateSafe, null, 2),
-      "",
-      "STRUKTUR DU SKA FÖLJA:",
-      "1. 1–2 meningars recap av förra kapitlet (utan att berätta allt igen).",
-      "2. EN huvudscen som utvecklar den pågående berättelsen.",
-      "3. Dialog + känslor.",
-      "4. Tydlig konkret avslutning utan floskler."
-    ];
+    const prevChapters =
+      (storyState && Array.isArray(storyState.chapters) && storyState.chapters) || [];
 
-    // Extra regler för sista kapitlet
-    if (isLastChapter) {
-      baseLines.push(
-        "",
-        "DETTA ÄR SISTA KAPITLET I BOKEN:",
-        "- Du ska AVSLUTA den pågående berättelsen, inte starta ett nytt äventyr.",
-        "- Lös den konflikt eller gåta som har byggts upp i tidigare kapitel (t.ex. meteor, aliens, magisk kista, konstigt ljus).",
-        "- Använd recapen ovan som ledtråd till vad som måste knytas ihop.",
-        "- Introducera INTE en helt ny fiende, ny katastrof eller ett nytt stort mål.",
-        "- Flytta inte handlingen långt i tid eller rum (ingen stor tidsjump, inga helt nya miljöer).",
-        "- Slutet ska kännas lugnt, hoppfullt och logiskt kopplat till det som redan hänt.",
-        "- Efter sista stycket ska läsaren känna att den här boken är klar."
-      );
+    let recapBlock = "";
+    if (!prevChapters.length && !prevSummary) {
+      recapBlock =
+        "Detta är första kapitlet i boken. Inga tidigare kapitel finns ännu. Du ska starta berättelsen.";
     } else {
-      baseLines.push(
-        "",
-        "DETTA ÄR ETT MITTENKAPITEL:",
-        "- Fortsätt direkt från slutet av föregående kapitel.",
-        "- Starta inte om med en helt ny dag eller en helt ny historia om samma figurer.",
-        "- Lägg till en utveckling eller komplikation, men lämna något kvar att utforska i nästa kapitel.",
-        "- Avsluta med en hel mening och en mjuk krok som gör att man vill läsa vidare."
-      );
+      const first = prevChapters[0] && (prevChapters[0].text || prevChapters[0].chapterText || "");
+      const lastObj = prevChapters[prevChapters.length - 1] || {};
+      const last = lastObj.text || lastObj.chapterText || "";
+
+      const cleanFirst = (first || "").replace(/\s+/g, " ").trim();
+      const cleanLast = (last || "").replace(/\s+/g, " ").trim();
+
+      const firstShort =
+        cleanFirst.length > 260 ? cleanFirst.slice(0, 260) + " …" : cleanFirst;
+      const lastShort =
+        cleanLast.length > 320 ? "… " + cleanLast.slice(cleanLast.length - 320) : cleanLast;
+
+      recapBlock =
+        "Kort recap av berättelsen hittills:\n" +
+        (prevSummary ? prevSummary + "\n\n" : "") +
+        (firstShort
+          ? "Så här började allt:\n" + firstShort + "\n\n"
+          : "") +
+        (lastShort
+          ? "Så här slutade det senaste kapitlet (FORTSÄTT HÄRIFRÅN, inte från början):\n" +
+            lastShort
+          : "");
     }
 
-    baseLines.push(
+    return [
+      `Du är BN-KIDS sagomotor (${ENGINE_VERSION}).`,
+      "",
+      `Skriv KAPITEL ${chapterIndex} för ett barn i åldern ${ageLabel}, cirka ${ageBand.wordGoal} ord.`,
+      "",
+      "Barnets grundidé med boken (utgå från detta, men hitta inte på nya fakta):",
+      baseIdea ? `"${baseIdea}"` : "(ingen särskild idé angiven)",
+      "",
+      "VIKTIGA KRAV PÅ BERÄTTELSEN:",
+      "- Skriv på naturlig, korrekt svenska.",
+      "- Håll språket på nivå som passar åldern.",
+      "- Följ logiken i berättelsen: det som redan hänt får inte ändras.",
+      "- Starta INTE om berättelsen från början. Fortsätt där det senaste kapitlet slutade.",
+      "- Upprepa inte exakt samma händelse om barnet ber om samma sak igen (t.ex. 'draken lär sig flyga').",
+      "  Visa istället hur händelsen utvecklas vidare, ett nytt steg i samma resa.",
+      "- Uppfinn inte nya fakta om karaktärer eller världen som inte går att motivera logiskt.",
+      "- Om något behöver få ett namn (t.ex. ett djur) låter du karaktärerna NAMNGE det i scenen.",
+      "- Om något magiskt eller ovanligt händer (tunnel med stjärnor, glittrande ljus osv) – förklara kort varför.",
+      "",
+      "STIL ENLIGT ÅLDER:",
+      ageBand.tone,
+      "",
+      "KONTEXT (WORLDSTATE) – använd men hitta inte på extra fakta:",
+      JSON.stringify(worldState || {}, null, 2),
+      "",
+      "STORYSTATE – hjälpdata om tidigare kapitel (följ kontinuiteten):",
+      JSON.stringify(storyState || {}, null, 2),
+      "",
+      "STRUKTUR FÖR KAPITLET:",
+      "1. 1–3 meningar recap som knyter an till förra kapitlet (utan att börja om helt).",
+      "2. En tydlig huvudscen som driver berättelsen framåt.",
+      "3. Dialog och känslor som passar åldern.",
+      "4. Ett konkret slut på kapitlet (hel mening) – gärna en mjuk krok vidare, men ingen cliffhanger mitt i en mening.",
       "",
       "SVARSFORMAT:",
-      "{ \"chapterText\": \"...\", \"storyState\": { ... } }"
-    );
-
-    return baseLines.join("\n");
+      '{ "chapterText": "...", "storyState": { ... } }',
+      "Om du av misstag inte kan hålla JSON-form, skicka bara ren text."
+    ].join("\n");
   }
 
-  // --------------------------------------------------------------
-  // Hämta text från API-svar (OpenAI/Mistral kompatibelt)
-  // --------------------------------------------------------------
+  // ------------------------------------------------------------
+  // Hämta text från API-svar (OpenAI/Mistral/egen backend)
+  // ------------------------------------------------------------
   function extractModelText(apiResponse) {
     if (!apiResponse) return "";
+
     if (typeof apiResponse === "string") return apiResponse;
     if (typeof apiResponse.text === "string") return apiResponse.text;
     if (typeof apiResponse.story === "string") return apiResponse.story;
@@ -194,19 +204,25 @@
       ) {
         return apiResponse.choices[0].message.content;
       }
-    } catch (_) {}
+    } catch (e) {
+      // Ignorera, vi faller ned till JSON-stringify
+    }
 
-    return JSON.stringify(apiResponse);
+    try {
+      return JSON.stringify(apiResponse);
+    } catch (e) {
+      return String(apiResponse);
+    }
   }
 
-  // --------------------------------------------------------------
-  // Försök tolka JSON från modellen
-  // --------------------------------------------------------------
+  // ------------------------------------------------------------
+  // Försök plocka ut JSON-klump från modelltext
+  // ------------------------------------------------------------
   function extractJson(text) {
-    if (!text) return null;
+    if (!text || typeof text !== "string") return null;
     const first = text.indexOf("{");
-    const last  = text.lastIndexOf("}");
-    if (first === -1 || last === -1) return null;
+    const last = text.lastIndexOf("}");
+    if (first === -1 || last === -1 || last <= first) return null;
 
     try {
       return JSON.parse(text.slice(first, last + 1));
@@ -215,37 +231,48 @@
     }
   }
 
-  // --------------------------------------------------------------
-  // API-anrop
-  // --------------------------------------------------------------
+  // ------------------------------------------------------------
+  // API-anrop till backend (/api/generate_story)
+  // ------------------------------------------------------------
   async function callApi(apiUrl, payload) {
-    const r = await fetch(apiUrl, {
+    const res = await fetch(apiUrl, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "Accept": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json"
+      },
       body: JSON.stringify(payload)
     });
 
     let raw;
     try {
-      raw = await r.json();
-    } catch (_) {
-      raw = await r.text();
+      raw = await res.json();
+    } catch (e) {
+      raw = await res.text();
     }
     return raw;
   }
 
-  // --------------------------------------------------------------
-  // HUVUD: GENERATE CHAPTER
-  // --------------------------------------------------------------
+  // ------------------------------------------------------------
+  // HUVUD: generateChapter(opts)
+  //
+  // opts:
+  //   - apiUrl      (default "/api/generate_story")
+  //   - worldState  (krav)
+  //   - storyState  (optional, objekt vi skickar fram-och-tillbaka)
+  //   - chapterIndex (1,2,3...)
+  // ------------------------------------------------------------
   async function generateChapter(opts) {
     const {
       apiUrl = "/api/generate_story",
       worldState,
       storyState = {},
       chapterIndex = 1
-    } = opts;
+    } = opts || {};
 
-    if (!worldState) throw new Error("BNStoryEngine: worldState saknas.");
+    if (!worldState) {
+      throw new Error("BNStoryEngine: worldState saknas.");
+    }
 
     const meta = worldState.meta || {};
     const ageBand = determineAgeBand(meta.age);
@@ -275,7 +302,7 @@
     let chapterText;
     let newState;
 
-    if (json && json.chapterText) {
+    if (json && typeof json.chapterText === "string") {
       chapterText = json.chapterText;
       newState = json.storyState || storyState;
     } else {
@@ -283,20 +310,23 @@
       newState = storyState;
     }
 
-    // trim till hel mening och längd enligt åldersband
+    // Trimma längd + se till att sluta med hel mening
+    const bandMax = ageBand.maxChars || 1200;
     chapterText = trimToWholeSentence(
-      chapterText.slice(0, ageBand.maxChars)
+      (chapterText || "").slice(0, bandMax)
     );
 
     return {
       chapterText,
       storyState: newState,
       engineVersion: ENGINE_VERSION,
-      ageBand: ageBand
+      ageBand
     };
   }
 
-  // --------------------------------------------------------------
+  // ------------------------------------------------------------
+  // Exportera global motor
+  // ------------------------------------------------------------
   global.BNStoryEngine = {
     generateChapter,
     ENGINE_VERSION
