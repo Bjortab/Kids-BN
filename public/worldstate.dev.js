@@ -1,13 +1,12 @@
 // ==========================================================
-// BN-KIDS WS DEV — worldstate.dev.js (v8.1)
+// BN-KIDS WS DEV — worldstate.dev.js (v8.2)
 // Kapitelbok i localStorage + bättre kapitel- & ålderslogik
 //
 // - Varje klick på WS-knappen = nytt kapitel i samma bok
 // - Kort recap (början + slut) så kapitlet hinner bli klart
-// - Extra logik för äldre barn:
-//     * För mittenkapitel: utveckla, börja inte om resan
-//     * För sista kapitel: inga nya stora äventyr, knyt ihop
-// - 7–8 år lämnas i princip som tidigare (tryggare, enklare)
+// - Åldersstyrd längd + ton
+// - Extra hård logik mot "omstarter" (kapitel 2+ får inte bli
+//   en ny version av kapitel 1, även om prompten är samma)
 // ==========================================================
 
 (function () {
@@ -42,8 +41,7 @@
   }
 
   // -------------------------------------------------------
-  // Hämta ålder som siffra (för band-logik 7–8 / 9–10 / 11–12 / 13–15)
-  // Vi försöker först på ageValue (value-attributet), sedan på ageLabel (texten).
+  // Hämta ålder som siffra (för band-logik)
   // -------------------------------------------------------
   function inferAge(meta) {
     if (!meta) return 10;
@@ -61,7 +59,6 @@
 
   // -------------------------------------------------------
   // Skapa nytt world-state från UI-formuläret
-  // (Använder dina faktiska id:n: age, hero, length, prompt)
   // -------------------------------------------------------
   function createWorldFromForm() {
     const ageSel    = document.getElementById("age");
@@ -88,8 +85,8 @@
         lengthValue: lengthVal,
         lengthLabel: lengthText || "Mellan (≈5 min)"
       },
-      chapters: [],          // varje kapitel: { text, added_at }
-      last_prompt: prompt,   // ursprunglig / senaste barnprompt
+      chapters: [],
+      last_prompt: prompt,
       created_at: Date.now()
     };
   }
@@ -108,7 +105,7 @@
   }
 
   // -------------------------------------------------------
-  // Hjälpare för kortare recap så kapitlet hinner bli klart
+  // Hjälpare för kortare recap
   // -------------------------------------------------------
   function snippetStart(txt, maxLen) {
     if (!txt) return "";
@@ -126,9 +123,6 @@
 
   // -------------------------------------------------------
   // Bygg WS-prompt baserat på tidigare kapitel
-  //  - Kort recap (början + slut) istället för full text
-  //  - Åldersberoende instruktioner
-  //  - Extra strikt logik för "sista kapitlet"
   // -------------------------------------------------------
   function buildWsPrompt(state, wishOrOpts) {
     if (!state) return "";
@@ -149,7 +143,7 @@
     const chapters    = Array.isArray(state.chapters) ? state.chapters : [];
     const nextChapter = chapters.length + 1;
 
-    // ---- Ny, kort recap: början + slut på senaste kapitel ----
+    // ---- Recap: början + slut på senaste kapitel ----
     let recap;
     if (chapters.length === 0) {
       recap = "Detta är början av berättelsen. Inga tidigare kapitel finns ännu.\n";
@@ -187,7 +181,7 @@
     const isMid   = ageNum >= 11 && ageNum <= 12;
     const isTeen  = ageNum >= 13;
 
-    // Längdinstruktion per åldersgrupp
+    // Längdinstruktion
     let baseLengthInstr;
     if (isYoung) {
       baseLengthInstr =
@@ -200,14 +194,13 @@
         "Det är viktigare att kapitlet känns komplett än att det är långt. " +
         "Avsluta med en fullständig mening.";
     } else {
-      // tonåring
       baseLengthInstr =
         "Skriv ett kapitel på ungefär 10–18 meningar. " +
-        "Låt scenen hinna få lite djup (känslor och detaljer), men avsluta hellre i tid " +
-        "med en fullständig mening än att påbörja ett nytt sidospår.";
+        "Ge scenen lite djup (känslor och detaljer), men avsluta hellre i tid " +
+        "med en fullständig mening än att börja ett nytt sidospår.";
     }
 
-    // Progressionsregler – undvik att börja om resan för äldre barn
+    // Progressionsregler – undvik “ny första gång”
     let progressionRules;
     if (isYoung) {
       progressionRules = [
@@ -216,11 +209,15 @@
       ].join("\n");
     } else {
       progressionRules = [
+        "- Det här är kapitel " + nextChapter + ", inte kapitel 1.",
         "- Utgå från att " + hero + " redan har lärt sig saker som beskrivits tidigare (t.ex. att våga cykla, våga simma,",
         "  använda en kraft eller stå upp för sig själv).",
-        "- Upprepa inte samma 'första gång' igen. Om förra kapitlet handlade om att våga något för första gången,",
-        "  ska det här kapitlet visa nästa steg: t.ex. använda det modet i en ny situation eller hjälpa någon annan.",
-        "- Gör inte hjälten plötsligt osäkrare än i tidigare kapitel utan tydlig orsak."
+        "- Upprepa inte samma första gång igen. Om förra kapitlet handlade om att våga något första gången,",
+        "  ska det här kapitlet visa nästa steg: använda det modet i en ny situation eller hjälpa någon annan.",
+        "- Skriv inte som om berättelsen börjar om. Undvik formuleringar som:",
+        "  'Det var en gång', 'Det här var början på', 'En dag bestämde sig', 'För första gången',",
+        "  om det redan har hänt i tidigare kapitel.",
+        "- Gör inte hjälten plötsligt mycket osäkrare än i tidigare kapitel utan tydlig orsak i scenen."
       ].join("\n");
     }
 
@@ -239,7 +236,6 @@
           "en naturlig följd av det som hänt i tidigare kapitel.\n" +
           "- Ge ett lugnt, hoppfullt och tydligt slut utan att lämna stora obesvarade huvudfrågor.";
       } else {
-        // yngre barn – enklare språk
         endingInstr =
           "Detta ska vara SISTA kapitlet i boken. Knyt ihop berättelsen på ett lugnt och tryggt sätt.\n" +
           "- Använd samma miljöer och vänner som tidigare.\n" +
@@ -252,8 +248,8 @@
         endingInstr =
           "Detta är ett MITTENKAPITEL. Avsluta kapitlet med en hel mening och en mjuk krok som gör att man vill " +
           "läsa nästa kapitel, men börja inte om berättelsen från början.\n" +
-          "- Starta inte en ny 'första dag', ny första träning eller helt ny resa som ignorerar vad som hänt tidigare.\n" +
-          "- Låt i stället kapitlet fördjupa relationer, konsekvenser och känslor utifrån det som redan hänt.";
+          "- Starta inte en ny första dag, ny första träning eller helt ny resa som ignorerar vad som hänt tidigare.\n" +
+          "- Låt kapitlet fördjupa relationer, konsekvenser och känslor utifrån det som redan hänt.";
       } else {
         endingInstr =
           "Detta är ett MITTENKAPITEL. Avsluta kapitlet med en tydlig mening och en liten krok som gör att man " +
@@ -261,28 +257,27 @@
       }
     }
 
-    const tonalitetInstr = (function () {
-      if (isTeen) {
-        return [
-          "- Språket ska vara enkelt men kan ha lite mer djup, känslor och tankar typiskt för tonåringar.",
-          "- Håll en hoppfull ton, men det är okej med lite allvar så länge det inte blir mörkt eller brutalt.",
-          "- Undvik grovt våld, död eller detaljerad skräck."
-        ].join("\n");
-      }
-      if (isMid) {
-        return [
-          "- Språket ska vara tydligt och tryggt men kan innehålla lite mer känslor och nyanser.",
-          "- Håll en positiv och hoppfull ton, även när det är spännande.",
-          "- Undvik brutalt våld, död eller skrämmande detaljer."
-        ].join("\n");
-      }
-      // yngre
-      return [
+    // Tonalitet
+    let tonalitetInstr;
+    if (isTeen) {
+      tonalitetInstr = [
+        "- Språket ska vara enkelt men kan ha lite mer djup, känslor och tankar typiskt för tonåringar.",
+        "- Håll en hoppfull ton, men det är okej med lite allvar så länge det inte blir mörkt eller brutalt.",
+        "- Undvik grovt våld, död eller detaljerad skräck."
+      ].join("\n");
+    } else if (isMid) {
+      tonalitetInstr = [
+        "- Språket ska vara tydligt och tryggt men kan innehålla lite mer känslor och nyanser.",
+        "- Håll en positiv och hoppfull ton, även när det är spännande.",
+        "- Undvik brutalt våld, död eller skrämmande detaljer."
+      ].join("\n");
+    } else {
+      tonalitetInstr = [
         "- Språket ska vara mycket enkelt, tydligt och tryggt.",
         "- Håll en varm och hoppfull ton, även när något är lite spännande.",
         "- Undvik våld, död eller sådant som kan kännas skrämmande."
       ].join("\n");
-    })();
+    }
 
     const basePrompt = `
 Du är en varm och trygg barnboksförfattare.
@@ -298,13 +293,15 @@ ${recap}
 Du ska nu skriva KAPITEL ${nextChapter} i SAMMA berättelse.
 
 Viktigt om strukturen för kapitlet:
-- Fortsätt direkt från slutet av föregående kapitel (utifrån stycket ovan).
+- FORTSÄTT från slutet av föregående kapitel (texten ovan).
 - Starta inte om med en helt ny dag eller en helt ny historia om samma figur.
 - Upprepa inte samma första händelse (första cykelturen, första gången någon vågar något) om den redan hänt.
 - Skriv kapitlet så att det har en tydlig början, en mitt och ett slut.
+- Behandla detta som kapitel ${nextChapter}, inte kapitel 1.
 
 Längd:
 - ${baseLengthInstr}
+- Kapitlet ska ungefär motsvara ${lengthHint} i högläsningstid för barn.
 
 Utveckling och framsteg:
 ${progressionRules}
@@ -327,7 +324,6 @@ ${wishText ? `- "${wishText}"` : "- (inga extra önskemål just nu)"}
 
   // -------------------------------------------------------
   // Ladda befintlig bok eller skapa ny från formuläret
-  // (används av ws_button.dev.js)
   // -------------------------------------------------------
   function loadOrCreateFromForm() {
     let state = loadWS();
@@ -339,7 +335,6 @@ ${wishText ? `- "${wishText}"` : "- (inga extra önskemål just nu)"}
 
   // -------------------------------------------------------
   // Lägg till kapitel + spara direkt
-  // (används av ws_button.dev.js)
   // -------------------------------------------------------
   function addChapterAndSave(state, chapterText, wishText) {
     let next = addChapterToWS(state, chapterText);
