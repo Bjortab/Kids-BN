@@ -1,14 +1,13 @@
 // ==========================================================
-// BN-KIDS WS DEV — worldstate.dev.js (v7.1 GC)
-// Kapitelbok i localStorage + förbättrad kapitel-logik
+// BN-KIDS WS DEV — worldstate.dev.js (v8.1)
+// Kapitelbok i localStorage + bättre kapitel- & ålderslogik
 //
-// Den här filen:
-//  - Lägger bara logik i PROMPTEN (ingen egen AI-magi)
-//  - Tvingar modellen att ALLTID fortsätta samma berättelse
-//  - Säger uttryckligen: "starta INTE om, även om barnets önskan ser ut
-//    som en helt ny början"
-//  - Förklarar att figurer måste vara konsekventa (en hund kan inte bli
-//    människa i nästa kapitel, "vännen" måste få ett eget namn osv)
+// - Varje klick på WS-knappen = nytt kapitel i samma bok
+// - Kort recap (början + slut) så kapitlet hinner bli klart
+// - Extra logik för äldre barn:
+//     * För mittenkapitel: utveckla, börja inte om resan
+//     * För sista kapitel: inga nya stora äventyr, knyt ihop
+// - 7–8 år lämnas i princip som tidigare (tryggare, enklare)
 // ==========================================================
 
 (function () {
@@ -43,6 +42,24 @@
   }
 
   // -------------------------------------------------------
+  // Hämta ålder som siffra (för band-logik 7–8 / 9–10 / 11–12 / 13–15)
+  // Vi försöker först på ageValue (value-attributet), sedan på ageLabel (texten).
+  // -------------------------------------------------------
+  function inferAge(meta) {
+    if (!meta) return 10;
+    const candidates = [meta.ageValue, meta.ageLabel];
+    for (let i = 0; i < candidates.length; i++) {
+      const s = (candidates[i] || "").toString();
+      const m = s.match(/(\d{1,2})/);
+      if (m) {
+        const n = parseInt(m[1], 10);
+        if (!isNaN(n)) return n;
+      }
+    }
+    return 10;
+  }
+
+  // -------------------------------------------------------
   // Skapa nytt world-state från UI-formuläret
   // (Använder dina faktiska id:n: age, hero, length, prompt)
   // -------------------------------------------------------
@@ -53,20 +70,14 @@
     const promptEl  = document.querySelector("[data-id='prompt']");
 
     const ageValue   = ageSel && ageSel.value ? ageSel.value : "";
-    const ageText    =
-      ageSel &&
-      ageSel.selectedOptions &&
-      ageSel.selectedOptions[0]
-        ? ageSel.selectedOptions[0].textContent.trim()
-        : "";
+    const ageText    = (ageSel && ageSel.selectedOptions && ageSel.selectedOptions[0])
+      ? ageSel.selectedOptions[0].textContent.trim()
+      : "";
     const hero       = heroInput && heroInput.value ? heroInput.value.trim() : "";
     const lengthVal  = lengthSel && lengthSel.value ? lengthSel.value : "";
-    const lengthText =
-      lengthSel &&
-      lengthSel.selectedOptions &&
-      lengthSel.selectedOptions[0]
-        ? lengthSel.selectedOptions[0].textContent.trim()
-        : "";
+    const lengthText = (lengthSel && lengthSel.selectedOptions && lengthSel.selectedOptions[0])
+      ? lengthSel.selectedOptions[0].textContent.trim()
+      : "";
     const prompt     = promptEl && promptEl.value ? promptEl.value.trim() : "";
 
     return {
@@ -78,8 +89,7 @@
         lengthLabel: lengthText || "Mellan (≈5 min)"
       },
       chapters: [],          // varje kapitel: { text, added_at }
-      last_prompt: prompt,   // ursprungliga idén från barnet
-      last_wish: "",         // senaste önskemålet
+      last_prompt: prompt,   // ursprunglig / senaste barnprompt
       created_at: Date.now()
     };
   }
@@ -117,13 +127,13 @@
   // -------------------------------------------------------
   // Bygg WS-prompt baserat på tidigare kapitel
   //  - Kort recap (början + slut) istället för full text
-  //  - Tydligare instruktion om längd + avslut
-  //  - EXTREMT tydligt: fortsätt samma berättelse, starta inte om
+  //  - Åldersberoende instruktioner
+  //  - Extra strikt logik för "sista kapitlet"
   // -------------------------------------------------------
   function buildWsPrompt(state, wishOrOpts) {
     if (!state) return "";
 
-    // Litet försvar mot olika sätt att skicka in önskemål
+    // Önskemål från barnet
     let wishText = "";
     if (typeof wishOrOpts === "string") {
       wishText = wishOrOpts.trim();
@@ -131,8 +141,10 @@
       wishText = wishOrOpts.wish.trim();
     }
 
-    const hero     = (state.meta && state.meta.hero) || "hjälten";
-    const ageLabel = (state.meta && state.meta.ageLabel) || "7–8 år";
+    const meta     = state.meta || {};
+    const hero     = meta.hero || "hjälten";
+    const ageLabel = meta.ageLabel || "7–8 år";
+    const ageNum   = inferAge(meta);
 
     const chapters    = Array.isArray(state.chapters) ? state.chapters : [];
     const nextChapter = chapters.length + 1;
@@ -140,8 +152,7 @@
     // ---- Ny, kort recap: början + slut på senaste kapitel ----
     let recap;
     if (chapters.length === 0) {
-      recap =
-        "Detta är början av berättelsen. Inga tidigare kapitel finns ännu.\n";
+      recap = "Detta är början av berättelsen. Inga tidigare kapitel finns ännu.\n";
     } else {
       const first = chapters[0].text || "";
       const last  = chapters[chapters.length - 1].text || "";
@@ -153,69 +164,132 @@
         "Så här började berättelsen (kort sammanfattning):\n" +
         firstShort +
         "\n\n" +
-        "Så här slutade det senaste kapitlet (DU MÅSTE FORTSÄTTA HÄRIFRÅN, inte från början):\n" +
+        "Så här slutade det senaste kapitlet (FORTSÄTT exakt härifrån, inte från början):\n" +
         lastShort +
         "\n";
     }
 
-    // Extra instruktion om detta kapitlet ska kännas som "sista"
     const wishLower = wishText.toLowerCase();
     const isMaybeLast =
       wishLower.includes("sista kapitlet") ||
       wishLower.includes("avsluta berättelsen") ||
       wishLower.includes("avsluta boken") ||
       wishLower.includes("slutet på berättelsen") ||
-      wishLower.includes("slutet på boken");
+      wishLower.includes("slutet på boken") ||
+      wishLower.includes("gör ett slut") ||
+      wishLower.includes("gör ett bra slut") ||
+      wishLower.includes("sista delen");
 
-    const lengthHint =
-      (state.meta && state.meta.lengthLabel) || "Mellan (≈5 min)";
+    const lengthHint = meta.lengthLabel || "Mellan (≈5 min)";
 
-    const baseLengthInstr =
-      "Skriv ett kapitel på ungefär 8–14 meningar. " +
-      "Det är viktigare att kapitlet känns komplett än att det är långt. " +
-      "Om du märker att du börjar närma dig slutet av din text, " +
-      "avrunda kapitlet med en fullständig mening istället för att fortsätta.";
+    // Åldersband
+    const isYoung = ageNum <= 10;
+    const isMid   = ageNum >= 11 && ageNum <= 12;
+    const isTeen  = ageNum >= 13;
 
-    const endingInstr = isMaybeLast
-      ? "Detta ska vara SISTA kapitlet i boken. Knyt ihop de viktigaste trådarna, " +
-        "ge ett lugnt och hoppfullt slut och lämna inte kvar stora obesvarade frågor. " +
-        "Starta absolut INTE en helt ny berättelse i detta kapitel."
-      : "Detta är ett MITTENKAPITEL. Avsluta kapitlet med en hel mening och en mjuk krok " +
-        "som gör att man vill läsa nästa kapitel, men börja inte om berättelsen från början.";
+    // Längdinstruktion per åldersgrupp
+    let baseLengthInstr;
+    if (isYoung) {
+      baseLengthInstr =
+        "Skriv ett kapitel på ungefär 6–10 meningar. " +
+        "Det är viktigare att kapitlet känns tydligt och tryggt än att det är långt. " +
+        "Avsluta med en fullständig mening.";
+    } else if (isMid) {
+      baseLengthInstr =
+        "Skriv ett kapitel på ungefär 8–14 meningar. " +
+        "Det är viktigare att kapitlet känns komplett än att det är långt. " +
+        "Avsluta med en fullständig mening.";
+    } else {
+      // tonåring
+      baseLengthInstr =
+        "Skriv ett kapitel på ungefär 10–18 meningar. " +
+        "Låt scenen hinna få lite djup (känslor och detaljer), men avsluta hellre i tid " +
+        "med en fullständig mening än att påbörja ett nytt sidospår.";
+    }
 
-    // ---- NYTT: MYCKET TYDLIGARE KONTINUITET + FIGUR-LOGIK ----
-    const continuityRules = `
-Väldigt viktiga regler för berättelsen:
+    // Progressionsregler – undvik att börja om resan för äldre barn
+    let progressionRules;
+    if (isYoung) {
+      progressionRules = [
+        "- Du får gärna repetera lite kort vad barnet lär sig (t.ex. cykla, våga prata eller simma),",
+        "  men låt det ändå märkas att hjälten blir lite modigare för varje kapitel."
+      ].join("\n");
+    } else {
+      progressionRules = [
+        "- Utgå från att " + hero + " redan har lärt sig saker som beskrivits tidigare (t.ex. att våga cykla, våga simma,",
+        "  använda en kraft eller stå upp för sig själv).",
+        "- Upprepa inte samma 'första gång' igen. Om förra kapitlet handlade om att våga något för första gången,",
+        "  ska det här kapitlet visa nästa steg: t.ex. använda det modet i en ny situation eller hjälpa någon annan.",
+        "- Gör inte hjälten plötsligt osäkrare än i tidigare kapitel utan tydlig orsak."
+      ].join("\n");
+    }
 
-- Du MÅSTE fortsätta exakt samma berättelse som i tidigare kapitel.
-- Även om barnets nya önskan låter som en helt ny start (t.ex. "nu bor hjälten på månen"),
-  ska du INTE starta om boken. Du ska istället föra in önskan som nästa steg i samma äventyr.
-- Hoppa inte tillbaka till en ny "första skoldag", en ny "första gång de hittar kistan" osv.
-- Skriv kapitlet så att det tydligt händer EFTER slutet på det senaste kapitlet.
+    // Extra strikt instruktion för sista kapitlet
+    let endingInstr;
+    if (isMaybeLast) {
+      if (isTeen || isMid) {
+        endingInstr =
+          "Detta ska vara SISTA kapitlet i boken. Knyt ihop de viktigaste trådarna och visa tydligt hur " +
+          hero + " har utvecklats jämfört med början.\n" +
+          "- Introducera INTE helt nya stora miljöer (ingen ny ö, ny planet, ny stad eller ny värld). " +
+          "Använd de platser som redan finns i berättelsen.\n" +
+          "- Introducera INTE nya viktiga huvudpersoner i sista kapitlet. Mindre biroller får nämnas kort, " +
+          "men det är " + hero + "s resa som ska avslutas.\n" +
+          "- Starta inte en helt ny skattjakt eller ett nytt stort äventyr. Allt som händer nu ska kännas som " +
+          "en naturlig följd av det som hänt i tidigare kapitel.\n" +
+          "- Ge ett lugnt, hoppfullt och tydligt slut utan att lämna stora obesvarade huvudfrågor.";
+      } else {
+        // yngre barn – enklare språk
+        endingInstr =
+          "Detta ska vara SISTA kapitlet i boken. Knyt ihop berättelsen på ett lugnt och tryggt sätt.\n" +
+          "- Använd samma miljöer och vänner som tidigare.\n" +
+          "- Hitta inte på ett helt nytt äventyr, utan visa hur det som redan har hänt får ett fint slut.\n" +
+          "- Ge ett tydligt och hoppfullt slut där " + hero + " känner sig trygg.";
+      }
+    } else {
+      // Mittenkapitel
+      if (isTeen || isMid) {
+        endingInstr =
+          "Detta är ett MITTENKAPITEL. Avsluta kapitlet med en hel mening och en mjuk krok som gör att man vill " +
+          "läsa nästa kapitel, men börja inte om berättelsen från början.\n" +
+          "- Starta inte en ny 'första dag', ny första träning eller helt ny resa som ignorerar vad som hänt tidigare.\n" +
+          "- Låt i stället kapitlet fördjupa relationer, konsekvenser och känslor utifrån det som redan hänt.";
+      } else {
+        endingInstr =
+          "Detta är ett MITTENKAPITEL. Avsluta kapitlet med en tydlig mening och en liten krok som gör att man " +
+          "vill höra mer, men börja inte om exakt samma sak igen.";
+      }
+    }
 
-Figurer och världen måste vara konsekventa:
+    const tonalitetInstr = (function () {
+      if (isTeen) {
+        return [
+          "- Språket ska vara enkelt men kan ha lite mer djup, känslor och tankar typiskt för tonåringar.",
+          "- Håll en hoppfull ton, men det är okej med lite allvar så länge det inte blir mörkt eller brutalt.",
+          "- Undvik grovt våld, död eller detaljerad skräck."
+        ].join("\n");
+      }
+      if (isMid) {
+        return [
+          "- Språket ska vara tydligt och tryggt men kan innehålla lite mer känslor och nyanser.",
+          "- Håll en positiv och hoppfull ton, även när det är spännande.",
+          "- Undvik brutalt våld, död eller skrämmande detaljer."
+        ].join("\n");
+      }
+      // yngre
+      return [
+        "- Språket ska vara mycket enkelt, tydligt och tryggt.",
+        "- Håll en varm och hoppfull ton, även när något är lite spännande.",
+        "- Undvik våld, död eller sådant som kan kännas skrämmande."
+      ].join("\n");
+    })();
 
-- Om en figur redan är ett djur (t.ex. en hund), då är den en hund även i nästa kapitel.
-  Den kan inte plötsligt bli en människa utan en tydlig, barnvänlig förklaring inne i berättelsen.
-- Om du hittar på en vän till ${hero}, ge vännen ett EGET namn (t.ex. "Liva", "Sam", "Amir")
-  och använd samma namn genom hela boken. Skriv inte bara "vännen" varje gång.
-- Håll reda på viktiga platser (t.ex. källaren, kistan, skogen). Om barnets önskan vill
-  flytta berättelsen till en ny plats, gör det som ett naturligt nästa steg:
-  först avslutar du scenen där ni är, sedan tar ni er till den nya platsen.
-`.trim();
-
-    const wishInstr = `
-Önskemål från barnet (väv in detta som NÄSTA STEG i samma berättelse – inte som en ny start):
-${wishText ? `- "${wishText}"` : "- (inga extra önskemål just nu)"}
-`.trim();
-
-    // Själva systemprompten till modellen
-    const prompt = `
+    const basePrompt = `
 Du är en varm och trygg barnboksförfattare.
 Du skriver en kapitelbok på svenska för barn i åldern ${ageLabel}.
 Huvudpersonen heter ${hero} och ska alltid kallas "${hero}" genom hela boken.
 
-Barnets ursprungliga idé från början av boken är:
+Barnets ursprungliga idé (från starten av boken) är:
 "${state.last_prompt || ""}"
 
 Här är en kort översikt över vad som hänt i berättelsen hittills:
@@ -226,28 +300,29 @@ Du ska nu skriva KAPITEL ${nextChapter} i SAMMA berättelse.
 Viktigt om strukturen för kapitlet:
 - Fortsätt direkt från slutet av föregående kapitel (utifrån stycket ovan).
 - Starta inte om med en helt ny dag eller en helt ny historia om samma figur.
-- Upprepa inte samma morgon, samma första skoldag eller samma skattjakt som redan hänt.
+- Upprepa inte samma första händelse (första cykelturen, första gången någon vågar något) om den redan hänt.
 - Skriv kapitlet så att det har en tydlig början, en mitt och ett slut.
 
 Längd:
 - ${baseLengthInstr}
-- Kapitlet ska ungefär motsvara ${lengthHint} i högläsningstid för barn.
 
-Tydligt slut:
+Utveckling och framsteg:
+${progressionRules}
+
+Tydligt slut på kapitlet:
 - Avsluta alltid kapitlet med en fullständig mening som slutar med punkt.
 - Avsluta inte mitt i en mening.
 
-${continuityRules}
-
-${wishInstr}
+${endingInstr}
 
 Tonalitet:
-- Språket ska vara enkelt, tydligt och tryggt för barn i åldern ${ageLabel}.
-- Håll en positiv och hoppfull ton, även när det är lite spännande.
-- Undvik brutalt våld, död eller skrämmande detaljer.
+${tonalitetInstr}
+
+Önskemål från barnet (väv in detta naturligt i kapitlet, utan att starta om berättelsen):
+${wishText ? `- "${wishText}"` : "- (inga extra önskemål just nu)"}
     `.trim();
 
-    return prompt;
+    return basePrompt;
   }
 
   // -------------------------------------------------------
