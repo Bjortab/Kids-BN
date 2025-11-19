@@ -1,12 +1,13 @@
 // ==========================================================
-// BN-KIDS WS DEV — worldstate.dev.js (v8.2)
+// BN-KIDS WS DEV — worldstate.dev.js (v8.3)
 // Kapitelbok i localStorage + bättre kapitel- & ålderslogik
 //
 // - Varje klick på WS-knappen = nytt kapitel i samma bok
 // - Kort recap (början + slut) så kapitlet hinner bli klart
 // - Åldersstyrd längd + ton
-// - Extra hård logik mot "omstarter" (kapitel 2+ får inte bli
-//   en ny version av kapitel 1, även om prompten är samma)
+// - Extra hård logik mot "omstarter" i mittenkapitel
+// - Sista-kapitel-kommando: "avsluta boken"-önskemål ses
+//   som instruktion, inte som innehåll (ingen ny story).
 // ==========================================================
 
 (function () {
@@ -127,7 +128,7 @@
   function buildWsPrompt(state, wishOrOpts) {
     if (!state) return "";
 
-    // Önskemål från barnet
+    // Önskemål från barnet (som text)
     let wishText = "";
     if (typeof wishOrOpts === "string") {
       wishText = wishOrOpts.trim();
@@ -163,16 +164,34 @@
         "\n";
     }
 
+    // -------------------------------------------------
+    // Tolka om barnet försöker säga "sista kapitlet nu"
+    // -------------------------------------------------
     const wishLower = wishText.toLowerCase();
-    const isMaybeLast =
-      wishLower.includes("sista kapitlet") ||
-      wishLower.includes("avsluta berättelsen") ||
+
+    const isCloseCommand =
       wishLower.includes("avsluta boken") ||
+      wishLower.includes("avsluta berättelsen") ||
+      wishLower.includes("sista kapitlet") ||
+      wishLower.includes("gör ett slut") ||
+      wishLower.includes("gör ett fint slut") ||
+      wishLower.includes("gör ett bra slut") ||
       wishLower.includes("slutet på berättelsen") ||
       wishLower.includes("slutet på boken") ||
-      wishLower.includes("gör ett slut") ||
-      wishLower.includes("gör ett bra slut") ||
       wishLower.includes("sista delen");
+
+    const isMaybeLast = isCloseCommand; // vi gör det hårt: close-kommandot = sista kapitlet
+
+    // När vi tolkar det som kommandot "avsluta boken" vill vi inte
+    // att exakt den frasen ska dyka upp inne i sagan. Vi gör därför
+    // en version av önskan som bara beskriver *känslan* vi vill ha.
+    let wishForPrompt;
+    if (isCloseCommand) {
+      wishForPrompt =
+        "Barnet önskar att detta ska vara sista kapitlet och att boken får ett tydligt, fint och hoppfullt slut där allt knyts ihop.";
+    } else {
+      wishForPrompt = wishText;
+    }
 
     const lengthHint = meta.lengthLabel || "Mellan (≈5 min)";
 
@@ -224,24 +243,17 @@
     // Extra strikt instruktion för sista kapitlet
     let endingInstr;
     if (isMaybeLast) {
-      if (isTeen || isMid) {
-        endingInstr =
-          "Detta ska vara SISTA kapitlet i boken. Knyt ihop de viktigaste trådarna och visa tydligt hur " +
-          hero + " har utvecklats jämfört med början.\n" +
-          "- Introducera INTE helt nya stora miljöer (ingen ny ö, ny planet, ny stad eller ny värld). " +
-          "Använd de platser som redan finns i berättelsen.\n" +
-          "- Introducera INTE nya viktiga huvudpersoner i sista kapitlet. Mindre biroller får nämnas kort, " +
-          "men det är " + hero + "s resa som ska avslutas.\n" +
-          "- Starta inte en helt ny skattjakt eller ett nytt stort äventyr. Allt som händer nu ska kännas som " +
-          "en naturlig följd av det som hänt i tidigare kapitel.\n" +
-          "- Ge ett lugnt, hoppfullt och tydligt slut utan att lämna stora obesvarade huvudfrågor.";
-      } else {
-        endingInstr =
-          "Detta ska vara SISTA kapitlet i boken. Knyt ihop berättelsen på ett lugnt och tryggt sätt.\n" +
-          "- Använd samma miljöer och vänner som tidigare.\n" +
-          "- Hitta inte på ett helt nytt äventyr, utan visa hur det som redan har hänt får ett fint slut.\n" +
-          "- Ge ett tydligt och hoppfullt slut där " + hero + " känner sig trygg.";
-      }
+      // Superhårt språk, alla åldrar
+      endingInstr =
+        "DETTA ÄR SISTA KAPITLET i en redan pågående bok. Du får ABSOLUT INTE starta en ny berättelse eller en ny första dag.\n" +
+        "- Utgå från att läsaren redan känner till huvudpersonerna och vad som hänt i tidigare kapitel.\n" +
+        "- Använd samma viktiga personer, relationer och platser som redan finns i berättelsen.\n" +
+        "- Introducera inte en helt ny värld, ny stor resa eller ny skattjakt. Allt som händer nu ska vara en naturlig följd\n" +
+        "  av det som redan har hänt.\n" +
+        "- Skriv inget som låter som en omstart, t.ex. 'Det var en gång', 'Det här var början på', 'En dag bestämde sig',\n" +
+        "  eller 'Nu började äventyret'.\n" +
+        "- Knyt ihop de viktigaste trådarna: vad har " + hero + " lärt sig? Hur har " + hero + " förändrats?\n" +
+        "- Avsluta kapitlet med ett tydligt, lugnt och hoppfullt slut. Skriv en sista mening som känns som ett slut på en bok.";
     } else {
       // Mittenkapitel
       if (isTeen || isMid) {
@@ -316,7 +328,7 @@ Tonalitet:
 ${tonalitetInstr}
 
 Önskemål från barnet (väv in detta naturligt i kapitlet, utan att starta om berättelsen):
-${wishText ? `- "${wishText}"` : "- (inga extra önskemål just nu)"}
+${wishForPrompt ? `- "${wishForPrompt}"` : "- (inga extra önskemål just nu)"}
     `.trim();
 
     return basePrompt;
