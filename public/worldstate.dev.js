@@ -1,13 +1,14 @@
 // ==========================================================
-// BN-KIDS WS DEV — worldstate.dev.js (v8.3)
+// BN-KIDS WS DEV — worldstate.dev.js (v8.4)
 // Kapitelbok i localStorage + bättre kapitel- & ålderslogik
 //
 // - Varje klick på WS-knappen = nytt kapitel i samma bok
 // - Kort recap (början + slut) så kapitlet hinner bli klart
 // - Åldersstyrd längd + ton
 // - Extra hård logik mot "omstarter" i mittenkapitel
-// - Sista-kapitel-kommando: "avsluta boken"-önskemål ses
-//   som instruktion, inte som innehåll (ingen ny story).
+// - Sista-kapitel-kommando ("avsluta boken") behandlas som
+//   instruktion, inte som innehåll. Sista kapitlet får INTE
+//   vara en ny start eller en ren sammanfattning.
 // ==========================================================
 
 (function () {
@@ -165,7 +166,7 @@
     }
 
     // -------------------------------------------------
-    // Tolka om barnet försöker säga "sista kapitlet nu"
+    // Tolka "sista kapitlet"-kommando
     // -------------------------------------------------
     const wishLower = wishText.toLowerCase();
 
@@ -180,15 +181,15 @@
       wishLower.includes("slutet på boken") ||
       wishLower.includes("sista delen");
 
-    const isMaybeLast = isCloseCommand; // vi gör det hårt: close-kommandot = sista kapitlet
+    const isMaybeLast = isCloseCommand;
 
     // När vi tolkar det som kommandot "avsluta boken" vill vi inte
     // att exakt den frasen ska dyka upp inne i sagan. Vi gör därför
-    // en version av önskan som bara beskriver *känslan* vi vill ha.
+    // en version av önskan som bara beskriver känslan.
     let wishForPrompt;
     if (isCloseCommand) {
       wishForPrompt =
-        "Barnet önskar att detta ska vara sista kapitlet och att boken får ett tydligt, fint och hoppfullt slut där allt knyts ihop.";
+        "Barnet önskar att detta ska vara sista kapitlet och att boken får ett tydligt, fint och hoppfullt slut där allt knyts ihop, utan att en ny berättelse startar.";
     } else {
       wishForPrompt = wishText;
     }
@@ -243,17 +244,20 @@
     // Extra strikt instruktion för sista kapitlet
     let endingInstr;
     if (isMaybeLast) {
-      // Superhårt språk, alla åldrar
       endingInstr =
-        "DETTA ÄR SISTA KAPITLET i en redan pågående bok. Du får ABSOLUT INTE starta en ny berättelse eller en ny första dag.\n" +
+        "DETTA ÄR SISTA KAPITLET i en redan pågående bok.\n" +
+        "- Du ska skriva EN scen som börjar direkt efter slutet i recap-texten ovan och leder fram till ett slut.\n" +
+        "- Du får ABSOLUT INTE starta en ny berättelse eller ny första dag.\n" +
+        "- Skriv inte en ren sammanfattning av hela boken. Berätta inte om hur allt började en gång till.\n" +
+        "  Undvik fraser som 'Det började när...', 'Från första stund...', 'Allt hade börjat med...'.\n" +
         "- Utgå från att läsaren redan känner till huvudpersonerna och vad som hänt i tidigare kapitel.\n" +
         "- Använd samma viktiga personer, relationer och platser som redan finns i berättelsen.\n" +
         "- Introducera inte en helt ny värld, ny stor resa eller ny skattjakt. Allt som händer nu ska vara en naturlig följd\n" +
         "  av det som redan har hänt.\n" +
-        "- Skriv inget som låter som en omstart, t.ex. 'Det var en gång', 'Det här var början på', 'En dag bestämde sig',\n" +
-        "  eller 'Nu började äventyret'.\n" +
         "- Knyt ihop de viktigaste trådarna: vad har " + hero + " lärt sig? Hur har " + hero + " förändrats?\n" +
-        "- Avsluta kapitlet med ett tydligt, lugnt och hoppfullt slut. Skriv en sista mening som känns som ett slut på en bok.";
+        "- Avsluta kapitlet med ett tydligt, lugnt och hoppfullt slut. Skriv en sista mening som känns som ett slut på en bok.\n" +
+        "- Om du märker att du är på väg att skriva en ny början eller sammanfatta allt från start: avbryt och fortsätt istället\n" +
+        "  scenen framåt tills den får ett slut.";
     } else {
       // Mittenkapitel
       if (isTeen || isMid) {
