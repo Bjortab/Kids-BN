@@ -1,9 +1,11 @@
 // ==========================================================
-// BN-KIDS WS DEV — ws_button.dev.js (GC v7 stabil)
+// BN-KIDS WS DEV — ws_button.dev.js (GC v7.3)
 // - Extra knapp "Skapa saga (WS dev)" som använder worldstate
 // - Kopplad till WS_DEV.* (load, buildWsPrompt, addChapterAndSave)
-// - Lägger till request-lock så bara SENASTE svaret får skriva
-//   till sagarutan (fixar "två sagor"-problemet).
+// - Request-lock så bara SENASTE svaret får skriva till sagarutan
+// - stopPropagation() + CLONE FIX på knappen:
+//   *Vi ersätter knappen med en klon så alla gamla listeners försvinner*
+//   (fixar buggen med "två sagor" på ett klick).
 // ==========================================================
 
 (function () {
@@ -37,7 +39,7 @@
 
   // -------------------------------------------------------
   // Koppla Rensa-knappen till WS_DEV.reset()
-// -------------------------------------------------------
+  // -------------------------------------------------------
   function hookResetButton() {
     const clearBtn = document.getElementById("clear-transcript");
     if (!clearBtn) {
@@ -64,12 +66,22 @@
       log("hittar inte WS-knapp i DOM:en");
       return;
     }
-    btn.addEventListener("click", handleWsClick);
-    log("WS-knapp bunden");
+
+    // 🔥 CLONE FIX:
+    // Ersätt knappen med en klon så ALLA gamla event-lyssnare tas bort.
+    const newBtn = btn.cloneNode(true); // samma text, attribut osv
+    btn.parentNode.replaceChild(newBtn, btn);
+
+    // Koppla ENBART vår egen listener
+    newBtn.addEventListener("click", handleWsClick);
+
+    log("WS-knapp bunden (GC v7.3, med clone fix)");
   }
 
   async function handleWsClick(ev) {
+    // Viktigt: stoppa allt så inga andra handlers på högre nivå körs
     ev.preventDefault();
+    ev.stopPropagation();
 
     if (!window.WS_DEV) {
       log("WS_DEV finns inte på window");
@@ -137,7 +149,7 @@
         throw new Error("Kunde inte tolka JSON: " + raw.slice(0, 200));
       }
 
-      if (!data || (!data.story && !data.text)) {
+      if (!data || !data.story) {
         throw new Error("Saknar story-fält i svar");
       }
 
@@ -151,8 +163,12 @@
         return; // finally körs ändå, spinner stängs
       }
 
-      const chapterText = data.story || data.text;
-      if (storyEl) storyEl.textContent = chapterText;
+      const chapterText = data.story;
+
+      if (storyEl) {
+        log("WS-dev skriver saga till storyEl, requestId:", myRequestId);
+        storyEl.textContent = chapterText;
+      }
 
       // 3) Uppdatera bok + spara
       state = window.WS_DEV.addChapterAndSave(state, chapterText, newWish);
