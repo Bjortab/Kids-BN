@@ -1,144 +1,206 @@
-// ===============================
-// BN-KIDS — WORLDSTATE.DEV.JS (V10 PREP)
-// ===============================
-// OBS: Får EJ bryta GC-laddning, HTML-ID:n, event-bindings eller story_engine-API:t.
-// Säkerställd enligt checklistan. GC laddas före denna. 
-// ===============================
+// ===============================================================
+// BN-KIDS — WORLDSTATE DEV (V10.1)
+// - Håller ihop ålder, längd, hjälte, prompt osv
+// - Exponerar WS_DEV.loadOrCreateForm() som ws_button.dev.js kräver
+// - Sparar/läser worldState i localStorage
+// ===============================================================
 
-(function () {
-    console.log("[WS DEV] worldstate.dev.js laddad (V10) ✔");
+(function (global) {
+  "use strict";
 
-    // -------------------------------
-    // 1. Hämta befintligt worldstate eller skapa nytt
-    // -------------------------------
-    let ws = window.BN_WS || {
-        book: null,
-        chapters: [],
-        last_prompt: "",
-        age_band: null,
-        length_preset: null,
-        tone_preset: null,
-        story_mode: "chapter_book",
-        continue_story: false,
-        force_end: false,
-        knowledge_priority: "balanced",
-        disable_moralizing: true
+  const STORAGE_KEY = "bn_kids_worldstate_dev_v2";
+
+  // ------------------------------------------------------------
+  // Default-struktur för worldState
+  // ------------------------------------------------------------
+  function createDefaultWorldState() {
+    return {
+      meta: {
+        age: null,          // t.ex. "7–9", "10–12", "13–15"
+        ageLabel: "",       // texten i selecten, om vi vill
+        hero: "",           // hjältenamn
+        length: "medium"    // "short" | "medium" | "long"
+      },
+      last_prompt: "",       // senaste synliga prompten i fältet
+      chapters: [],          // ren text per kapitel
+      story_state: {         // intern state från modellen
+        currentChapter: 0,
+        summary: null,
+        mode: "chapter_book"
+      }
     };
+  }
 
-    // Exponera för debug
-    window.BN_WS = ws;
+  // ------------------------------------------------------------
+  // Merge in defaultvärden utan att slänga bort befintligt
+  // ------------------------------------------------------------
+  function mergeWithDefaults(raw) {
+    const base = createDefaultWorldState();
 
-    // -------------------------------
-    // 2. Funktion att nollställa allt
-    // -------------------------------
-    window.BN_resetBook_DEV = function () {
-        console.log("[WS DEV] RESET BOOK");
-        ws.book = null;
-        ws.chapters = [];
-        ws.last_prompt = "";
-        ws.continue_story = false;
-        ws.force_end = false;
-        ws.knowledge_priority = "balanced";
-        ws.disable_moralizing = true;
-        updateUI_WS_dev();
-    };
+    if (!raw || typeof raw !== "object") return base;
 
-    // -------------------------------
-    // 3. Spara prompt för kapitel-logik
-    // -------------------------------
-    window.BN_setPrompt_DEV = function (text) {
-        ws.user_prompt = text.trim();
-        console.log("[WS DEV] Ny prompt satt:", ws.user_prompt);
-    };
+    const out = Object.assign({}, base, raw);
+    out.meta = Object.assign({}, base.meta, raw.meta || {});
+    out.story_state = Object.assign(
+      {},
+      base.story_state,
+      raw.story_state || {}
+    );
 
-    // -------------------------------
-    // 4. Sätta ålder
-    // -------------------------------
-    window.BN_setAgeBand_DEV = function (ageBandId) {
-        ws.age_band = ageBandId;
-        console.log("[WS DEV] Åldersband satt:", ws.age_band);
-    };
+    if (!Array.isArray(out.chapters)) out.chapters = [];
 
-    // -------------------------------
-    // 5. Längdinställning
-    // -------------------------------
-    window.BN_setLengthPreset_DEV = function (presetId) {
-        ws.length_preset = presetId;
-        console.log("[WS DEV] Längdpreset satt:", ws.length_preset);
-    };
+    return out;
+  }
 
-    // -------------------------------
-    // 6. Toninställning
-    // -------------------------------
-    window.BN_setTonePreset_DEV = function (presetId) {
-        ws.tone_preset = presetId;
-        console.log("[WS DEV] Ton-preset satt:", ws.tone_preset);
-    };
+  // ------------------------------------------------------------
+  // Läs localStorage
+  // ------------------------------------------------------------
+  function loadFromStorage() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return createDefaultWorldState();
+      const parsed = JSON.parse(raw);
+      return mergeWithDefaults(parsed);
+    } catch (err) {
+      console.warn("[WS DEV] Kunde inte läsa worldState från localStorage:", err);
+      return createDefaultWorldState();
+    }
+  }
 
-    // -------------------------------
-    // 7. Nyckellogik: fortsättning vs. ny berättelse
-    // -------------------------------
-    function computeContinueFlag() {
-        if (!ws.last_prompt || !ws.user_prompt) return false;
+  // ------------------------------------------------------------
+  // Spara till localStorage
+  // ------------------------------------------------------------
+  function saveToStorage(worldState) {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(worldState));
+    } catch (err) {
+      console.warn("[WS DEV] Kunde inte spara worldState till localStorage:", err);
+    }
+  }
 
-        const p1 = ws.last_prompt.trim().toLowerCase();
-        const p2 = ws.user_prompt.trim().toLowerCase();
+  // ------------------------------------------------------------
+  // Läs formulärfält från DOM (ålder, hjälte, längd, prompt)
+  // ------------------------------------------------------------
+  function readFormFieldsInto(worldState) {
+    const ageSelect = document.querySelector("#age");
+    const heroInput = document.querySelector("#hero");
+    const lengthSelect = document.querySelector("#length");
+    const promptTextarea = document.querySelector("#prompt");
 
-        const same = p1 === p2;
+    if (ageSelect) {
+      const sel = ageSelect;
+      const rawValue = sel.value || "";
+      worldState.meta.age = rawValue || null;
 
-        console.log("[WS DEV] continue calc:", { p1, p2, same });
-
-        return same;
+      const label =
+        sel.options && sel.selectedIndex >= 0
+          ? sel.options[sel.selectedIndex].text
+          : "";
+      worldState.meta.ageLabel = label || rawValue || "";
     }
 
-    // -------------------------------
-    // 8. Förbereda payload till story_engine
-    // -------------------------------
-    window.BN_buildStoryPayload_DEV = function () {
-        const continueFlag = computeContinueFlag();
-        ws.continue_story = continueFlag;
-
-        const payload = {
-            story_mode: ws.story_mode,
-            age_band: ws.age_band,
-            length_preset: ws.length_preset,
-            tone_preset: ws.tone_preset,
-
-            user_prompt: ws.user_prompt,
-            last_prompt: ws.last_prompt,
-
-            continue_story: continueFlag,
-            force_end: ws.force_end,
-
-            chapters_so_far: ws.chapters.length,
-            previous_chapter_text: ws.chapters[ws.chapters.length - 1] || "",
-
-            disable_moralizing: ws.disable_moralizing,
-            knowledge_priority: ws.knowledge_priority
-        };
-
-        console.log("[WS DEV] Payload byggd:", payload);
-        return payload;
-    };
-
-    // -------------------------------
-    // 9. När ett nytt kapitel kommit tillbaka från backend
-    // -------------------------------
-    window.BN_registerNewChapter_DEV = function (text) {
-        console.log("[WS DEV] Registrerar nytt kapitel");
-        ws.chapters.push(text);
-        ws.last_prompt = ws.user_prompt;
-        ws.force_end = false;
-        updateUI_WS_dev();
-    };
-
-    // -------------------------------
-    // 10. UI uppdatering (lätt)
-    // -------------------------------
-    function updateUI_WS_dev() {
-        const el = document.getElementById("ws-dev-view");
-        if (!el) return;
-        el.innerText = JSON.stringify(ws, null, 2);
+    if (heroInput) {
+      worldState.meta.hero = heroInput.value || "";
     }
 
-})();
+    if (lengthSelect) {
+      worldState.meta.length = lengthSelect.value || "medium";
+    }
+
+    if (promptTextarea) {
+      worldState.last_prompt = promptTextarea.value || "";
+    }
+
+    return worldState;
+  }
+
+  // ------------------------------------------------------------
+  // Skriv tillbaka worldState → formulär (används ev. vid load)
+  // ------------------------------------------------------------
+  function writeWorldStateToForm(worldState) {
+    const ageSelect = document.querySelector("#age");
+    const heroInput = document.querySelector("#hero");
+    const lengthSelect = document.querySelector("#length");
+    const promptTextarea = document.querySelector("#prompt");
+
+    if (ageSelect && worldState.meta.age != null) {
+      ageSelect.value = String(worldState.meta.age);
+    }
+
+    if (heroInput) {
+      heroInput.value = worldState.meta.hero || "";
+    }
+
+    if (lengthSelect) {
+      lengthSelect.value = worldState.meta.length || "medium";
+    }
+
+    if (promptTextarea) {
+      promptTextarea.value = worldState.last_prompt || "";
+    }
+  }
+
+  // ------------------------------------------------------------
+  // Publik API för ws_button.dev.js
+  // ------------------------------------------------------------
+
+  /**
+   * loadOrCreateForm()
+   * - läser worldState från storage
+   * - uppdaterar den med aktuella formulärfält
+   * - skriver tillbaka till storage
+   * - returnerar worldState-objektet
+   */
+  function loadOrCreateForm() {
+    let ws = loadFromStorage();
+    ws = mergeWithDefaults(ws);
+
+    // uppdatera med vad som står i formuläret just nu
+    ws = readFormFieldsInto(ws);
+
+    // bumpa kapitelräknare om chapters-listan är längre
+    if (!ws.story_state) ws.story_state = {};
+    if (typeof ws.story_state.currentChapter !== "number") {
+      ws.story_state.currentChapter = ws.chapters.length;
+    }
+
+    saveToStorage(ws);
+    console.log("[WS DEV] loadOrCreateForm →", ws);
+    return ws;
+  }
+
+  /**
+   * saveWorldState(worldState)
+   * - uppdaterar storage + (valfritt) formulär
+   */
+  function saveWorldState(worldState) {
+    if (!worldState) return;
+    const ws = mergeWithDefaults(worldState);
+    saveToStorage(ws);
+    writeWorldStateToForm(ws);
+    console.log("[WS DEV] saveWorldState →", ws);
+    return ws;
+  }
+
+  /**
+   * resetWorldState()
+   * - används vid "Rensa" om vi vill börja om helt
+   */
+  function resetWorldState() {
+    const ws = createDefaultWorldState();
+    saveToStorage(ws);
+    writeWorldStateToForm(ws);
+    console.log("[WS DEV] resetWorldState →", ws);
+    return ws;
+  }
+
+  // ------------------------------------------------------------
+  // Exponera globalt så ws_button.dev.js hittar det
+  // ------------------------------------------------------------
+  const WS_DEV = (global.WS_DEV = global.WS_DEV || {});
+  WS_DEV.loadOrCreateForm = loadOrCreateForm;
+  WS_DEV.saveWorldState = saveWorldState;
+  WS_DEV.resetWorldState = resetWorldState;
+
+  console.log("[WS DEV] worldstate.dev.js laddad (V10.1)");
+})(window);
