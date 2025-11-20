@@ -1,12 +1,14 @@
 // ==========================================================
-// BN-KIDS WS DEV — worldstate.dev.js (v8.5)
-// Kapitelbok i localStorage + bättre kapitel- & önskemålslogik
+// BN-KIDS WS DEV — worldstate.dev.js (v8.4)
+// Kapitelbok i localStorage + bättre kapitel- & ålderslogik
 //
 // - Varje klick på WS-knappen = nytt kapitel i samma bok
 // - Kort recap (början + slut) så kapitlet hinner bli klart
-// - Åldersstyrd längd + ton (via StoryEngine v9)
-// - Extra hård logik mot "omstarter" när barnet upprepar
-//   samma önskemål/prompt i flera kapitel.
+// - Åldersstyrd längd + ton
+// - Extra hård logik mot "omstarter" i mittenkapitel
+// - Sista-kapitel-kommando ("avsluta boken") behandlas som
+//   instruktion, inte som innehåll. Sista kapitlet får INTE
+//   vara en ny start eller en ren sammanfattning.
 // ==========================================================
 
 (function () {
@@ -86,8 +88,7 @@
         lengthLabel: lengthText || "Mellan (≈5 min)"
       },
       chapters: [],
-      last_prompt: prompt,   // ursprunglig idé
-      last_wish: "",         // senaste önskemål (per kapitel)
+      last_prompt: prompt,
       created_at: Date.now()
     };
   }
@@ -183,7 +184,8 @@
     const isMaybeLast = isCloseCommand;
 
     // När vi tolkar det som kommandot "avsluta boken" vill vi inte
-    // att exakt den frasen ska dyka upp inne i sagan.
+    // att exakt den frasen ska dyka upp inne i sagan. Vi gör därför
+    // en version av önskan som bara beskriver känslan.
     let wishForPrompt;
     if (isCloseCommand) {
       wishForPrompt =
@@ -222,14 +224,13 @@
     let progressionRules;
     if (isYoung) {
       progressionRules = [
-        "- Du får gärna repetera lite kort vad barnet lär sig (t.ex. cykla, våga prata eller spela musik),",
-        "  men låt det ändå märkas att hjälten blir lite modigare eller skickligare för varje kapitel.",
-        "- Upprepa inte exakt samma första gång som redan hänt (t.ex. första konserten, första mål i en match)."
+        "- Du får gärna repetera lite kort vad barnet lär sig (t.ex. cykla, våga prata eller simma),",
+        "  men låt det ändå märkas att hjälten blir lite modigare för varje kapitel."
       ].join("\n");
     } else {
       progressionRules = [
         "- Det här är kapitel " + nextChapter + ", inte kapitel 1.",
-        "- Utgå från att " + hero + " redan har lärt sig saker som beskrivits tidigare (t.ex. att våga spela, våga uppträda,",
+        "- Utgå från att " + hero + " redan har lärt sig saker som beskrivits tidigare (t.ex. att våga cykla, våga simma,",
         "  använda en kraft eller stå upp för sig själv).",
         "- Upprepa inte samma första gång igen. Om förra kapitlet handlade om att våga något första gången,",
         "  ska det här kapitlet visa nästa steg: använda det modet i en ny situation eller hjälpa någon annan.",
@@ -294,16 +295,6 @@
       ].join("\n");
     }
 
-    // Extra regler för upprepade önskemål
-    const repeatedWishInstr = `
-ÖNSKEMÅL OCH UPPREPNING:
-- Barnets önskemål kan vara samma som i tidigare kapitel (t.ex. "Frida ska våga spela på scen" flera gånger).
-- Även om önskemålet upprepas får du INTE skriva om samma händelse en gång till.
-- Behandla upprepade önskemål som att barnet vill se nästa steg i samma resa, inte en ny version av samma scen.
-- Fortsätt därför alltid FRAMÅT från scenen i recap-texten. Om något redan hänt (första spelningen, första matchen, första gången någon vågar något),
-  ska du nu visa vad som händer efteråt, eller hur det utvecklas vidare.
-`.trim();
-
     const basePrompt = `
 Du är en varm och trygg barnboksförfattare.
 Du skriver en kapitelbok på svenska för barn i åldern ${ageLabel}.
@@ -320,7 +311,7 @@ Du ska nu skriva KAPITEL ${nextChapter} i SAMMA berättelse.
 Viktigt om strukturen för kapitlet:
 - FORTSÄTT från slutet av föregående kapitel (texten ovan).
 - Starta inte om med en helt ny dag eller en helt ny historia om samma figur.
-- Upprepa inte samma första händelse (första konserten, första målet, första gången någon vågar något) om den redan hänt.
+- Upprepa inte samma första händelse (första cykelturen, första gången någon vågar något) om den redan hänt.
 - Skriv kapitlet så att det har en tydlig början, en mitt och ett slut.
 - Behandla detta som kapitel ${nextChapter}, inte kapitel 1.
 
@@ -339,8 +330,6 @@ ${endingInstr}
 
 Tonalitet:
 ${tonalitetInstr}
-
-${repeatedWishInstr}
 
 Önskemål från barnet (väv in detta naturligt i kapitlet, utan att starta om berättelsen):
 ${wishForPrompt ? `- "${wishForPrompt}"` : "- (inga extra önskemål just nu)"}
