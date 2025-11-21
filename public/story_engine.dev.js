@@ -1,11 +1,12 @@
 // ===============================================================
-// BN-KIDS — STORY ENGINE (DEV v10.2)
-// - Läser in barnets prompt ordentligt (även sanerad via IP-filtret)
-// - Två aktiva åldersband: 7–9 (junior), 10–12 (mid)  [13–15 mappas till 10–12]
-// - Kapitellogik: kapitelIndex styr fortsatt-flödet (inte prompten)
-// - Trim: mindre moralkaka, olika nivå per ålder
-//   * 7–9 år: lite moral ok, men inte tjatigt
-//   * 10–12 år: ingen moral om inte barnet själv ber om det i prompten
+// BN-KIDS — STORY ENGINE (DEV v10.3)
+// ---------------------------------------------------------------
+// Fokus i v10.3:
+// - Stabil kapitelmotor (tappar inte tråden mellan kapitel)
+// - Ingen synlig recap, men modellen får intern recap i prompten
+// - Slutar starta om kapitel 1 när prompten lämnas orörd
+// - Mycket mindre moralkaka (olika nivå för 7–9 och 10–12)
+// - Mindre tjat om "jag är stark", "jag är hjälte" – visa i handling
 //
 // Exponeras som: window.BNStoryEngine
 // Används av: generateStory_ip.js (IP-wrappern)
@@ -16,7 +17,7 @@
 (function (global) {
   "use strict";
 
-  const ENGINE_VERSION = "bn-story-engine-v10.2";
+  const ENGINE_VERSION = "bn-story-engine-v10.3";
 
   // ------------------------------------------------------------
   // Hämta konfig (om vi har BN_STORY_CONFIG)
@@ -59,7 +60,7 @@
       romance_level: "crush_only"
     },
     teen_13_15: {
-      // används inte direkt i v10.2, men finns kvar för framtiden
+      // används inte direkt i v10.3, men finns kvar för framtiden
       id: "teen_13_15",
       label: "13–15 år (beta)",
       chapter_words_target: 1700,
@@ -96,7 +97,7 @@
   // Beräkna age band + längd-info
   //  - 7–9  => junior_7_9
   //  - 10–12 => mid_10_12
-  //  - 13–15 => mappas också till mid_10_12 i v10.2
+  //  - 13–15 => mappas också till mid_10_12 i v10.3
   // ------------------------------------------------------------
   function pickAgeBand(meta) {
     const rawAge =
@@ -107,7 +108,7 @@
     let bandId;
     if (age <= 9) bandId = "junior_7_9";
     else {
-      // 10–12, 13–15 -> mid_10_12 i v10.2
+      // 10–12, 13–15 -> mid_10_12 i v10.3
       bandId = "mid_10_12";
     }
 
@@ -264,9 +265,44 @@
   }
 
   // ------------------------------------------------------------
-  // Postprocess: trimma moralnivå beroende på ålder
+  // Detektera "själv-pepp om kraft/styrka" (vi vill minska tjatet)
+  // ------------------------------------------------------------
+  function isPowerSelfTalkSentence(sentence, heroName) {
+    const s = sentence.toLowerCase().trim();
+    if (!s) return false;
+
+    const heroLower = (heroName || "").toLowerCase();
+    const mentionsHero =
+      heroLower && s.includes(heroLower);
+
+    const powerWords =
+      s.includes("kände sig stark") ||
+      s.includes("kände sig så stark") ||
+      s.includes("kände hur stark") ||
+      s.includes("kände kraften") ||
+      s.includes("kände hur kraften") ||
+      s.includes("visste att han var stark") ||
+      s.includes("visste att hon var stark") ||
+      s.includes("visste att hen var stark") ||
+      s.includes("var starkast i världen") ||
+      s.includes("var starkast av alla") ||
+      s.includes("jag är stark") ||
+      s.includes("jag är så stark") ||
+      s.includes("jag är en hjälte") ||
+      s.includes("jag är en riktig hjälte") ||
+      s.includes("jag är en superhjälte") ||
+      s.includes("kände sig som en hjälte") ||
+      s.includes("kände sig som en superhjälte");
+
+    // Om meningen pratar om styrkan som känsla/tanke, inte handling
+    return powerWords || (mentionsHero && s.includes("kände sig stark"));
+  }
+
+  // ------------------------------------------------------------
+  // Postprocess: trimma moralnivå + "jag är stark"-tjat
   //  - 7–9: behåll max 1 moralstycke, släng resten
   //  - 10–12: släng alla moralstycken om barnet inte bett om moral
+  //  - Alla: trimma ned upprepade self-power-sentences
   // ------------------------------------------------------------
   function postProcessChapterText(
     inputText,
@@ -278,44 +314,109 @@
 
     const childIdea = context.childIdea || "";
     const wantsMoral = promptWantsMoral(childIdea);
-
     const bandId = ageBand && ageBand.id ? ageBand.id : "mid_10_12";
+    const heroName = context.heroName || "";
 
-    // vi jobbar på stycken (=paragrafer) separerade av tomrad
+    // Först: jobba på stycken (=paragrafer) för moral
     const paras = text.split(/\n\s*\n/);
-    if (paras.length === 0) return text;
-
-    // JUNIOR 7–9: lite moral är ok, men inte tjat
-    if (bandId === "junior_7_9") {
-      let moralKept = 0;
-      const filtered = paras.filter((p) => {
-        if (!isMoralParagraph(p)) return true;
-        // behåll första moral-stycket (för lite trygghet), droppa resten
-        if (moralKept === 0) {
-          moralKept++;
-          return true;
+    if (paras.length > 0) {
+      if (bandId === "junior_7_9") {
+        // 7–9: låg moral, max ett stycke
+        let moralKept = 0;
+        const filtered = paras.filter((p) => {
+          if (!isMoralParagraph(p)) return true;
+          if (moralKept === 0) {
+            moralKept++;
+            return true;
+          }
+          return false;
+        });
+        text = filtered.join("\n\n").trim() || text;
+      } else if (bandId === "mid_10_12") {
+        // 10–12: nästan ingen moral, om inte barnet ber om det
+        if (!wantsMoral) {
+          const filtered = paras.filter((p) => !isMoralParagraph(p));
+          text = filtered.join("\n\n").trim() || text;
+        } else {
+          // barnets prompt vill ha moral, då låter vi styckena vara
+          text = paras.join("\n\n").trim();
         }
-        return false;
-      });
-      const out = filtered.join("\n\n").trim();
-      return out || text;
-    }
-
-    // MID 10–12: hårdare filter
-    if (bandId === "mid_10_12") {
-      // Om barnet explicit ber om moral i prompten, rör inte texten.
-      if (wantsMoral) {
-        return text;
       }
-
-      const filtered = paras.filter((p) => !isMoralParagraph(p));
-      const out = filtered.join("\n\n").trim();
-      // Om vi råkade rensa bort för mycket, fall tillbaka till original
-      return out || text;
     }
 
-    // default: inget extra
-    return text;
+    // Sedan: ta bort tjatiga "jag/hen är stark/hjälte"-meningar
+    const sentenceSplit = text.split(/([.!?])/);
+    const rebuilt = [];
+    let powerSentencesKept = 0;
+
+    for (let i = 0; i < sentenceSplit.length; i += 2) {
+      let part = sentenceSplit[i];
+      if (!part || !part.trim()) continue;
+      const sep = sentenceSplit[i + 1] || "";
+      const sentenceFull = (part + sep).trim();
+
+      if (isPowerSelfTalkSentence(sentenceFull, heroName)) {
+        // Tillåt max en sådan mening per kapitel
+        if (powerSentencesKept === 0) {
+          powerSentencesKept++;
+          rebuilt.push(sentenceFull);
+        } else {
+          // hoppa över
+        }
+      } else {
+        rebuilt.push(sentenceFull);
+      }
+    }
+
+    const out = rebuilt.join(" ").replace(/\s+/g, " ").trim();
+    return out || text;
+  }
+
+  // ------------------------------------------------------------
+  // Hjälp: bygg intern recap (osynlig för barnet, bara för modellen)
+  // ------------------------------------------------------------
+  function buildInternalRecap(worldState, storyState, chapterIndex) {
+    if (chapterIndex <= 1) return "";
+
+    let texts = [];
+
+    // 1) Försök använda storyState.previousChapters (motor-minne)
+    if (
+      storyState &&
+      Array.isArray(storyState.previousChapters) &&
+      storyState.previousChapters.length
+    ) {
+      const pc = storyState.previousChapters;
+      // Ta max de två sista kapitlen
+      const fromIndex = Math.max(0, pc.length - 2);
+      for (let i = fromIndex; i < pc.length; i++) {
+        if (typeof pc[i] === "string") {
+          texts.push(pc[i]);
+        }
+      }
+    } else if (
+      worldState &&
+      Array.isArray(worldState.chapters) &&
+      worldState.chapters.length
+    ) {
+      // 2) Fallback: worldState.chapters (om WS-systemet har det)
+      const wc = worldState.chapters;
+      const fromIndex = Math.max(0, wc.length - 2);
+      for (let i = fromIndex; i < wc.length; i++) {
+        const ch = wc[i];
+        if (ch && typeof ch.text === "string") {
+          texts.push(ch.text);
+        }
+      }
+    }
+
+    if (!texts.length) return "";
+
+    // Kortar ned recap: plocka sista ~800 tecken
+    const joined = texts.join("\n---\n");
+    const snippet =
+      joined.length > 800 ? joined.slice(joined.length - 800) : joined;
+    return snippet.trim();
   }
 
   // ------------------------------------------------------------
@@ -327,7 +428,8 @@
       storyState,
       chapterIndex,
       ageBand,
-      lengthPreset
+      lengthPreset,
+      internalRecap
     } = opts;
 
     const meta = worldState.meta || {};
@@ -336,28 +438,6 @@
     const childIdea = getChildIdea(worldState);
     const mode = getStoryMode(worldState, chapterIndex);
     const isFirstChapter = chapterIndex === 1;
-
-    // Enkel recap-beskrivning
-    let recapText = "";
-    if (
-      !isFirstChapter &&
-      storyState &&
-      typeof storyState.previousSummary === "string"
-    ) {
-      recapText = storyState.previousSummary.trim();
-    } else if (
-      !isFirstChapter &&
-      storyState &&
-      Array.isArray(storyState.previousChapters)
-    ) {
-      const last =
-        storyState.previousChapters[
-          storyState.previousChapters.length - 1
-        ];
-      if (last && typeof last === "string") {
-        recapText = last.slice(0, 800);
-      }
-    }
 
     const structureInstr = isFirstChapter
       ? [
@@ -430,12 +510,12 @@
       "  får hen inte plötsligt bli nybörjare igen utan tydlig orsak.",
       "- Undvik överdriven predikan/moralkaka. Visa hellre lärandet i handling än i föreläsningar.",
       "",
-      "TIDIGARE HÄNDELSER:",
-      recapText
-        ? "Kort sammanfattning av vad som hänt hittills:\n" + recapText
+      "TIDIGARE HÄNDELSER (ENDAST FÖR DIG SOM FÖRFATTARE – skriv inte detta ordagrant i kapitlet):",
+      internalRecap
+        ? internalRecap
         : isFirstChapter
         ? "Det finns inga tidigare kapitel. Detta är starten på berättelsen."
-        : "Tidigare kapitel finns, men ingen extra sammanfattning skickas. Fortsätt logiskt framåt.",
+        : "Tidigare kapitel finns, men ingen extra sammanfattning skickas.",
       "",
       "SVARSFORMAT:",
       "Svara i ren text, utan JSON. Bara själva kapiteltexten."
@@ -502,7 +582,7 @@
     const {
       apiUrl = "/api/generate_story",
       worldState,
-      storyState = {},
+      storyState: storyStateIn = {},
       chapterIndex = 1
     } = opts || {};
 
@@ -515,24 +595,33 @@
     const lengthPreset = resolveLengthPreset(meta, ageBand.id);
     const childIdea = getChildIdea(worldState);
     const mode = getStoryMode(worldState, chapterIndex);
+    const heroName = meta.hero || "hjälten";
+
+    // Bygg intern recap från tidigare kapitel
+    const internalRecap = buildInternalRecap(
+      worldState,
+      storyStateIn,
+      chapterIndex
+    );
 
     const prompt = buildPrompt({
       worldState,
-      storyState,
+      storyState: storyStateIn,
       chapterIndex,
       ageBand,
-      lengthPreset
+      lengthPreset,
+      internalRecap
     });
 
     const payload = {
       prompt,
       age: meta.ageValue || meta.age || "",
-      hero: meta.hero || "",
+      hero: heroName,
       length: meta.lengthValue || meta.length || "",
       lang: "sv",
       engineVersion: ENGINE_VERSION,
       worldState,
-      storyState,
+      storyState: storyStateIn,
       chapterIndex,
       mode
     };
@@ -547,16 +636,28 @@
       chapterText.slice(0, ageBand.maxChars)
     );
 
-    // Postprocess: moralnivå per ålder
+    // Postprocess: moralnivå + mindre "jag är stark"-tjat
     chapterText = postProcessChapterText(chapterText, ageBand, {
       childIdea,
       mode,
-      chapterIndex
+      chapterIndex,
+      heroName
+    });
+
+    // Uppdatera storyState så kapitelmotorn får minne
+    const prevChapters = Array.isArray(storyStateIn.previousChapters)
+      ? storyStateIn.previousChapters.slice()
+      : [];
+    prevChapters.push(chapterText);
+
+    const newStoryState = Object.assign({}, storyStateIn, {
+      previousChapters: prevChapters,
+      previousSummary: chapterText.slice(0, 400)
     });
 
     return {
       chapterText,
-      storyState: storyState || {},
+      storyState: newStoryState,
       engineVersion: ENGINE_VERSION,
       ageBand: ageBand
     };
