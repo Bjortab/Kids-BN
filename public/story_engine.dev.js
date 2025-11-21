@@ -1,9 +1,13 @@
 // ===============================================================
-// BN-KIDS — STORY ENGINE (DEV v10a GC)
-// - Läser in BN_STORY_CONFIG (7–9, 10–12, 13–15 år)
-// - Skiljer tydligare på åldersband (längd + ton)
-// - Respekterar barnets prompt, men gör mörka idéer PG-13-säkra
+// BN-KIDS — STORY ENGINE (DEV v10b GC)
+// ---------------------------------------------------------------
+// Anpassad till BN-Kids v10-strategin:
+// - Bara två åldersband i motorn: junior_7_9 (7–9), mid_10_12 (10–12)
+// - 13–15 är PAUSAT (all ålder > 9 hanteras som 10–12)
+// - Åldersband styr ton + ordlängd (kortare & enklare för 7–9,
+//   längre & djupare för 10–12)
 // - Minskar moralkake-bonanza (visa lärandet i handling istället)
+// - Barnets prompt/idé måste respekteras men görs barnvänlig
 // - Kapitellogik bibehållen (chapterIndex styr fortsatt flöde)
 //
 // Exponeras som: window.BNStoryEngine
@@ -15,55 +19,35 @@
 (function (global) {
   "use strict";
 
-  const ENGINE_VERSION = "bn-story-engine-v10a";
+  const ENGINE_VERSION = "bn-story-engine-v10b";
 
   // ------------------------------------------------------------
-  // Hämta ev. extern konfig: BN_STORY_CONFIG (din JSON)
+  // Inbyggda åldersband (BN-Kids v10 strategi)
   // ------------------------------------------------------------
-  const ROOT_CFG = global.BN_STORY_CONFIG && global.BN_STORY_CONFIG.bn_kids_story_config
-    ? global.BN_STORY_CONFIG.bn_kids_story_config
-    : null;
-
-  const CFG_AGE_BANDS = ROOT_CFG && ROOT_CFG.age_bands ? ROOT_CFG.age_bands : {};
-  const CFG_LENGTH    = ROOT_CFG && ROOT_CFG.length_presets ? ROOT_CFG.length_presets : {};
-
-  // ------------------------------------------------------------
-  // Fallback-agebands om JSON-konfig inte finns
-  // (Grov men barnvänlig default)
-  // ------------------------------------------------------------
-  const FALLBACK_BANDS = {
+  // OBS: Teen/13–15 är PAUSAT i denna version.
+  // All ålder >= 10 hanteras som "mid_10_12".
+  const AGE_BANDS = {
     junior_7_9: {
       id: "junior_7_9",
       label: "7–9 år",
-      chapter_words_target: 650,
+      chapter_words_target: 650,   // ca 450–750 i praktiken
       chapter_words_min: 450,
       chapter_words_max: 800,
       prompt_instructions:
-        "Skriv enkelt, lekfullt och tryggt. Korta meningar, konkret handling, lite humor. Inga subplots, ingen romantik.",
+        "Skriv enkelt, lekfullt och tryggt. Korta meningar, konkret handling, lite humor. Ingen romantik, inga subplots.",
       violence_level: "none_soft",
       romance_level: "none"
     },
     mid_10_12: {
       id: "mid_10_12",
       label: "10–12 år",
-      chapter_words_target: 1100,
+      chapter_words_target: 1100,  // ca 800–1500 i praktiken
       chapter_words_min: 800,
       chapter_words_max: 1500,
       prompt_instructions:
-        "Skriv äventyrligt men tryggt, med lite djupare känslor och relationer. En enkel subplot är okej.",
+        "Skriv äventyrligt men tryggt, med lite djupare känslor och relationer. En enkel subplot är okej, men behåll fokus på huvudkonflikten.",
       violence_level: "soft_fantasy",
       romance_level: "crush_only"
-    },
-    teen_13_15: {
-      id: "teen_13_15",
-      label: "13–15 år",
-      chapter_words_target: 1700,
-      chapter_words_min: 1200,
-      chapter_words_max: 2300,
-      prompt_instructions:
-        "Skriv mer moget, med inre tankar och identitet, men håll allt på PG-13-nivå.",
-      violence_level: "low_ya",
-      romance_level: "light_ya_pg13"
     }
   };
 
@@ -71,24 +55,27 @@
   // Hjälp: plocka ålder som siffra ur meta
   // ------------------------------------------------------------
   function extractAge(meta) {
-    if (!meta) return 11;
+    if (!meta) return 10; // fall back mitt i spannet
     const raw = meta.ageValue || meta.age || meta.ageLabel || "";
     const m = String(raw).match(/(\d{1,2})/);
-    return m ? parseInt(m[1], 10) : 11;
+    return m ? parseInt(m[1], 10) : 10;
   }
 
   // ------------------------------------------------------------
-  // Beräkna age band (7–9, 10–12, 13–15)
+  // Beräkna age band (7–9, 10–12) — 13–15 = pausat
   // ------------------------------------------------------------
   function pickAgeBand(meta) {
     const age = extractAge(meta);
 
     let bandId;
-    if (age <= 9) bandId = "junior_7_9";
-    else if (age <= 12) bandId = "mid_10_12";
-    else bandId = "teen_13_15";
+    if (age <= 9) {
+      bandId = "junior_7_9";
+    } else {
+      // Allt 10+ -> behandlas som 10–12 i v10 (teen pausat)
+      bandId = "mid_10_12";
+    }
 
-    const cfg = CFG_AGE_BANDS[bandId] || FALLBACK_BANDS[bandId];
+    const cfg = AGE_BANDS[bandId];
 
     const target =
       (cfg && cfg.chapter_words_target) ||
@@ -97,9 +84,7 @@
         : 1000);
 
     const toneText =
-      (cfg && cfg.prompt_instructions) ||
-      (cfg && cfg.tone) ||
-      "";
+      (cfg && cfg.prompt_instructions) || "";
 
     return {
       id: bandId,
@@ -107,14 +92,17 @@
       wordGoal: target,
       toneText: toneText,
       violence_level: (cfg && cfg.violence_level) || "",
-      romance_level: (cfg && cfg.romance_level) || ""
+      romance_level: (cfg && cfg.romance_level) || "",
+      wordsMin: (cfg && cfg.chapter_words_min) || 600,
+      wordsMax: (cfg && cfg.chapter_words_max) || 1400
     };
   }
 
   // ------------------------------------------------------------
-  // Bestäm längdpreset (Kort / Lagom / Lång) om vi kan
+  // Bestäm längdpreset (Kort / Lagom / Lång) grovt
+  // (vi använder inbyggda rimliga standarder; inga externa JSONs)
   // ------------------------------------------------------------
-  function resolveLengthPreset(meta, ageBandId) {
+  function resolveLengthPreset(meta, ageBand) {
     const defaultPreset = "medium";
     const lp =
       (meta && (meta.lengthValue || meta.lengthPreset || meta.length)) ||
@@ -125,28 +113,20 @@
       /lång/i.test(lp) ? "long" :
       "medium";
 
-    const bandKey = ageBandId || "mid_10_12";
-    const preset =
-      CFG_LENGTH[presetKey] &&
-      CFG_LENGTH[presetKey].word_ranges_by_band &&
-      CFG_LENGTH[presetKey].word_ranges_by_band[bandKey];
-
-    if (!preset) {
-      // Fallback: uppskattade intervall (ord)
-      if (presetKey === "short") {
-        return { id: "short", min: 400, max: 900, label: "kort" };
-      }
-      if (presetKey === "long") {
-        return { id: "long", min: 1200, max: 2200, label: "lång" };
-      }
-      return { id: "medium", min: 800, max: 1600, label: "lagom" };
+    // Grova standardintervall beroende på preset, oberoende av band
+    // (bandet har ändå egen min/max, så detta är mest "hint")
+    if (presetKey === "short") {
+      return { id: "short", min: Math.max(300, ageBand.wordsMin - 200), max: ageBand.wordsMin + 100, label: "kort" };
     }
-
+    if (presetKey === "long") {
+      return { id: "long", min: ageBand.wordsMax - 300, max: ageBand.wordsMax + 400, label: "lång" };
+    }
+    // medium
     return {
-      id: presetKey,
-      min: preset.min,
-      max: preset.max,
-      label: CFG_LENGTH[presetKey].label || presetKey
+      id: "medium",
+      min: Math.round((ageBand.wordsMin * 0.8)),
+      max: Math.round((ageBand.wordsMax * 1.1)),
+      label: "lagom"
     };
   }
 
@@ -173,7 +153,7 @@
     const meta = worldState.meta || {};
     const hero = meta.hero || "hjälten";
 
-    // Barnets idé / önskemål (detta är centralt för att hålla röd tråd)
+    // Barnets idé / önskemål (detta är centralt för röd tråd)
     const childIdea =
       worldState._userPrompt ||
       worldState.last_prompt ||
@@ -186,7 +166,7 @@
 
     const isFirstChapter = chapterIndex === 1;
 
-    // Recap (om vi har något)
+    // Recap (om vi har något i storyState)
     let recapText = "";
     if (storyState && typeof storyState.previousSummary === "string") {
       recapText = storyState.previousSummary.trim();
@@ -218,7 +198,6 @@
       toneLines.push(ageBand.toneText);
     }
 
-    // Generella säkerhetsnivåer
     if (ageBand.violence_level) {
       toneLines.push(
         "Våldsnivå: håll det på nivå " +
@@ -233,20 +212,6 @@
           ", inget explicit innehåll."
       );
     }
-
-    // Extra regel för 13–15: mörkare teman tillåtna men PG-13
-    if (ageBand.id === "teen_13_15") {
-      toneLines.push(
-        "Du får använda mörkare stämning, verklig fara och fiender med onda avsikter " +
-        "om barnets idé går åt det hållet, men håll allt på PG-13-nivå utan blodiga detaljer."
-      );
-      toneLines.push(
-        "Hjältarna ska överleva och ta sig ur situationen. Faran får vara verklig, " +
-        "men ingen tortyr eller chockeffekter."
-      );
-    }
-
-    const lp = lengthPreset;
 
     // Barnets idé måste respekteras
     const ideaLines = [];
@@ -268,8 +233,11 @@
     const antiMoralLines = [
       "Undvik långa moraliska monologer, föreläsningar och motivationsprat.",
       "Skriv inte saker som 'sensmoralen är...' eller upprepa samma budskap om och om igen.",
-      "Visa istället vad karaktärerna lär sig genom handling, dialog och konsekvenser."
+      "Visa istället vad karaktärerna lär sig genom handling, dialog och konsekvenser.",
+      "Undvik att lägga in långa stycken där berättaren direkt talar om för läsaren hur man ska känna eller tänka."
     ];
+
+    const lp = lengthPreset;
 
     // Bygg själva prompten
     const lines = [
@@ -278,7 +246,7 @@
       "",
       "ÖVERGRIPANDE UPPDRAG:",
       mode === "chapter_book"
-        ? "Skriv nästa kapitel i en barn/ungdomsbok med tydlig röd tråd."
+        ? "Skriv nästa kapitel i en barnbok för 7–12 år med tydlig röd tråd."
         : "Skriv en fristående saga med tydlig början, mitt och slut.",
       "",
       "HJÄLTE:",
@@ -288,7 +256,7 @@
       ...ideaLines.map((t) => "- " + t),
       "",
       "ÅLDER & TON:",
-      `- Målgrupp: ${ageBand.label}.`,
+      `- Målgrupp: ${ageBand.label} (BN-Kids v10, endast 7–12 år – inga tonårsteman).`,
       `- Kapitlet ska kännas anpassat till denna ålder (språk, längd, tema).`,
       ...toneLines.map((t) => "- " + t),
       "",
@@ -388,8 +356,8 @@
 
     const meta = worldState.meta || {};
 
-    const ageBand       = pickAgeBand(meta);
-    const lengthPreset  = resolveLengthPreset(meta, ageBand.id);
+    const ageBand      = pickAgeBand(meta);
+    const lengthPreset = resolveLengthPreset(meta, ageBand);
 
     const prompt = buildPrompt({
       worldState,
@@ -416,9 +384,9 @@
 
     let chapterText = modelText || "";
 
-    // Grovt max-tak i tecken, baserat på längdpreset/åldersband (≈ 6 tecken/ord)
+    // Grovt max-tak i tecken (≈ 6 tecken/ord)
     const approxMaxChars =
-      (lengthPreset.max || lengthPreset.min || ageBand.wordGoal || 1000) * 6;
+      (lengthPreset.max || ageBand.wordGoal || 1000) * 6;
 
     chapterText = trimToWholeSentence(
       chapterText.slice(0, approxMaxChars)
