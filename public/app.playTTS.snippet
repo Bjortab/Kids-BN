@@ -1,64 +1,177 @@
-// Ersätt playTTS i public/app.js med denna version
-async function playTTS() {
-  try {
-    setError('');
-    const storyEl = qs('[data-id="story"]') || qs('#story') || qs('.story-output');
-    const text = (storyEl?.textContent || "").trim();
-    if (!text) { setError('Ingen berättelse att läsa upp.'); return; }
-    const voice = (qs('#voice')?.value || 'sv-SE-Wavenet-A');
+// ===============================================================
+// BN-KIDS – PLAY TTS SNIPPET (v1.0)
+// - Kopplar "Läs upp (om saga finns)"-knappen till TTS-backend
+// - Fungerar även om vi bytt knapp-ID text mm
+// - Försöker flera TTS-endpoints (tts, tts_vertex, get_audio)
+// ===============================================================
 
-    showSpinner(true, 'Spelar upp…');
-    const playButton = qs('[data-id="btn-tts"]') || playBtn || qs('.btn-muted');
-    if (playButton) playButton.disabled = true;
+(function () {
+  "use strict";
 
-    // Försök /api/tts (cache-aware) först
-    try {
-      let res = await fetch("/api/tts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, voice, userId: window.getBNUserId ? window.getBNUserId() : undefined })
-      });
-      if (!res.ok) throw new Error('tts ' + res.status);
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const audioEl = qs('[data-id="audio"]') || qs('audio');
-      if (audioEl) {
-        audioEl.src = url;
-        audioEl.play().catch(e => console.warn('play error', e));
-      } else {
-        new Audio(url).play().catch(e => console.warn('play error', e));
-      }
-      // Debug: logga headers så du ser X-Audio-Key
-      try { console.info('tts headers', res.headers.get('X-Audio-Key'), res.headers.get('X-Cost-Warning')); } catch(e){}
-      return;
-    } catch (e1) {
-      console.warn('[BN] /api/tts failed, falling back to tts_vertex', e1);
-    }
+  // ------------------------------------------------------------
+  // Hjälp: hitta rätt element i DOM
+  // ------------------------------------------------------------
+  function findPlayButton() {
+    // 1) Vanliga kandidater
+    const byId =
+      document.getElementById("play-tts-button") ||
+      document.getElementById("play-tts") ||
+      document.getElementById("play-story-audio") ||
+      document.querySelector('button[data-bn-role="play-tts"]');
 
-    // Fallback till /api/tts_vertex (om du har den äldre)
-    try {
-      let res = await fetch("/api/tts_vertex", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, voice })
-      });
-      if (!res.ok) throw new Error('tts_vertex ' + res.status);
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const audioEl = qs('[data-id="audio"]') || qs('audio');
-      if (audioEl) {
-        audioEl.src = url;
-        audioEl.play().catch(e => console.warn('play error', e));
-      } else {
-        new Audio(url).play().catch(e => console.warn('play error', e));
-      }
-    } catch (e2) {
-      console.error('[BN] playTTS error', e2);
-      setError('Kunde inte spela upp ljud: ' + (e2?.message || e2));
-    }
-  } finally {
-    showSpinner(false);
-    const playButton = qs('[data-id="btn-tts"]') || playBtn || qs('.btn-muted');
-    if (playButton) playButton.disabled = false;
+    if (byId) return byId;
+
+    // 2) Nödlösning: hitta knappen med texten "Läs upp"
+    const btns = Array.from(document.querySelectorAll("button"));
+    return btns.find((b) =>
+      (b.textContent || "").toLowerCase().includes("läs upp")
+    );
   }
-}
+
+  function findStoryElement() {
+    return (
+      document.getElementById("story-output") ||
+      document.querySelector("[data-role='story-output']")
+    );
+  }
+
+  function findAudioElement() {
+    return (
+      document.getElementById("tts-audio") ||
+      document.getElementById("audio") ||
+      document.querySelector("audio")
+    );
+  }
+
+  // ------------------------------------------------------------
+  // TTS-anrop – försöker flera endpoints tills någon funkar
+  // ------------------------------------------------------------
+  async function callTtsEndpoint(text) {
+    const payload = { text };
+    const headers = { "Content-Type": "application/json" };
+
+    const endpoints = ["/api/tts", "/api/tts_vertex", "/api/get_audio"];
+
+    let lastError;
+
+    for (const url of endpoints) {
+      try {
+        const res = await fetch(url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) {
+          lastError = new Error("HTTP " + res.status + " på " + url);
+          continue;
+        }
+
+        const data = await res.json().catch(() => ({}));
+
+        // Olika möjliga svarstyper vi stödjer:
+        // 1) { audioBase64: "..." }
+        // 2) { audioUrl: "https://..." } eller { url: "https://..." }
+        // 3) { r2Key: "some-key" } -> hämta via /api/get_audio?r2Key=...
+
+        if (data.audioBase64) {
+          return {
+            type: "dataUrl",
+            url: "data:audio/mp3;base64," + data.audioBase64
+          };
+        }
+
+        if (data.audioUrl || data.url) {
+          return {
+            type: "directUrl",
+            url: data.audioUrl || data.url
+          };
+        }
+
+        if (data.r2Key) {
+          return {
+            type: "r2Key",
+            url: "/api/get_audio?r2Key=" + encodeURIComponent(data.r2Key)
+          };
+        }
+
+        // Om vi kommer hit hade vi svar men inget användbart fält
+        lastError = new Error("Oväntat TTS-svar från " + url);
+      } catch (err) {
+        lastError = err;
+        continue;
+      }
+    }
+
+    throw lastError || new Error("Kunde inte anropa någon TTS-endpoint");
+  }
+
+  // ------------------------------------------------------------
+  // Spela upp ljud för given text
+  // ------------------------------------------------------------
+  async function playStoryAudio() {
+    const storyEl = findStoryElement();
+    const audioEl = findAudioElement();
+
+    if (!storyEl) {
+      alert("Hittar ingen berättelsetext. Skapa en saga först.");
+      return;
+    }
+    if (!audioEl) {
+      alert("Hittar ingen ljudspelare på sidan (audio-element saknas).");
+      return;
+    }
+
+    const text = (storyEl.innerText || storyEl.textContent || "").trim();
+
+    if (!text) {
+      alert("Det finns ingen text att läsa upp ännu.");
+      return;
+    }
+
+    // För långa texter kan bli dyra – trimma lite försiktigt
+    const MAX_CHARS = 8000;
+    const trimmed = text.slice(0, MAX_CHARS);
+
+    audioEl.removeAttribute("src");
+    audioEl.load();
+
+    try {
+      const result = await callTtsEndpoint(trimmed);
+
+      audioEl.src = result.url;
+      audioEl.load();
+
+      try {
+        await audioEl.play();
+      } catch (e) {
+        console.warn("BN-KIDS TTS: kunde inte auto-spela, använd play-knappen.", e);
+      }
+    } catch (err) {
+      console.error("BN-KIDS TTS: fel vid uppspelning:", err);
+      alert("Kunde inte läsa upp sagan just nu. Prova igen om en stund.");
+    }
+  }
+
+  // ------------------------------------------------------------
+  // Bind knapp vid DOMContentLoaded
+  // ------------------------------------------------------------
+  function bindPlayButton() {
+    const btn = findPlayButton();
+    if (!btn) {
+      console.warn("BN-KIDS TTS: hittade ingen 'Läs upp'-knapp.");
+      return;
+    }
+
+    // Ta bort ev. gamla lyssnare först
+    btn.removeEventListener("click", playStoryAudio);
+    btn.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      playStoryAudio();
+    });
+
+    console.log("BN-KIDS TTS: 'Läs upp'-knappen är bunden.");
+  }
+
+  document.addEventListener("DOMContentLoaded", bindPlayButton);
+})();
