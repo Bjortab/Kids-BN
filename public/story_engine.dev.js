@@ -1,13 +1,13 @@
 // ===============================================================
-// BN-KIDS — STORY ENGINE (DEV v9d)
-// - Läser in barnets prompt ordentligt (även sanerad via IP-filtret)
-// - Skiljer tydligare på 7–9, 10–12, 13–15 år
-// - Kapitellogik bibehållen (kapitelIndex styr fortsatt-flödet)
-// - Hanterar "samma prompt igen" som FORTSÄTT, inte omstart
-// - Trim: inga moralkake-manus, fokus på handling + känslor
+// BN-KIDS — STORY ENGINE (DEV v10a GC)
+// - Läser in BN_STORY_CONFIG (7–9, 10–12, 13–15 år)
+// - Skiljer tydligare på åldersband (längd + ton)
+// - Respekterar barnets prompt, men gör mörka idéer PG-13-säkra
+// - Minskar moralkake-bonanza (visa lärandet i handling istället)
+// - Kapitellogik bibehållen (chapterIndex styr fortsatt flöde)
 //
 // Exponeras som: window.BNStoryEngine
-// Används av: generateStory_ip.js (IP-wrappern)
+// Används bl.a. av: generateStory_ip.js (IP-wrappern)
 //
 // Viktigt: story_engine.dev.js MÅSTE laddas före generateStory_ip.js
 // ===============================================================
@@ -15,23 +15,21 @@
 (function (global) {
   "use strict";
 
-  const ENGINE_VERSION = "bn-story-engine-v9d";
+  const ENGINE_VERSION = "bn-story-engine-v10a";
 
   // ------------------------------------------------------------
-  // Hjälp: plocka fram BN_STORY_CONFIG om den finns
+  // Hämta ev. extern konfig: BN_STORY_CONFIG (din JSON)
   // ------------------------------------------------------------
-  const CONFIG = global.BN_STORY_CONFIG || {};
-  const CFG_AGE_BANDS =
-    (CONFIG.bn_kids_story_config &&
-      CONFIG.bn_kids_story_config.age_bands) ||
-    {};
-  const CFG_LENGTH =
-    (CONFIG.bn_kids_story_config &&
-      CONFIG.bn_kids_story_config.length_presets) ||
-    {};
+  const ROOT_CFG = global.BN_STORY_CONFIG && global.BN_STORY_CONFIG.bn_kids_story_config
+    ? global.BN_STORY_CONFIG.bn_kids_story_config
+    : null;
+
+  const CFG_AGE_BANDS = ROOT_CFG && ROOT_CFG.age_bands ? ROOT_CFG.age_bands : {};
+  const CFG_LENGTH    = ROOT_CFG && ROOT_CFG.length_presets ? ROOT_CFG.length_presets : {};
 
   // ------------------------------------------------------------
   // Fallback-agebands om JSON-konfig inte finns
+  // (Grov men barnvänlig default)
   // ------------------------------------------------------------
   const FALLBACK_BANDS = {
     junior_7_9: {
@@ -40,8 +38,8 @@
       chapter_words_target: 650,
       chapter_words_min: 450,
       chapter_words_max: 800,
-      tone:
-        "enkel, lekfull, trygg, korta meningar, konkreta bilder, lite humor",
+      prompt_instructions:
+        "Skriv enkelt, lekfullt och tryggt. Korta meningar, konkret handling, lite humor. Inga subplots, ingen romantik.",
       violence_level: "none_soft",
       romance_level: "none"
     },
@@ -51,8 +49,8 @@
       chapter_words_target: 1100,
       chapter_words_min: 800,
       chapter_words_max: 1500,
-      tone:
-        "äventyrlig men trygg, mer känslor och relationer, lite mer detaljer",
+      prompt_instructions:
+        "Skriv äventyrligt men tryggt, med lite djupare känslor och relationer. En enkel subplot är okej.",
       violence_level: "soft_fantasy",
       romance_level: "crush_only"
     },
@@ -62,32 +60,28 @@
       chapter_words_target: 1700,
       chapter_words_min: 1200,
       chapter_words_max: 2300,
-      tone:
-        "mer mogen, inre tankar, identitet, men fortfarande PG-13 och tryggt",
+      prompt_instructions:
+        "Skriv mer moget, med inre tankar och identitet, men håll allt på PG-13-nivå.",
       violence_level: "low_ya",
       romance_level: "light_ya_pg13"
     }
   };
 
   // ------------------------------------------------------------
-  // Hjälp: normalisera prompt för jämförelse
+  // Hjälp: plocka ålder som siffra ur meta
   // ------------------------------------------------------------
-  function normalizePrompt(p) {
-    if (!p) return "";
-    return String(p)
-      .toLowerCase()
-      .replace(/\s+/g, " ")
-      .trim();
+  function extractAge(meta) {
+    if (!meta) return 11;
+    const raw = meta.ageValue || meta.age || meta.ageLabel || "";
+    const m = String(raw).match(/(\d{1,2})/);
+    return m ? parseInt(m[1], 10) : 11;
   }
 
   // ------------------------------------------------------------
-  // Beräkna age band + längd-info
+  // Beräkna age band (7–9, 10–12, 13–15)
   // ------------------------------------------------------------
   function pickAgeBand(meta) {
-    const rawAge =
-      (meta && (meta.ageValue || meta.age || meta.ageLabel)) || "";
-    const m = String(rawAge).match(/(\d{1,2})/);
-    const age = m ? parseInt(m[1], 10) : 11;
+    const age = extractAge(meta);
 
     let bandId;
     if (age <= 9) bandId = "junior_7_9";
@@ -99,23 +93,19 @@
     const target =
       (cfg && cfg.chapter_words_target) ||
       (cfg && cfg.chapter_words_min && cfg.chapter_words_max
-        ? Math.round(
-            (cfg.chapter_words_min + cfg.chapter_words_max) / 2
-          )
+        ? Math.round((cfg.chapter_words_min + cfg.chapter_words_max) / 2)
         : 1000);
 
-    // Grovt: ~6 tecken per ord
-    const maxChars =
-      (cfg && cfg.chapter_words_max
-        ? cfg.chapter_words_max * 6
-        : target * 6);
+    const toneText =
+      (cfg && cfg.prompt_instructions) ||
+      (cfg && cfg.tone) ||
+      "";
 
     return {
       id: bandId,
       label: (cfg && cfg.label) || bandId,
       wordGoal: target,
-      maxChars: maxChars,
-      tone: (cfg && cfg.tone) || "",
+      toneText: toneText,
       violence_level: (cfg && cfg.violence_level) || "",
       romance_level: (cfg && cfg.romance_level) || ""
     };
@@ -127,8 +117,7 @@
   function resolveLengthPreset(meta, ageBandId) {
     const defaultPreset = "medium";
     const lp =
-      (meta &&
-        (meta.lengthValue || meta.lengthPreset || meta.length)) ||
+      (meta && (meta.lengthValue || meta.lengthPreset || meta.length)) ||
       defaultPreset;
 
     const presetKey =
@@ -143,7 +132,7 @@
       CFG_LENGTH[presetKey].word_ranges_by_band[bandKey];
 
     if (!preset) {
-      // Fallback: ungefärliga ordintervall
+      // Fallback: uppskattade intervall (ord)
       if (presetKey === "short") {
         return { id: "short", min: 400, max: 900, label: "kort" };
       }
@@ -179,18 +168,17 @@
   // Bygg systemprompt för motorn
   // ------------------------------------------------------------
   function buildPrompt(opts) {
-    const {
-      worldState,
-      storyState,
-      chapterIndex,
-      ageBand,
-      lengthPreset,
-      childIdeaRaw,
-      promptMode
-    } = opts;
+    const { worldState, storyState, chapterIndex, ageBand, lengthPreset } = opts;
 
     const meta = worldState.meta || {};
     const hero = meta.hero || "hjälten";
+
+    // Barnets idé / önskemål (detta är centralt för att hålla röd tråd)
+    const childIdea =
+      worldState._userPrompt ||
+      worldState.last_prompt ||
+      meta.originalPrompt ||
+      "";
 
     const mode =
       worldState.story_mode ||
@@ -198,50 +186,44 @@
 
     const isFirstChapter = chapterIndex === 1;
 
-    // Enkel recap-beskrivning
+    // Recap (om vi har något)
     let recapText = "";
-    if (
-      !isFirstChapter &&
-      storyState &&
-      typeof storyState.previousSummary === "string"
-    ) {
+    if (storyState && typeof storyState.previousSummary === "string") {
       recapText = storyState.previousSummary.trim();
-    } else if (
-      !isFirstChapter &&
-      storyState &&
-      Array.isArray(storyState.previousChapters)
-    ) {
-      const last =
-        storyState.previousChapters[
-          storyState.previousChapters.length - 1
-        ];
+    } else if (storyState && Array.isArray(storyState.previousChapters)) {
+      const last = storyState.previousChapters[storyState.previousChapters.length - 1];
       if (last && typeof last === "string") {
         recapText = last.slice(0, 800);
       }
     }
 
-    // Instruktion för om vi är i kapitelbok
+    // Struktur-instruktioner beroende på kapitel
     const structureInstr = isFirstChapter
       ? [
           "Detta är kapitel 1 i berättelsen.",
-          "Du ska etablera huvudpersonen, miljön och den huvudsakliga konflikten.",
-          "Avsluta med att det finns mer att utforska, men lös inte hela huvudkonflikten."
+          "Etablera huvudpersonen, miljön och den huvudsakliga konflikten.",
+          "Skapa en känsla av att berättelsen kommer fortsätta, men lös inte hela huvudkonflikten."
         ]
       : [
           `Detta är kapitel ${chapterIndex} i en pågående kapitelbok.`,
           "Fortsätt från slutet av förra kapitlet, starta inte om samma dag eller samma konflikt.",
           "Låt viktiga händelser från tidigare kapitel påverka vad som händer nu.",
-          "Om användaren ber om avslut på boken: knyt ihop huvudkonflikten men upprepa inte hela berättelsen."
+          "Om användaren ber om avslut på boken: knyt ihop huvudkonflikten utan att starta en helt ny berättelse."
         ];
 
-    // Ålders- och toninstruktion
+    // Ålders-/ton-instruktion
     const toneLines = [];
-    if (ageBand.tone) toneLines.push(`Ton: ${ageBand.tone}.`);
+
+    if (ageBand.toneText) {
+      toneLines.push(ageBand.toneText);
+    }
+
+    // Generella säkerhetsnivåer
     if (ageBand.violence_level) {
       toneLines.push(
         "Våldsnivå: håll det på nivå " +
           ageBand.violence_level +
-          ", inget grafiskt våld."
+          ", inget grafiskt våld eller blodiga detaljer."
       );
     }
     if (ageBand.romance_level) {
@@ -252,50 +234,44 @@
       );
     }
 
+    // Extra regel för 13–15: mörkare teman tillåtna men PG-13
+    if (ageBand.id === "teen_13_15") {
+      toneLines.push(
+        "Du får använda mörkare stämning, verklig fara och fiender med onda avsikter " +
+        "om barnets idé går åt det hållet, men håll allt på PG-13-nivå utan blodiga detaljer."
+      );
+      toneLines.push(
+        "Hjältarna ska överleva och ta sig ur situationen. Faran får vara verklig, " +
+        "men ingen tortyr eller chockeffekter."
+      );
+    }
+
     const lp = lengthPreset;
 
-    // Text kring barnets idé beroende på promptMode
-    const childIdea = childIdeaRaw || "";
-    const childIdeaBlockLines = [];
-
+    // Barnets idé måste respekteras
+    const ideaLines = [];
     if (childIdea) {
-      if (promptMode === "new_request") {
-        childIdeaBlockLines.push(
-          "Barnet har NU formulerat en ny önskan för detta kapitel. Du måste väva in denna idé på ett naturligt sätt i den pågående berättelsen utan att starta om."
-        );
-        childIdeaBlockLines.push(`- Nuvarande önskan: "${childIdea}"`);
-      } else {
-        // continue
-        childIdeaBlockLines.push(
-          "Barnet har INTE gett någon ny önskan denna gång. Använd samma övergripande idé som tidigare, men behandla den mest som tema i bakgrunden."
-        );
-        childIdeaBlockLines.push(
-          "Fortsätt berättelsen logiskt framåt. Upprepa inte samma träningsmoment eller konflikt från föregående kapitel om det inte finns en tydlig ny vändning."
-        );
-        childIdeaBlockLines.push(`- Övergripande idé/tema: "${childIdea}"`);
-      }
+      ideaLines.push(
+        'Barnets idé / önskan är: "' + childIdea + '".'
+      );
+      ideaLines.push(
+        "Du måste RESPEKTERA denna idé. Utveckla den, fördjupa den och gör den barnvänlig, " +
+        "men byt inte tema helt och ignorera den inte."
+      );
     } else {
-      childIdeaBlockLines.push(
-        "Det finns ingen specifik extra önskan från barnet just nu. Bygg vidare logiskt på hjälten, deras mål och det som hänt hittills."
+      ideaLines.push(
+        "Det finns ingen extra formulerad önskan just nu. Bygg vidare logiskt på hjälten och situationen."
       );
     }
 
-    // Extra logikregler kopplade till promptMode
-    const logicExtra = [];
-    if (promptMode === "continue") {
-      logicExtra.push(
-        "- Behandla detta kapitel som en fortsättning: utveckla relationer, konflikter och mål från tidigare kapitel."
-      );
-      logicExtra.push(
-        "- Låt huvudpersonen utvecklas. Om hjälten har blivit bättre på något (t.ex. fotboll, flyga, spruta eld), får hen inte plötsligt vara nybörjare igen utan en tydligt beskriven orsak."
-      );
-    } else {
-      logicExtra.push(
-        "- Barnet har ändrat eller förtydligat sin önskan. Anpassa berättelsen efter den nya idén utan att ignorera det som redan hänt."
-      );
-    }
+    // Moralkake-regler
+    const antiMoralLines = [
+      "Undvik långa moraliska monologer, föreläsningar och motivationsprat.",
+      "Skriv inte saker som 'sensmoralen är...' eller upprepa samma budskap om och om igen.",
+      "Visa istället vad karaktärerna lär sig genom handling, dialog och konsekvenser."
+    ];
 
-    // Bygg prompten
+    // Bygg själva prompten
     const lines = [
       `Du är BN-KIDS sagomotor (${ENGINE_VERSION}).`,
       `Du skriver på naturlig, korrekt svenska för målgruppen ${ageBand.label}.`,
@@ -305,11 +281,11 @@
         ? "Skriv nästa kapitel i en barn/ungdomsbok med tydlig röd tråd."
         : "Skriv en fristående saga med tydlig början, mitt och slut.",
       "",
-      "BARNETS IDÉ / ÖNSKEMÅL:",
-      ...childIdeaBlockLines.map((t) => "- " + t),
-      "",
       "HJÄLTE:",
       `- Huvudpersonen heter ${hero} och ska konsekvent kallas "${hero}".`,
+      "",
+      "BARNETS IDÉ / ÖNSKAN:",
+      ...ideaLines.map((t) => "- " + t),
       "",
       "ÅLDER & TON:",
       `- Målgrupp: ${ageBand.label}.`,
@@ -329,8 +305,10 @@
       "- Starta inte om samma händelse flera gånger.",
       "- Om en figur har lärt sig något tidigare (t.ex. flyga, spruta eld, spela match),",
       "  får hen inte plötsligt bli nybörjare igen utan tydlig orsak.",
-      "- Undvik överdrivna moralkakor och upprepade föreläsningar. Visa lärandet genom vad som händer och hur barnen agerar.",
-      ...logicExtra,
+      "- Håll fast vid samma värld, samma konflikter och samma huvudpersoner som i tidigare kapitel.",
+      "",
+      "MORAL / LÄRDOMAR:",
+      ...antiMoralLines.map((t) => "- " + t),
       "",
       "TIDIGARE HÄNDELSER:",
       recapText
@@ -347,7 +325,7 @@
   }
 
   // ------------------------------------------------------------
-  // Hämta text från API-svar (OpenAI/Mistral kompatibelt)
+  // Hämta text från API-svar (OpenAI/Mistral-kompatibelt)
   // ------------------------------------------------------------
   function extractModelText(apiResponse) {
     if (!apiResponse) return "";
@@ -410,39 +388,15 @@
 
     const meta = worldState.meta || {};
 
-    const ageBand = pickAgeBand(meta);
-    const lengthPreset = resolveLengthPreset(meta, ageBand.id);
-
-    // Plocka fram barnets nuvarande idé
-    const childIdeaRaw =
-      worldState._userPrompt ||
-      worldState.last_prompt ||
-      meta.originalPrompt ||
-      "";
-
-    const childIdeaNorm = normalizePrompt(childIdeaRaw);
-    const lastNorm =
-      storyState && storyState.lastChildIdeaNorm
-        ? String(storyState.lastChildIdeaNorm)
-        : "";
-
-    const promptMode =
-      lastNorm && childIdeaNorm === lastNorm
-        ? "continue"
-        : "new_request";
-
-    // Spara normerad idé i storyState för nästa anrop
-    storyState.lastChildIdeaNorm = childIdeaNorm;
-    storyState.lastChildIdeaRaw = childIdeaRaw;
+    const ageBand       = pickAgeBand(meta);
+    const lengthPreset  = resolveLengthPreset(meta, ageBand.id);
 
     const prompt = buildPrompt({
       worldState,
       storyState,
       chapterIndex,
       ageBand,
-      lengthPreset,
-      childIdeaRaw,
-      promptMode
+      lengthPreset
     });
 
     const payload = {
@@ -457,15 +411,17 @@
       chapterIndex
     };
 
-    const apiRaw = await callApi(apiUrl, payload);
+    const apiRaw    = await callApi(apiUrl, payload);
     const modelText = extractModelText(apiRaw);
 
     let chapterText = modelText || "";
-    // Vi använder bara ren text, ingen JSON, i denna version
 
-    // Trimma mot maxChars + hel mening
+    // Grovt max-tak i tecken, baserat på längdpreset/åldersband (≈ 6 tecken/ord)
+    const approxMaxChars =
+      (lengthPreset.max || lengthPreset.min || ageBand.wordGoal || 1000) * 6;
+
     chapterText = trimToWholeSentence(
-      chapterText.slice(0, ageBand.maxChars)
+      chapterText.slice(0, approxMaxChars)
     );
 
     return {
