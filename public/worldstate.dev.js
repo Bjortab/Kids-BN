@@ -1,9 +1,9 @@
 // ==========================================================
-// BN-KIDS WS DEV — worldstate.dev.js (v8.6)
+// BN-KIDS WS DEV — worldstate.dev.js (v9a GC)
 // - Kapitelbok i localStorage
 // - Kort recap (början + slut) istället för full text
 // - Stöd för "samma prompt igen" = FORTSÄTT, inte ny omstart
-// - Stöd för "sista kapitlet / avsluta boken"
+// - Sista kapitlet / avsluta boken = knyt ihop SAMMA berättelse
 // ==========================================================
 
 (function () {
@@ -128,7 +128,8 @@
   // Bygg WS-prompt baserat på tidigare kapitel
   //  - Kort recap (början + slut) istället för full text
   //  - Tydligare instruktion om längd + avslut
-  //  - NYTILLAGT: om samma prompt igen → behandla som "fortsätt"
+  //  - "Samma prompt igen" → fortsätt, inte ny scen
+  //  - Sista kapitlet → knyt ihop, INTE ny berättelse
   // -------------------------------------------------------
   function buildWsPrompt(state, wishOrOpts) {
     if (!state) return "";
@@ -150,9 +151,9 @@
     const nextChapter = chapters.length + 1;
 
     // 2) Kolla om detta är samma önskan som senast
-    const prevWishNorm = normalizeText(state.last_wish);
+    const prevWishNorm    = normalizeText(state.last_wish);
     const currentWishNorm = normalizeText(wishText);
-    const isRepeatedWish =
+    const isRepeatedWish  =
       currentWishNorm &&
       prevWishNorm &&
       currentWishNorm === prevWishNorm;
@@ -160,12 +161,10 @@
     // Om samma prompt igen → behandla det som "ingen ny önskan"
     // men låt övergripande tema vara kvar i bakgrunden.
     let wishForModel = wishText;
-    let wishMode = "new";
+    let wishMode      = "new";
     if (isRepeatedWish) {
-      wishMode = "continue";
-      // vi kan lugnt låta wishForModel vara tom för att inte
-      // trigga modellen att göra "ny variant av samma scen"
-      wishForModel = "";
+      wishMode      = "continue";
+      wishForModel  = ""; // trigga inte "ny variant av samma scen"
     }
 
     // 3) Recap
@@ -181,10 +180,10 @@
       const lastShort  = snippetEnd(last, 260);
 
       recap =
-        "Så här började berättelsen (kort sammanfattning):\n" +
+        "Så här började berättelsen (kort sammanfattning av startkapitlet):\n" +
         firstShort +
         "\n\n" +
-        "Så här slutade det senaste kapitlet (fortsätt härifrån, inte från början):\n" +
+        "Så här slutade det SENASTE kapitlet (du ska FORTSÄTTA härifrån, inte börja om):\n" +
         lastShort +
         "\n";
     }
@@ -196,8 +195,10 @@
       (state.last_wish || "").toLowerCase();
     const isMaybeLast =
       combinedForEndCheck.includes("sista kapitlet") ||
+      combinedForEndCheck.includes("sista kapitlet.") ||
       combinedForEndCheck.includes("avsluta berättelsen") ||
       combinedForEndCheck.includes("avsluta boken") ||
+      combinedForEndCheck.includes("knyt ihop allt") ||
       combinedForEndCheck.includes("slutet på berättelsen") ||
       combinedForEndCheck.includes("slutet på boken");
 
@@ -211,9 +212,13 @@
       "avrunda kapitlet med en fullständig mening istället för att fortsätta.";
 
     const endingInstr = isMaybeLast
-      ? "Detta ska vara SISTA kapitlet i boken. Knyt ihop de viktigaste trådarna, " +
-        "ge ett lugnt och hoppfullt slut och lämna inte kvar stora obesvarade frågor. " +
-        "Starta inte ett helt nytt äventyr i slutet."
+      ? [
+          "Detta ska vara SISTA kapitlet i SAMMA berättelse som tidigare kapitel.",
+          "Du får INTE starta ett nytt äventyr, byta miljö helt eller byta ut huvudpersonerna.",
+          "Alla viktiga händelser, fiender, problem och mysterier som nämns i texten ovan ska räknas som sanna och ska knytas ihop här.",
+          "Ge ett lugnt och hoppfullt slut och lämna inte kvar stora obesvarade frågor.",
+          "Om du behöver nämna vad som hänt tidigare, gör det kortfattat i förbifarten, inte som en helt ny berättelse."
+        ].join("\n- ")
       : "Detta är ett MITTENKAPITEL. Avsluta kapitlet med en hel mening och en mjuk krok " +
         "som gör att man vill läsa nästa kapitel, men börja inte om berättelsen från början.";
 
@@ -224,15 +229,28 @@
       wishLines =
         "- Barnet har INTE skrivit någon ny önskan denna gång. " +
         "Fortsätt bara berättelsen logiskt från förra kapitlet med samma övergripande tema.\n" +
-        "- Upprepa inte samma träning, samma scen eller samma konflikt som redan skrevs i förra kapitlet, " +
+        "- Upprepa inte samma träningsmoment, samma scen eller samma konflikt som redan skrevs i förra kapitlet, " +
         "om det inte finns en tydlig ny vändning.";
+      if (isMaybeLast) {
+        wishLines +=
+          "\n- Barnet ber nu om ett slut på boken. Knyt ihop den PÅGÅENDE berättelsen, börja inte om från början.";
+      }
     } else if (wishForModel) {
       wishLines =
         `- Barnets önskan för detta kapitel är: "${wishForModel}".\n` +
-        "- Väv in denna önskan NATURLIGT i fortsättningen av berättelsen, utan att starta om.";
+        "- Väv in denna önskan NATURLIGT i fortsättningen av den pågående berättelsen, utan att starta om.";
+      if (isMaybeLast) {
+        wishLines +=
+          "\n- Denna önskan betyder att boken ska avslutas nu. " +
+          "Avsluta den PÅGÅENDE berättelsen, inte en ny version.";
+      }
     } else {
       wishLines =
         "- Barnet har inte angett någon särskild önskan. Fortsätt berättelsen där den slutade.";
+      if (isMaybeLast) {
+        wishLines +=
+          "\n- Men behandla detta som sista kapitlet: knyt ihop den pågående berättelsen.";
+      }
     }
 
     // 6) Själva systemprompten till modellen
@@ -300,7 +318,7 @@ Tonalitet:
     if (typeof wishText === "string") {
       const trimmed = wishText.trim();
       if (trimmed) {
-        next.last_wish = trimmed;
+        next.last_wish      = trimmed;
         next.last_wish_norm = normalizeText(trimmed);
       }
     }
