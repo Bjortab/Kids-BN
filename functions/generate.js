@@ -1,23 +1,14 @@
 // functions/generate.js
 // Pages Function: POST /api/generate
-// BN-KIDS GC v4.0 – fokus på:
+// BN-KIDS GC v4.1 – fokus på:
 // - Bättre författarton (BN-Flow Layer)
-// - Kapitelkänsla (8–12 kapitel, tydlig struktur)
+// - Starkare kapitelkänsla (8–12 kapitel, fortsätt samma bok)
 // - Mindre moral-floskler
 // - Mindre ekar/kistor/kartor-repeat
-// - Respekt för barnets prompt och ålder
+// - Respekt för barnets prompt, hjälte och ålder
 
 export async function onRequestOptions({ env }) {
-  const origin =
-    env.KIDSBM_ALLOWED_ORIGIN ||
-    env.KIDSBM_ALLOWED_ORIGIN_DEV ||
-    env.KIDSBM_ALLOWED_ORIGIN_LOCAL ||
-    env.KIDSBM_ALLOWED_ORIGIN_PREVIEW ||
-    env.KIDSBM_ALLOWED_ORIGIN_PROD ||
-    env.KIDSBM_ALLOWED_ORIGIN_KIDS ||
-    env.KIDSBM_ALLOWED_ORIGIN_BN ||
-    env.KIDSBM_ALLOWED_ORIGIN_KIDSBM ||
-    "*";
+  const origin = getAllowedOrigin(env);
 
   return new Response(null, {
     status: 204,
@@ -30,51 +21,69 @@ export async function onRequestOptions({ env }) {
 }
 
 export async function onRequestPost({ request, env }) {
-  const origin =
-    env.KIDSBM_ALLOWED_ORIGIN ||
-    env.KIDSBM_ALLOWED_ORIGIN_DEV ||
-    env.KIDSBM_ALLOWED_ORIGIN_LOCAL ||
-    env.KIDSBM_ALLOWED_ORIGIN_PREVIEW ||
-    env.KIDSBM_ALLOWED_ORIGIN_PROD ||
-    env.KIDSBM_ALLOWED_ORIGIN_KIDS ||
-    env.KIDSBM_ALLOWED_ORIGIN_BN ||
-    env.KIDSBM_ALLOWED_ORIGIN_KIDSBM ||
-    "*";
+  const origin = getAllowedOrigin(env);
 
   try {
-    const body = await request.json().catch(() => ({}));
+    const body = (await request.json().catch(() => ({}))) || {};
+
+    // --------- Grunddata från body + worldState/meta ----------
+    const worldState = body.worldState || {};
+    const meta = worldState.meta || {};
 
     const promptRaw =
       body.prompt ||
       body.storyPrompt ||
       body.childPrompt ||
+      meta.originalPrompt ||
       "";
+
     const heroName =
       body.heroName ||
       body.kidName ||
       body.hero ||
+      meta.hero ||
+      meta.childName ||
       "hjälten";
+
     const ageGroupRaw =
       body.ageGroupRaw ||
       body.ageGroup ||
       body.ageRange ||
       body.age ||
+      meta.ageValue ||
+      meta.ageLabel ||
       "7–8 år";
+
     const lengthPreset =
       body.lengthPreset ||
       body.length ||
       body.lengthValue ||
-      "medium";
+      meta.lengthValue ||
+      meta.lengthLabel ||
+      "lagom";
 
-    const storyMode =
+    const incomingStoryMode =
       body.storyMode ||
       body.story_mode ||
-      (body.chapterIndex ? "chapter_book" : "single_story");
+      worldState.story_mode ||
+      meta.storyMode ||
+      "";
 
-    const chapterIndex = Number(body.chapterIndex || 1);
-    const worldState = body.worldState || {};
-    const totalChapters =
-      Number(body.totalChapters || worldState?.meta?.totalChapters) || 8;
+    const chapterIndex = Number(
+      body.chapterIndex || worldState.chapterIndex || meta.chapterIndex || 1
+    );
+
+    // Om vi har chapterIndex > 1 → tvinga kapitelboksläge
+    const storyMode =
+      incomingStoryMode ||
+      (chapterIndex > 1 ? "chapter_book" : "single_story");
+
+    const totalChapters = Number(
+      body.totalChapters ||
+        meta.totalChapters ||
+        worldState.totalChapters ||
+        8
+    );
 
     if (!promptRaw) {
       return json(
@@ -117,7 +126,7 @@ export async function onRequestPost({ request, env }) {
       : [];
 
     const isFirstChapter = chapterIndex <= 1;
-    const isFinalChapter = chapterIndex >= totalChapters - 1; // sista 1–2 kapitel får final-ton
+    const isFinalChapter = chapterIndex >= totalChapters;
 
     const chapterRole = (() => {
       if (!storyMode || storyMode === "single_story") {
@@ -128,21 +137,24 @@ export async function onRequestPost({ request, env }) {
       return "chapter_middle";
     })();
 
-    // Kort lista med tidigare händelser att mata in (inte hela sagan)
+    // Kort lista med tidigare händelser (inte hela sagan)
     const compactHistory = previousChapters
       .slice(-3)
-      .map((txt, idx) => `Kapitel ${previousChapters.length - 2 + idx}: ${shorten(txt, 320)}`)
+      .map((txt, idx) => {
+        const chapterNo = previousChapters.length - (previousChapters.length - 1 - idx);
+        return `Kapitel ${chapterNo}: ${shorten(txt, 320)}`;
+      })
       .join("\n\n");
 
-    const userPrompt = [
+    const userPromptParts = [
       `Barnets idé / prompt: "${promptRaw}"`,
       ``,
       `Hjälte: ${heroName}`,
       `Åldersband: ${ageKey} år`,
-      `Längdspreset: ${lengthPreset}`,
+      `Längdpreset: ${String(lengthPreset || "lagom")}`,
       `Storyläge: ${storyMode}`,
       storyMode === "chapter_book"
-        ? `Detta är kapitel ${chapterIndex} av en kapitelbok (totalt ca ${totalChapters} kapitel).`
+        ? `Detta är kapitel ${chapterIndex} i en kapitelbok (sikta på totalt ca ${totalChapters} kapitel).`
         : `Detta är en fristående saga (single_story).`,
       ``,
       storyMode === "chapter_book"
@@ -158,21 +170,24 @@ export async function onRequestPost({ request, env }) {
       ``,
       `Kapitelroll just nu: ${chapterRole}.`,
       chapterRole === "chapter_1"
-        ? `Kapitel 1 ska börja lugnt i vardagen, innan magi/äventyr startar. Ge en tydlig startscen (plats, tid, vardag) och låt sedan barnets idé gradvis ta över.`
+        ? `Kapitel 1 ska börja lugnt i vardagen – plats, tid och enkel aktivitet – INNAN magi/äventyr startar. Efter vardagsstarten ska barnets idé gradvis ta över.`
         : null,
       chapterRole === "chapter_middle"
-        ? `Detta är ett mittenkapitel. Visa ett tydligt delmål eller hinder på vägen mot huvudmålet. Ingen ny huvudkonflikt. Avsluta gärna med en mjuk cliffhanger.`
+        ? `Detta är ett MITTENKAPITEL i en pågående bok. Du får INTE starta om historien med en helt ny vardag eller ett helt nytt huvudäventyr. Fortsätt där föregående kapitel slutade, med samma huvudproblem, samma hjälte (${heroName}) och samma kärnmiljö. Visa ett nytt hinder eller delmål, och avsluta gärna med en mjuk cliffhanger.`
         : null,
       chapterRole === "chapter_final"
-        ? `Detta är ett avslutande kapitel. Knyt ihop de viktigaste trådarna. Ingen ny konflikt, inga nya karaktärer. Avsluta lugnt, varmt och hoppfullt – men utan att skriva moraliska predikningar. Visa känslor genom handling.`
+        ? `Detta är ett SLUTKAPITEL. Fortsätt direkt efter föregående händelser. Knyt ihop de viktigaste trådarna och lös huvudkonflikten tydligt och barnvänligt. Introducera inte stora nya karaktärer eller helt nya problem. Avsluta lugnt, varmt och hoppfullt – men utan moraliska predikningar.`
         : null,
+      storyMode === "chapter_book" && !isFirstChapter
+        ? `VIKTIGT: Du får inte glömma hjälten ${heroName}. Använd samma namn genom hela boken och låt andra karaktärer fortsätta känna igen hen.`
+        : `VIKTIGT: Om barnet har gett ett namn ska hjälten heta ${heroName} genom hela sagan – byt inte till neutrala namn som "vännen" eller liknande.`,
       ``,
       lengthInstruction,
       ``,
       `VIKTIGT: Skriv bara själva berättelsen i löpande text. Inga rubriker, inga punktlistor, inga "Lärdomar".`
-    ]
-      .filter(Boolean)
-      .join("\n");
+    ];
+
+    const userPrompt = userPromptParts.filter(Boolean).join("\n");
 
     // ------------------------------------------------------
     // OpenAI-anrop
@@ -214,15 +229,18 @@ export async function onRequestPost({ request, env }) {
 
     const data = await res.json();
     const story =
-      data.choices?.[0]?.message?.content?.trim() ||
-      "";
+      data.choices?.[0]?.message?.content?.trim() || "";
 
     return json({ ok: true, story }, 200, origin);
   } catch (e) {
     return json(
-      { ok: false, error: "Serverfel", details: String(e).slice(0, 400) },
+      {
+        ok: false,
+        error: "Serverfel",
+        details: String(e).slice(0, 400)
+      },
       500,
-      "*"
+      origin
     );
   }
 }
@@ -230,6 +248,20 @@ export async function onRequestPost({ request, env }) {
 // ------------------------------------------------------
 // Hjälpfunktioner
 // ------------------------------------------------------
+
+function getAllowedOrigin(env) {
+  return (
+    env.KIDSBM_ALLOWED_ORIGIN ||
+    env.KIDSBM_ALLOWED_ORIGIN_DEV ||
+    env.KIDSBM_ALLOWED_ORIGIN_LOCAL ||
+    env.KIDSBM_ALLOWED_ORIGIN_PREVIEW ||
+    env.KIDSBM_ALLOWED_ORIGIN_PROD ||
+    env.KIDSBM_ALLOWED_ORIGIN_KIDS ||
+    env.KIDSBM_ALLOWED_ORIGIN_BN ||
+    env.KIDSBM_ALLOWED_ORIGIN_KIDSBM ||
+    "*"
+  );
+}
 
 function normalizeAge(raw) {
   const s = String(raw || "").toLowerCase();
@@ -260,7 +292,7 @@ function getLengthInstructionAndTokens(ageKey, lengthPreset) {
       case "11-12":
         return {
           baseInstr:
-            "Skriv med mer djup och tempo som passar 11–12 år. Mer känslor, mer detaljerade scener, och ibland lite humor.",
+            "Skriv med mer djup och tempo som passar 11–12 år. Mer känslor, mer detaljerade scener och ibland lite humor.",
           baseTokens: 2000
         };
       case "13-15":
@@ -312,7 +344,7 @@ Anpassa språk, tempo och komplexitet efter åldern:
 - 7–8: enklare meningar, tydliga känslor, få karaktärer, inga subplots.
 - 9–10: lite mer detaljer, lite mer spänning, max en enkel sidotråd.
 - 11–12: mer djup, mer dialog, mer avancerade känslor, fortfarande tryggt.
-- 13–15: något mognare, men fortfarande barnvänligt och utan grafisk våld/sex.
+- 13–15: något mognare, men fortfarande barnvänligt och utan grafiskt våld eller sex.
 
 ### BN-FLOW LAYER (din stil)
 - Börja aldrig direkt med barnets prompt.
