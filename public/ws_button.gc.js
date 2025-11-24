@@ -1,7 +1,7 @@
 // ==========================================================
-// BN-KIDS — WS BUTTON (GC v3.0)
-// - Kopplar UI:t till BNWorldState + BNStoryEngine / IP-wrapper
-// - Hanterar kapitelIndex, recap, prompt-flöde
+// BN-KIDS — WS BUTTON (GC v4.0)
+// - Kopplar UI:t till BNWorldState + backend /api/generate
+// - Hanterar kapitelIndex, prompt-flöde, recap-historik
 // - Request-lock: inga dubbla svar som skriver över varandra
 //
 // Förväntar sig i DOM:
@@ -13,8 +13,8 @@
 // - #hero, #age, #length    (formfält)
 // - #clear-transcript       (Rensa-knapp)
 //
-// Kräver att worldstate.gc.js och story_engine.gc.js är laddade.
-// Om generateStoryWithIPFilter finns, används den först.
+// Kräver att worldstate.gc.js är laddad före denna fil.
+// Backend: functions/generate.js → POST /api/generate
 // ==========================================================
 
 (function (global) {
@@ -23,13 +23,9 @@
   const log = (...args) => console.log("[WS GC]", ...args);
 
   const BNWorldState = global.BNWorldState;
-  const BNStoryEngine = global.BNStoryEngine;
 
   if (!BNWorldState) {
     console.error("[WS GC] BNWorldState saknas – kontrollera worldstate.gc.js");
-  }
-  if (!BNStoryEngine || typeof BNStoryEngine.generateChapter !== "function") {
-    console.error("[WS GC] BNStoryEngine saknas – kontrollera story_engine.gc.js");
   }
 
   let latestRequestId = 0;
@@ -63,6 +59,7 @@
 
     const hero =
       heroInput && heroInput.value ? heroInput.value.trim() : "";
+
     const ageValue = ageSel && ageSel.value ? ageSel.value : "";
     const ageLabel =
       ageSel &&
@@ -70,7 +67,8 @@
       ageSel.selectedOptions[0] &&
       ageSel.selectedOptions[0].textContent
         ? ageSel.selectedOptions[0].textContent.trim()
-        : ageValue || "10–12 år";
+        : ageValue || "7–8 år";
+
     const lengthValue =
       lengthSel && lengthSel.value ? lengthSel.value : "";
     const lengthLabel =
@@ -80,6 +78,7 @@
       lengthSel.selectedOptions[0].textContent
         ? lengthSel.selectedOptions[0].textContent.trim()
         : lengthValue || "Lagom";
+
     const prompt =
       promptEl && promptEl.value ? promptEl.value.trim() : "";
 
@@ -154,18 +153,30 @@
     const createBtn = $('[data-id="btn-create"]');
     const storyEl =
       $('[data-id="story"]') || document.getElementById("story");
+    const errorEl = $('[data-id="error"]');
 
-    const { hero, ageValue, ageLabel, lengthValue, lengthLabel, prompt } =
-      getFormValues();
+    if (errorEl) errorEl.textContent = "";
+
+    const {
+      hero,
+      ageValue,
+      ageLabel,
+      lengthValue,
+      lengthLabel,
+      prompt
+    } = getFormValues();
 
     // 1) Ladda befintligt worldstate
     let ws = BNWorldState.load();
-    const isNewBook =
-      !ws.previousChapters ||
-      !Array.isArray(ws.previousChapters) ||
-      ws.previousChapters.length === 0;
 
-    // 2) Om ny bok → reset + sätt meta + prompt
+    const hasHistory =
+      ws.previousChapters &&
+      Array.isArray(ws.previousChapters) &&
+      ws.previousChapters.length > 0;
+
+    const isNewBook = !hasHistory;
+
+    // 2) Ny bok → reset + sätt meta + första prompt
     if (isNewBook) {
       ws = BNWorldState.reset();
       ws.meta.hero = hero;
@@ -176,20 +187,34 @@
       ws.meta.lengthValue = lengthValue || "";
       ws.meta.lengthLabel = lengthLabel;
       ws.meta.originalPrompt = prompt || "";
+      ws.meta.totalChapters = ws.meta.totalChapters || 10; // t.ex. 10 kap som standard
       ws.story_mode = "chapter_book";
-      ws.chapterIndex = 1;
+      ws.chapterIndex = 0; // startar på 0, vi höjer till 1 nedan
+
       BNWorldState.updateMeta(ws.meta);
       BNWorldState.updatePrompt(prompt || "");
-      ws = BNWorldState.load();
+      ws = BNWorldState.nextChapter(); // kapitelIndex = 1
     } else {
       // Fortsättning på befintlig bok
-      // Om ny prompt skiljer sig från senaste → uppdatera
+      ws.meta.hero = hero || ws.meta.hero || "hjälten";
+      ws.meta.age = ageValue || ws.meta.age || ageLabel;
+      ws.meta.ageValue = ageValue || ws.meta.ageValue || "";
+      ws.meta.ageLabel = ageLabel || ws.meta.ageLabel || "7–8 år";
+      ws.meta.length = lengthValue || ws.meta.length || lengthLabel;
+      ws.meta.lengthValue =
+        lengthValue || ws.meta.lengthValue || "";
+      ws.meta.lengthLabel =
+        lengthLabel || ws.meta.lengthLabel || "Lagom";
+
+      BNWorldState.updateMeta(ws.meta);
+
+      // Om prompten ändrats → uppdatera
       if (prompt && prompt !== ws.last_prompt) {
-        BNWorldState.updatePrompt(prompt);
+        ws = BNWorldState.updatePrompt(prompt);
       }
+
       // Öka kapitelindex
-      BNWorldState.nextChapter();
-      ws = BNWorldState.load();
+      ws = BNWorldState.nextChapter();
     }
 
     const currentChapterIndex = ws.chapterIndex || 1;
@@ -202,41 +227,46 @@
     if (createBtn) createBtn.disabled = true;
 
     try {
-      let chapterText = "";
+      // 3) Bygg payload till backend /api/generate
+      const body = {
+        prompt: ws._userPrompt || ws.last_prompt || "",
+        heroName: ws.meta.hero || "hjälten",
+        age: ws.meta.ageValue || ws.meta.ageLabel || "7–8 år",
+        lengthPreset: ws.meta.lengthValue || ws.meta.lengthLabel || "medium",
+        storyMode: ws.story_mode || "chapter_book",
+        chapterIndex: currentChapterIndex,
+        worldState: ws,
+        totalChapters: ws.meta.totalChapters || 10
+      };
 
-      // 3) Kör IP-wrapper om den finns, annars direkt motor
-      if (
-        typeof global.generateStoryWithIPFilter === "function"
-      ) {
-        const result = await global.generateStoryWithIPFilter(
-          ws._userPrompt || ws.last_prompt || "",
-          {
-            worldState: ws,
-            storyState: {},
-            chapterIndex: currentChapterIndex,
-            apiUrl: "/api/generate_story"
-          }
-        );
-        chapterText = result && result.text ? result.text : "";
-      } else if (
-        BNStoryEngine &&
-        typeof BNStoryEngine.generateChapter === "function"
-      ) {
-        const engineRes = await BNStoryEngine.generateChapter({
-          apiUrl: "/api/generate_story",
-          worldState: ws,
-          storyState: {},
-          chapterIndex: currentChapterIndex
-        });
-        chapterText = engineRes && engineRes.chapterText
-          ? engineRes.chapterText
-          : "";
-      } else {
+      const res = await fetch("/api/generate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json"
+        },
+        body: JSON.stringify(body)
+      });
+
+      const rawText = await res.text();
+      let data;
+      try {
+        data = JSON.parse(rawText);
+      } catch (e) {
         throw new Error(
-          "Ingen storymotor hittades (varken generateStoryWithIPFilter eller BNStoryEngine)."
+          "Kunde inte tolka JSON-svar: " + rawText.slice(0, 200)
         );
       }
 
+      if (!data || !data.ok) {
+        throw new Error(
+          data && data.error
+            ? data.error
+            : "Okänt fel från /api/generate"
+        );
+      }
+
+      const chapterText = data.story || "";
       if (!chapterText) {
         throw new Error("Tomt kapitel tillbaka från motorn.");
       }
@@ -270,7 +300,6 @@
       );
     } catch (err) {
       console.error("[WS GC] fel:", err);
-      const errorEl = $('[data-id="error"]');
       if (errorEl) {
         errorEl.textContent =
           "Något gick fel när kapitlet skulle skapas: " +
