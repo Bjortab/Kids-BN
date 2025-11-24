@@ -1,15 +1,20 @@
 // ===============================================================
 // BN-KIDS — STORY ENGINE (GC v10.4)
-// - Fokuslås: följer barnets prompt/tema mycket hårdare
-// - Soft intro: lite vardag före magi/konflikt (särskilt kapitel 1)
-// - Treasure-budget: inte ny kista/portal/skatt i varje kapitel
-// - Ond kraft får vara ond tills konflikten är löst (barnvänligt)
-// - Mindre moralkaka, mer handling, mindre tjatiga fraser
+// ---------------------------------------------------------------
+// - Följer barnets prompt hårdare (Focus Lock Engine-light).
+// - Bygger berättelsebåge för kapitelbok (plan ~8–12 kapitel).
+// - Skiljer på start/mitt/slut-kapitel så allt inte händer i kap 1.
+// - Åldersband: 7–9 (junior) och 10–12 (mid) aktiva nu.
+// - Mindre moral-bonanza, mer handling som visar känslor.
+// - Bättre stöd för crush/romantik 10–12, vänskap 7–9.
 //
 // Exponeras som: window.BNStoryEngine
-// Används av: generateStory_ip.js (IP-wrappern)
+// Används av: generate_story.dev.js / generateStory_ip.js
 //
-// Viktigt: story_engine.gc.js MÅSTE laddas före generateStory_ip.js
+// Viktigt: API-signaturn är OFÖRÄNDRAD mot tidigare GC-versioner:
+//   BNStoryEngine.generateChapter({ apiUrl, worldState, storyState, chapterIndex })
+//   -> { chapterText, storyState, engineVersion, ageBand }
+//
 // ===============================================================
 
 (function (global) {
@@ -24,7 +29,8 @@
   const CFG_AGE_BANDS =
     (CONFIG.bn_kids_story_config && CONFIG.bn_kids_story_config.age_bands) || {};
   const CFG_LENGTH =
-    (CONFIG.bn_kids_story_config && CONFIG.bn_kids_story_config.length_presets) || {};
+    (CONFIG.bn_kids_story_config && CONFIG.bn_kids_story_config.length_presets) ||
+    {};
 
   // ------------------------------------------------------------
   // Fallback-agebands om JSON-konfig inte finns
@@ -36,7 +42,8 @@
       chapter_words_target: 650,
       chapter_words_min: 450,
       chapter_words_max: 800,
-      tone: "enkel, lekfull, trygg, korta meningar, konkreta bilder, lite humor",
+      tone:
+        "enkel, lekfull, trygg, korta meningar, konkreta bilder, lite humor, vardag nära barnet",
       violence_level: "none_soft",
       romance_level: "none"
     },
@@ -47,18 +54,19 @@
       chapter_words_min: 800,
       chapter_words_max: 1500,
       tone:
-        "äventyrlig men trygg, mer känslor och relationer, lite mer detaljer och inre tankar",
+        "äventyrlig men trygg, mer känslor och relationer, lite djupare tankar, fortfarande lättläst",
       violence_level: "soft_fantasy",
       romance_level: "crush_only"
     },
     teen_13_15: {
+      // framtida band – används bara om konfig trycker in det
       id: "teen_13_15",
-      label: "13–15 år",
+      label: "13–15 år (beta)",
       chapter_words_target: 1700,
       chapter_words_min: 1200,
       chapter_words_max: 2300,
       tone:
-        "mer mogen, inre tankar, identitet, men fortfarande PG-13, trygg och respektfull",
+        "mer mogen, inre tankar, identitet, men fortfarande PG-13 och tryggt",
       violence_level: "low_ya",
       romance_level: "light_ya_pg13"
     }
@@ -68,7 +76,8 @@
   // Beräkna age band + längd-info
   // ------------------------------------------------------------
   function pickAgeBand(meta) {
-    const rawAge = (meta && (meta.ageValue || meta.age || meta.ageLabel)) || "";
+    const rawAge =
+      (meta && (meta.ageValue || meta.age || meta.ageLabel)) || "";
     const m = String(rawAge).match(/(\d{1,2})/);
     const age = m ? parseInt(m[1], 10) : 11;
 
@@ -87,7 +96,7 @@
 
     // Grovt: ~6 tecken per ord
     const maxChars =
-      cfg && cfg.chapter_words_max ? cfg.chapter_words_max * 6 : target * 6;
+      (cfg && cfg.chapter_words_max ? cfg.chapter_words_max * 6 : target * 6);
 
     return {
       id: bandId,
@@ -110,7 +119,9 @@
       defaultPreset;
 
     const presetKey =
-      /kort/i.test(lp) ? "short" : /lång/i.test(lp) ? "long" : "medium";
+      /kort/i.test(lp) ? "short" :
+      /lång/i.test(lp) ? "long" :
+      "medium";
 
     const bandKey = ageBandId || "mid_10_12";
     const preset =
@@ -138,6 +149,50 @@
   }
 
   // ------------------------------------------------------------
+  // Serie-info / kapitelbåge (8–12 kapitel default)
+  // ------------------------------------------------------------
+  function getSeriesInfo(worldState, chapterIndex) {
+    const meta = worldState && worldState.meta;
+    const series = (meta && meta.series) || {};
+    const mode = worldState.story_mode || "single_story";
+
+    const plannedMin =
+      typeof series.planned_min_chapters === "number"
+        ? series.planned_min_chapters
+        : 8;
+    const plannedMax =
+      typeof series.planned_max_chapters === "number"
+        ? series.planned_max_chapters
+        : 12;
+    const targetTotal =
+      typeof series.planned_target === "number"
+        ? series.planned_target
+        : Math.round((plannedMin + plannedMax) / 2);
+
+    let arcPhase = "single";
+    if (mode !== "chapter_book") {
+      arcPhase = "single";
+    } else if (chapterIndex <= 1) {
+      arcPhase = "start";
+    } else if (chapterIndex < targetTotal - 2) {
+      arcPhase = "middle";
+    } else if (chapterIndex < targetTotal) {
+      arcPhase = "late";
+    } else {
+      arcPhase = "final_window";
+    }
+
+    return {
+      mode,
+      plannedMin,
+      plannedMax,
+      targetTotal,
+      chapterIndex,
+      arcPhase
+    };
+  }
+
+  // ------------------------------------------------------------
   // Trimma bort halv mening
   // ------------------------------------------------------------
   function trimToWholeSentence(text) {
@@ -152,64 +207,88 @@
   }
 
   // ------------------------------------------------------------
-  // Bygg systemprompt för motorn (GC-versionen)
+  // Bygg recap-text
+  // ------------------------------------------------------------
+  function buildRecapText(storyState, chapterIndex) {
+    if (!storyState || chapterIndex === 1) return "";
+
+    if (typeof storyState.previousSummary === "string") {
+      const s = storyState.previousSummary.trim();
+      if (s) return s.slice(0, 900);
+    }
+
+    if (Array.isArray(storyState.previousChapters) && storyState.previousChapters.length > 0) {
+      const last = storyState.previousChapters[storyState.previousChapters.length - 1];
+      if (typeof last === "string") {
+        return last.slice(0, 900);
+      }
+    }
+
+    return "";
+  }
+
+  // ------------------------------------------------------------
+  // Bygg systemliknande prompt till motorn
   // ------------------------------------------------------------
   function buildPrompt(opts) {
-    const { worldState, storyState, chapterIndex, ageBand, lengthPreset } = opts;
+    const {
+      worldState,
+      storyState,
+      chapterIndex,
+      ageBand,
+      lengthPreset,
+      seriesInfo
+    } = opts;
 
     const meta = worldState.meta || {};
     const hero = meta.hero || "hjälten";
 
-    // Barnets idé / önskemål (sanerad prompt kommer oftast in som _userPrompt)
     const childIdea =
       worldState._userPrompt ||
       worldState.last_prompt ||
       meta.originalPrompt ||
       "";
 
-    const mode =
-      worldState.story_mode ||
-      (chapterIndex > 1 ? "chapter_book" : "single_story");
-
+    const recapText = buildRecapText(storyState, chapterIndex);
     const isFirstChapter = chapterIndex === 1;
+    const mode = seriesInfo.mode;
 
-    // Enkel recap-beskrivning / röd tråd
-    let recapText = "";
-    if (
-      !isFirstChapter &&
-      storyState &&
-      typeof storyState.previousSummary === "string"
-    ) {
-      recapText = storyState.previousSummary.trim();
-    } else if (
-      !isFirstChapter &&
-      storyState &&
-      Array.isArray(storyState.previousChapters)
-    ) {
-      const last =
-        storyState.previousChapters[storyState.previousChapters.length - 1];
-      if (last && typeof last === "string") recapText = last.slice(0, 900);
+    // FLE: hårdare fokus på barnets prompt + huvudtema
+    const focusLines = [
+      "1. Du MÅSTE följa barnets prompt och huvudtema mycket noggrant.",
+      "2. Du får inte byta genre, ton eller huvudmål på eget initiativ.",
+      "3. Om barnet nämner ett yrke (t.ex. fotbollsspelare, detektiv) ska kapitlet kretsa runt det yrket eller uppdraget.",
+      "4. Om barnet nämner ett objekt (t.ex. en drönare, magisk bok, flodhästarna) ska objektet/problemet vara centralt tills konflikten är löst.",
+      "5. Om barnet beskriver fiender eller hot (t.ex. flodhästar som förstör allt i sin väg) ska hotet kännas på riktigt,",
+      "   men lösas på ett barnvänligt sätt. Tvinga inte alltid fram att de 'bara ville leka' om barnet inte bad om det.",
+      "6. Sidospår är tillåtna endast om de stödjer huvuduppdraget eller visar viktiga känslor hos huvudpersonen."
+    ];
+
+    // Tona moralpredikan
+    const moralLines = [
+      "1. Visa vänskap, mod och omtanke genom handlingar och dialog – inte genom att hålla långa föreläsningar i slutet.",
+      "2. Du får skriva EN kort mening som sammanfattar känslan eller lärdomen, men undvik att alltid säga samma sak.",
+      "3. Hoppa över klyschor som 'det viktigaste var vänskap' om du redan visat det i handlingen."
+    ];
+
+    // Romantik / crush – styr beroende på ålder
+    const romanceLines = [];
+    if (ageBand.id === "junior_7_9") {
+      romanceLines.push(
+        "- Ingen romantik. Fokus på vänskap, mod, trygghet och upptäckande."
+      );
+    } else if (ageBand.id === "mid_10_12") {
+      romanceLines.push(
+        "- Oskyldiga crush-känslor är okej om barnet antyder det (t.ex. pirr i magen, leenden, vilja att imponera).",
+        "- Ingen kyss-scen, inga explicita kärleksförklaringar. Håll det subtilt, varmt och tryggt."
+      );
+    } else {
+      romanceLines.push(
+        "- Romantik måste alltid vara PG-13, trygg och respektfull, utan explicita beskrivningar."
+      );
     }
 
-    const lp = lengthPreset;
-
-    // Instruktion för strukturen (kapitelbok vs en-saga)
-    const structureInstr = isFirstChapter
-      ? [
-          "Börja med en mjuk vardags-intro (2–4 meningar) om huvudpersonens vanliga dag eller känsla, innan den magiska händelsen eller konflikten drar igång.",
-          "Etablera huvudpersonen, vardagsmiljön och den huvudsakliga konflikten eller upptäckten som barnets prompt handlar om.",
-          "Om det finns magiska objekt (bok, dörr, portal, kista, drönare osv) ska endast ett eller ett fåtal presenteras i början. Dessa ska återanvändas senare istället för att du hittar på nya varje kapitel.",
-          "Avsluta kapitel 1 med att det finns mer att utforska. Lös inte hela huvudkonflikten."
-        ]
-      : [
-          `Detta är kapitel ${chapterIndex} i en pågående kapitelbok.`,
-          "Fortsätt logiskt från slutet av förra kapitlet. Starta inte om samma dag eller samma konflikt.",
-          "Återanvänd samma magiska objekt, platser och huvuduppdrag som redan etablerats. Introducera inte en ny skattkista/portal/bok i varje kapitel.",
-          "Bygg vidare på barnets huvudmål: varje scen ska föra dem närmare lösningen eller ge en ny ledtråd.",
-          "Om användaren ber om ett avslut på boken: knyt ihop huvudkonflikten ordentligt, utan att upprepa hela berättelsen i sammanfattningsform."
-        ];
-
-    // Ålders- och toninstruktion
+    // Ålders-ton
     const toneLines = [];
     if (ageBand.tone) toneLines.push(`Ton: ${ageBand.tone}.`);
     if (ageBand.violence_level) {
@@ -219,99 +298,144 @@
           ", inget grafiskt våld."
       );
     }
-
-    // Romantik / crush-regler
-    if (ageBand.id === "junior_7_9") {
+    if (ageBand.romance_level) {
       toneLines.push(
-        "Ingen romantik för 7–9 år. Vänskap och trygghet är centralt."
-      );
-    } else if (ageBand.id === "mid_10_12") {
-      toneLines.push(
-        "För 10–12 år är oskyldiga crush-känslor tillåtna om barnet själv antyder det, men håll det subtilt, respektfullt och PG – inget kyssande i detalj, inga vuxna teman."
-      );
-    } else {
-      toneLines.push(
-        "För äldre unga kan lätt romantik förekomma om barnet vill, men alltid PG-13, respektfull och utan explicita detaljer."
+        "Romantiknivå (internt): " +
+          ageBand.romance_level +
+          " – se reglerna ovan för hur det får synas."
       );
     }
 
-    // Fokuslås / konflikt / treasure-budget
-    const focusLockLines = [
-      "FOKUSLÅS (FLE):",
-      "- Barnets prompt och huvudtema är viktigast. Du får inte byta genre eller huvudtema på eget initiativ.",
-      "- Om barnet nämner ett yrke eller roll (t.ex. detektiv, fotbollsmålvakt, draktränare) ska kapitlet kretsa kring den rollen under hela kapitlet.",
-      "- Om barnet nämner ett specifikt objekt (t.ex. magisk bok, drönare, kista, nyckel, diamant) ska objektet vara centralt tills det uppdraget är löst.",
-      "- Konflikter och 'onda krafter' får finnas även för 7–9 år, men lösningen ska vara trygg och barnvänlig (smarthet, mod, samarbete, vuxenhjälp, magi). Gör inte de onda figurerna helt ofarliga om barnet promptar att de förstör eller attackerar.",
-      "",
-      "TREASURE-BUDGET OCH MAGISKA FÖREMÅL:",
-      "- Använd skattkistor, portaler, hemliga dörrar och glittrande stenar sparsamt.",
-      "- Om en skatt, portal eller magisk bok redan introducerats tidigare i boken ska du återanvända samma objekt, inte hitta på en ny i varje kapitel.",
-      "- Om barnets prompt inte nämner skatter eller kistor ska du helst undvika dem helt, eller låta dem vara en enda återkommande detalj istället för att sprida dem överallt."
+    // Kapitellogik baserat på serie-bågen
+    const arc = seriesInfo;
+    const arcLines = [];
+    if (mode === "chapter_book") {
+      arcLines.push(
+        `Den här boken är planerad till ungefär ${arc.plannedMin}–${arc.plannedMax} kapitel.`,
+        `Du skriver nu kapitel ${arc.chapterIndex}.`
+      );
+      if (arc.arcPhase === "start") {
+        arcLines.push(
+          "- Detta är ett START-kapitel.",
+          "- Bygg upp världen och huvudpersonen i lugn takt.",
+          "- Plantera huvudkonflikten och barnets idé, men lös inget stort problem ännu.",
+          "- Du får ta några meningar i början till vardag, plats och känsla innan prompten aktiveras."
+        );
+      } else if (arc.arcPhase === "middle") {
+        arcLines.push(
+          "- Detta är ett MITTEN-kapitel.",
+          "- Huvudmålet ska vara tydligt och aktivt.",
+          "- Skapa hinder, delmål och små framsteg, men lös inte hela huvudkonflikten.",
+          "- Håll tydlig röd tråd från tidigare kapitel."
+        );
+      } else if (arc.arcPhase === "late") {
+        arcLines.push(
+          "- Detta är ett SENT MITTEN-kapitel.",
+          "- Konflikten ska kännas intensivare, men ännu inte helt löst.",
+          "- Förbered marken för ett kommande upplösningskapitel."
+        );
+      } else if (arc.arcPhase === "final_window") {
+        arcLines.push(
+          "- Detta kapitel får gärna avsluta boken om användaren ber om det.",
+          "- Knyt ihop alla viktiga trådar och lös huvudkonflikten tydligt.",
+          "- Introducera inte ett helt nytt huvudproblem just nu."
+        );
+      }
+    } else {
+      arcLines.push(
+        "Detta är en fristående saga (single_story).",
+        "- Du ska skapa en komplett berättelse där huvudkonflikten löses i samma text."
+      );
+    }
+
+    // Start/fras-variation
+    const styleLines = [
+      "1. Variera dina inledningar. Börja ibland med platsen, ibland med en tanke, ibland med ett citat.",
+      "   Undvik att alltid börja med att hjärtat slår snabbare eller att någon står kvar på samma plats.",
+      "2. Undvik att upprepa fraser som 'han hörde en röst bakom sig' i varje saga.",
+      "3. Nämn inte huvudpersonens namn i nästan varje mening – använd 'han', 'hon', 'hen' där det är tydligt.",
+      "4. Låt ungefär 60–70% av kapitlet kretsa runt huvudtemat (t.ex. fotboll, drönare, magisk bok),",
+      "   och 30–40% runt vardag, känslor, dialog och små detaljer som gör världen levande."
     ];
 
-    // Språkvariation och namnregler
-    const languageLines = [
-      "SPRÅK OCH NAMN:",
-      "- Skriv på naturlig, flytande svenska.",
-      "- Variera språket: använd huvudpersonens namn i början av stycken, men använd sedan pronomen ('han', 'hon', 'hen', 'de') när det är tydligt, så att texten inte blir tjatig.",
-      "- Om hjälten har en kompis utan namn ska du ge kompisen ett enkelt namn (t.ex. Max, Alva, Leo, Maja) och sedan använda det konsekvent. Använd inte bara 'Vännen' som om det vore ett namn.",
-      "- Undvik att upprepa samma fras för ofta, t.ex. 'han hörde en röst bakom sig'. Om du använder en sådan fras, gör det högst en gång per bok och välj gärna andra sätt att introducera magiska händelser."
-    ];
+    const lp = lengthPreset;
 
+    // Tidigare händelser / recap
+    let recapSection = "";
+    if (mode === "chapter_book") {
+      if (recapText) {
+        recapSection =
+          "KORT SAMMANFATTNING AV TIDIGARE KAPITEL (detta är historien som redan hänt och får inte skrivas om):\n" +
+          recapText;
+      } else if (isFirstChapter) {
+        recapSection =
+          "Det finns inga tidigare kapitel. Detta är starten på berättelsen.";
+      } else {
+        recapSection =
+          "Tidigare kapitel finns, men ingen extra sammanfattning skickas. Du får INTE starta om historien – fortsätt logiskt framåt.";
+      }
+    } else {
+      recapSection =
+        "Detta är en fristående saga. Det finns inga tidigare kapitel att ta hänsyn till.";
+    }
+
+    // Bygg prompten
     const lines = [
       `Du är BN-KIDS berättelsemotor (${ENGINE_VERSION}).`,
       `Du skriver på naturlig, korrekt svenska för målgruppen ${ageBand.label}.`,
       "",
       "ÖVERGRIPANDE UPPDRAG:",
       mode === "chapter_book"
-        ? "Skriv nästa kapitel i en barn/ungdomsbok med tydlig röd tråd. Det ska kännas som en riktig kapitelbok, inte som flera fristående sagor."
-        : "Skriv en fristående saga med tydlig början, mitt och slut, baserat på barnets idé.",
+        ? "Skriv nästa kapitel i en barn/ungdomsbok med tydlig röd tråd mellan kapitlen."
+        : "Skriv en fristående saga med tydlig början, mitt och slut.",
       "",
-      "BARNETS IDÉ / ÖNSKEMÅL (detta måste respekteras – du får utveckla, men inte byta tema):",
+      "BARNETS IDÉ / ÖNSKEMÅL (detta måste du respektera, men du får bygga upp och fördjupa):",
       childIdea
-        ? `- Barnets prompt: "${childIdea}"`
-        : "- (ingen specifik extra önskan, bygg på hjälten, miljön och situationen.)",
+        ? `- "${childIdea}"`
+        : "- (ingen specifik extra önskan, bygg på hjälten, miljön och situationen).",
       "",
       "HJÄLTE:",
       `- Huvudpersonen heter ${hero} och ska konsekvent kallas "${hero}".`,
-      "- Om det finns bifigurer: håll deras namn, egenskaper och relationer konsekventa genom hela boken.",
+      "- Karaktärer får inte byta namn eller glömmas bort utan tydlig orsak.",
       "",
-      "ÅLDER & TON:",
+      "FOCUS LOCK ENGINE (hålla sig till barnets prompt och genre):",
+      ...focusLines.map((t) => "- " + t),
+      "",
+      "ÅLDERSBAND & TON:",
       `- Målgrupp: ${ageBand.label}.`,
-      `- Kapitlet ska kännas anpassat till denna ålder (språk, längd, tema, svårighetsgrad).`,
+      `- Kapitlet ska kännas anpassat till denna ålder (språk, längd, tema).`,
       ...toneLines.map((t) => "- " + t),
+      "- Håll dig inom barnvänliga ramar (ingen skräck, inget grafiskt våld).",
+      "",
+      "ROMANTIK / CRUSH (om relevant):",
+      ...romanceLines.map((t) => "- " + t),
+      "",
+      "MORAL & BUDSKAP:",
+      ...moralLines.map((t) => "- " + t),
+      "",
+      "KAPITELBÅGE:",
+      ...arcLines.map((t) => "- " + t),
       "",
       "LÄNGD:",
       `- Sikta på ungefär ${ageBand.wordGoal} ord.`,
       `- Försök hålla dig inom intervallet ${lp.min}–${lp.max} ord.`,
-      "- Det är viktigare att kapitlet känns komplett och läsbart än att träffa exakt antal ord.",
+      "- Det är viktigare att kapitlet känns komplett och engagerande än att det är exakt rätt längd.",
       "",
-      ...focusLockLines,
+      "BERÄTTARSTIL & VARIATION:",
+      ...styleLines.map((t) => "- " + t),
       "",
-      ...languageLines,
-      "",
-      "KAPITELSTRUKTUR:",
-      ...structureInstr.map((t) => "- " + t),
-      "- Avsluta alltid kapitlet med en fullständig mening (ingen halv mening på slutet).",
-      "",
-      "RÖD TRÅD OCH KONSEKVENS:",
-      "- Huvuduppdraget (t.ex. hitta något, vinna en match, lösa ett mysterium) ska märkas i varje scen.",
-      "- Karaktärer ska inte byta namn, djur ska inte plötsligt bli andra djur och magiska objekt ska inte byta form utan tydlig förklaring.",
-      "- Om en figur har lärt sig något tidigare (t.ex. flyga, spruta eld, spela match) får hen inte plötsligt bli nybörjare igen utan god anledning.",
-      "- Visa lärande och moral genom handling och dialog – inte genom långa föreläsningar. Högst 1–2 meningar i slutet får vara tydlig 'moralkaka'.",
+      "LOGIK & KONTINUITET:",
+      "- Starta inte om samma händelse flera gånger. Fortsätt där förra kapitlet slutade.",
+      "- Om en figur har lärt sig något tidigare (t.ex. flyga, använda superkraft, förstå en ny värld),",
+      "  får hen inte plötsligt bli nybörjare igen utan tydlig orsak.",
+      "- Fakta, namn, relationer och viktiga objekt ska vara konsekventa över kapitlen.",
       "",
       "TIDIGARE HÄNDELSER:",
-      recapText
-        ? [
-            "Här är en kort sammanfattning av vad som hänt tidigare. Du måste hålla dig nära denna röd tråd, återanvända viktiga platser, objekt och relationer, och inte starta om berättelsen:",
-            recapText
-          ].join("\n")
-        : isFirstChapter
-        ? "Det finns inga tidigare kapitel. Detta är starten på berättelsen."
-        : "Tidigare kapitel finns, men ingen extra sammanfattning skickas. Fortsätt logiskt framåt med samma huvuduppdrag.",
+      recapSection,
       "",
       "SVARSFORMAT:",
-      "Svara i ren text, utan JSON, listor eller rubriker. Bara själva kapiteltexten."
+      "Svara med enbart kapiteltexten i ren text, utan JSON, rubriker eller markeringar.",
+      "Avsluta kapitlet med en fullständig mening (ingen halv mening på slutet)."
     ];
 
     return lines.join("\n");
@@ -339,7 +463,12 @@
       // ignore
     }
 
-    return JSON.stringify(apiResponse);
+    // Sista fallback – bra för felsökning
+    try {
+      return JSON.stringify(apiResponse);
+    } catch (_) {
+      return "";
+    }
   }
 
   // ------------------------------------------------------------
@@ -375,19 +504,21 @@
       chapterIndex = 1
     } = opts || {};
 
-    if (!worldState) throw new Error("BNStoryEngine GC: worldState saknas.");
+    if (!worldState) throw new Error("BNStoryEngine: worldState saknas.");
 
     const meta = worldState.meta || {};
 
     const ageBand = pickAgeBand(meta);
     const lengthPreset = resolveLengthPreset(meta, ageBand.id);
+    const seriesInfo = getSeriesInfo(worldState, chapterIndex);
 
     const prompt = buildPrompt({
       worldState,
       storyState,
       chapterIndex,
       ageBand,
-      lengthPreset
+      lengthPreset,
+      seriesInfo
     });
 
     const payload = {
@@ -399,7 +530,8 @@
       engineVersion: ENGINE_VERSION,
       worldState,
       storyState,
-      chapterIndex
+      chapterIndex,
+      seriesInfo
     };
 
     const apiRaw = await callApi(apiUrl, payload);
@@ -408,7 +540,9 @@
     let chapterText = modelText || "";
 
     // Trimma mot maxChars + hel mening
-    chapterText = trimToWholeSentence(chapterText.slice(0, ageBand.maxChars));
+    chapterText = trimToWholeSentence(
+      chapterText.slice(0, ageBand.maxChars)
+    );
 
     return {
       chapterText,
