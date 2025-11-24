@@ -359,20 +359,41 @@
       preload="none"
       style="width:100%;"
     ></audio>
+    <!-- Story + audio -->
+    <h3 style="margin-top:18px;">Berättelse</h3>
+    <pre data-id="story" id="story-output"></pre>
+
+    <h3>Uppläsning</h3>
+    <audio
+      data-id="audio"
+      id="tts-audio"
+      controls
+      preload="none"
+      style="width:100%;">
+    </audio>
   </div>
 
-  <!-- Ladda recorder-klienten först (om du har den), sedan public/app.js -->
-  <!-- IP-skydd + StoryEngine (alltid aktivt) -->
-<script src="/ip_blocklist.js"></script>
-<script src="/ip_sanitizer.js"></script>
-<script src="/story_engine.dev.js"></script>
-<script src="/generateStory.ip.js"></script>
+  <!-- Ladda recorder-klienten först (om du har den) -->
+  <script src="/recorder.js"></script>
 
-<!-- BN-Kids GC/DEV (dina befintliga filer) -->
-<script src="/worldstate.gc.js"></script>
-<script src="/ws_button.gc.js"></script>
-<script src="/worldstate.dev.js"></script>
-<script src="/ws_button.dev.js"></script>
-<script src="/app_playTTS.js"></script>
+  <!-- IP-skydd + StoryEngine (STABILA GC-versioner) -->
+  <script src="/ip_blocklist.js"></script>
+  <script src="/ip_sanitizer.js"></script>
+  <script src="/story_engine.gc.js"></script>
+  <script src="/generateStory.ip.gc.js"></script>
+
+  <!-- BN-Kids GC (stabila filer) -->
+  <script src="/worldstate.gc.js"></script>
+  <script src="/ws_button.gc.js"></script>
+  <script src="/app_playTTS.js"></script>
+
+  <!-- BN-Kids DEV (endast vid felsökning – lämna kommenterat i drift) -->
+  <!--
+  <script src="/worldstate.dev.js"></script>
+  <script src="/ws_button.dev.js"></script>
+  <script src="/story_engine.dev.js"></script>
+  <script src="/generateStory.ip.js"></script>
+  -->
+
 </body>
 </html>
