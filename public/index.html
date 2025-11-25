@@ -132,6 +132,9 @@
       margin-top:12px;
       display:none;
     }
+    .error[data-active="1"] {
+      display:block;
+    }
     .muted {
       color:#aaa;
     }
@@ -154,9 +157,10 @@
     <h1>BN's Sagovärld</h1>
     <small class="muted">…där drömmar blir berättelser</small>
 
+    <!-- Form-rad: ålder, hjälte, längd -->
     <div class="row" style="margin-top:12px;">
       <div class="flex1">
-        <label>Ålder</label>
+        <label for="age">Ålder</label>
         <select id="age" data-id="age">
           <option value="">Välj ålder</option>
           <option value="7-8">7–8 år</option>
@@ -168,7 +172,7 @@
       </div>
 
       <div class="flex1">
-        <label>Hjälte (valfritt)</label>
+        <label for="hero">Hjälte (valfritt)</label>
         <input
           data-id="hero"
           id="hero"
@@ -177,7 +181,7 @@
       </div>
 
       <div class="flex1">
-        <label>Längd</label>
+        <label for="length">Längd</label>
         <select data-id="length" id="length">
           <option value="short">Kort (&lt;2 min)</option>
           <option value="medium" selected>Medium (≈5 min)</option>
@@ -186,9 +190,10 @@
       </div>
     </div>
 
+    <!-- Prompt-ruta -->
     <div class="row" style="margin-top:12px;">
       <div class="flex1">
-        <label>Sagoförslag (skriv eller tala in)</label>
+        <label for="prompt">Sagoförslag (skriv eller tala in)</label>
         <textarea
           data-id="prompt"
           id="prompt"
@@ -200,7 +205,7 @@
     <!-- Röst-UI: inspelning + transkript -->
     <div style="margin-top:18px;">
       <label class="sr-only" for="transcript">
-        Transkript (text från inspelning)
+        Transkript (läs att använda som prompt)
       </label>
 
       <div class="controls-row">
@@ -282,7 +287,7 @@
     <!-- Felmeddelande -->
     <div class="error" data-id="error"></div>
 
-    <!-- Story + audio -->
+    <!-- Story + audio (EN gång, inte dubbelt) -->
     <h3 style="margin-top:18px;">Berättelse</h3>
     <pre data-id="story" id="story-output"></pre>
 
