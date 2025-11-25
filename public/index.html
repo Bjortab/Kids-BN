@@ -149,69 +149,6 @@
   </style>
 </head>
 
-<!-- Inline binder: väntar på att public/app.js ska exponera createstory / playTTS -->
-<script>
-  window.addEventListener("DOMContentLoaded", function () {
-    function byText(txt) {
-      const term = txt.toLowerCase();
-      const btns = Array.from(
-        document.querySelectorAll("button,input[type=button],input[type=submit]")
-      );
-      return btns.find((b) =>
-        (b.value || b.innerText || "").toLowerCase().includes(term)
-      );
-    }
-
-    function bindButtons() {
-      try {
-        const createBtn = byText("skapa saga");
-        const ttsBtn = byText("läs upp");
-
-        if (createBtn && window.createstory) {
-          createBtn.addEventListener("click", function (e) {
-            if (e) e.preventDefault();
-            window.createstory();
-          });
-        } else {
-          console.warn("[BN] createstory saknas?");
-        }
-
-        if (ttsBtn && window.playTTS) {
-          ttsBtn.addEventListener("click", function (e) {
-            if (e) e.preventDefault();
-            window.playTTS();
-          });
-        } else {
-          console.warn("[BN] playTTS saknas?");
-        }
-
-        console.log("[BN] inline-binder attempted");
-      } catch (err) {
-        console.warn("[BN] binder error", err);
-      }
-    }
-
-    if (window.createstory && window.playTTS) {
-      bindButtons();
-    } else {
-      let tries = 0;
-      const iv = setInterval(function () {
-        tries++;
-        if (window.createstory && window.playTTS) {
-          bindButtons();
-          clearInterval(iv);
-        } else if (tries > 20) {
-          clearInterval(iv);
-        }
-      }, 100);
-    }
-  });
-</script>
-
-<!-- WS dev-stöd -->
-<script src="worldstate.dev.js"></script>
-<script src="ws_button.dev.js"></script>
-
 <body>
   <div class="panel">
     <h1>BN's Sagovärld</h1>
@@ -220,15 +157,13 @@
     <div class="row" style="margin-top:12px;">
       <div class="flex1">
         <label>Ålder</label>
-<select id="age" data-id="age">
-  <option value="">Välj ålder</option>
-  <option value="7-8">7–8 år</option>
-  <option value="9-10">9–10 år</option>
-  <option value="11-12">11–12 år</option>
-  <option value="13-14">13–14 år</option>
-  <option value="15">15 år</option>
-</select>
-        
+        <select id="age" data-id="age">
+          <option value="">Välj ålder</option>
+          <option value="7-8">7–8 år</option>
+          <option value="9-10">9–10 år</option>
+          <option value="11-12">11–12 år</option>
+          <option value="13-14">13–14 år</option>
+          <option value="15">15 år</option>
         </select>
       </div>
 
@@ -265,7 +200,7 @@
     <!-- Röst-UI: inspelning + transkript -->
     <div style="margin-top:18px;">
       <label class="sr-only" for="transcript">
-        Transkript (läs att använda som prompt)
+        Transkript (text från inspelning)
       </label>
 
       <div class="controls-row">
@@ -359,18 +294,6 @@
       preload="none"
       style="width:100%;"
     ></audio>
-    <!-- Story + audio -->
-    <h3 style="margin-top:18px;">Berättelse</h3>
-    <pre data-id="story" id="story-output"></pre>
-
-    <h3>Uppläsning</h3>
-    <audio
-      data-id="audio"
-      id="tts-audio"
-      controls
-      preload="none"
-      style="width:100%;">
-    </audio>
   </div>
 
   <!-- Ladda recorder-klienten först (om du har den) -->
@@ -394,6 +317,5 @@
   <script src="/story_engine.dev.js"></script>
   <script src="/generateStory.ip.js"></script>
   -->
-
 </body>
 </html>
