@@ -19,7 +19,7 @@ ELEVENLABS_VOICE_ID = "x0u3EW21dbrORJzOq1m9"
 MERCH_API_URL = "https://api.printful.com"
 
 # GOOGLE TTS
-GOOGLE_TTS_PROJECT_ID = ""
+GOOGLE_TTS_PROJECT_ID = "622187657879"
 GOOGLE_TTS_API_KEY = "AIzaSyDymsqhxCh63yXwVK_cya39d-f28K5KfOw"
 
 # Claude (sagor) – automatisk modell (vår kod väljer rätt modell)
