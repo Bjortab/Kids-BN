@@ -1,103 +1,50 @@
-// ==========================================================
-// BN-KIDS — BNWorldState (GC v4.0)
-// - Håller koll på bokens state i localStorage
-// - Används av ws_button.gc.js + backend /api/generate
+// ======================================================================
+// BN-KIDS — WORLDSTATE (GC v6.0)
+// Stabil global state-maskin för kapitelböcker + single sagor.
 //
-// Struktur som sparas:
-// {
-//   meta: {
-//     hero,
-//     age,
-//     ageValue,
-//     ageLabel,
-//     length,
-//     lengthValue,
-//     lengthLabel,
-//     originalPrompt,
-//     totalChapters
-//   },
-//   story_mode: "chapter_book",
-//   chapterIndex: number,
-//   last_prompt: string,
-//   _userPrompt: string,
-//   previousChapters: [string, ...],
-//   previousSummary: string
-// }
+// Viktigt:
+//  - Sparar kapitelnummer, meta, summary och kapitelhistorik
+//  - Förlorar ALDRIG kapiteltråden när prompten inte ändras
+//  - Ger backend rätt context för GC v6 generate.js
+//  - Ingen moral, ingen stil, inga regler här – bara state.
 //
-// Exponeras globalt som: window.BNWorldState
-// ==========================================================
+// ======================================================================
 
 (function (global) {
   "use strict";
 
-  const STORAGE_KEY = "bn_kids_worldstate_v4";
+  const STORAGE_KEY = "bnkids_worldstate_gc_v6";
 
-  function defaultState() {
-    return {
-      meta: {
-        hero: "hjälten",
-        age: "",
-        ageValue: "",
-        ageLabel: "7–8 år",
-        length: "",
-        lengthValue: "",
-        lengthLabel: "Lagom",
-        originalPrompt: "",
-        totalChapters: 8 // standard 8 kapitel tills vi ev. ändrar i UI
-      },
-      story_mode: "chapter_book",
-      chapterIndex: 0,
-      last_prompt: "",
-      _userPrompt: "",
-      previousChapters: [],
-      previousSummary: ""
-    };
-  }
-
-  function safeParse(json) {
-    try {
-      return JSON.parse(json);
-    } catch (_) {
-      return null;
+  const defaultState = () => ({
+    chapterIndex: 0,
+    story_mode: "chapter_book",
+    previousChapters: [],
+    previousSummary: "",
+    last_prompt: "",
+    _userPrompt: "",
+    meta: {
+      hero: "",
+      age: "",
+      ageValue: "",
+      ageLabel: "",
+      length: "",
+      lengthValue: "",
+      lengthLabel: "",
+      totalChapters: 8
     }
-  }
+  });
 
+  // -----------------------------------------------------------
+  // LocalStorage helpers
+  // -----------------------------------------------------------
   function load() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return defaultState();
-      const parsed = safeParse(raw);
-      if (!parsed || typeof parsed !== "object") return defaultState();
-
-      // Se till att obligatoriska fält finns
-      if (!parsed.meta || typeof parsed.meta !== "object") {
-        parsed.meta = defaultState().meta;
-      }
-      if (!Array.isArray(parsed.previousChapters)) {
-        parsed.previousChapters = [];
-      }
-      if (typeof parsed.previousSummary !== "string") {
-        parsed.previousSummary = "";
-      }
-      if (typeof parsed.chapterIndex !== "number") {
-        parsed.chapterIndex = 0;
-      }
-      if (typeof parsed.last_prompt !== "string") {
-        parsed.last_prompt = "";
-      }
-      if (typeof parsed._userPrompt !== "string") {
-        parsed._userPrompt = parsed.last_prompt || "";
-      }
-      if (typeof parsed.story_mode !== "string") {
-        parsed.story_mode = "chapter_book";
-      }
-      if (!parsed.meta.totalChapters) {
-        parsed.meta.totalChapters = 8;
-      }
-
-      return parsed;
-    } catch (e) {
-      console.warn("[BNWorldState] kunde inte läsa state, återställer", e);
+      const parsed = JSON.parse(raw);
+      return Object.assign(defaultState(), parsed);
+    } catch (err) {
+      console.warn("[WS GC] load-fel → återställer", err);
       return defaultState();
     }
   }
@@ -105,78 +52,75 @@
   function save(state) {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    } catch (e) {
-      console.warn("[BNWorldState] kunde inte spara state", e);
+    } catch (err) {
+      console.warn("[WS GC] save-fel", err);
     }
   }
+
+  // -----------------------------------------------------------
+  // API
+  // -----------------------------------------------------------
 
   function reset() {
-    const st = defaultState();
-    save(st);
-    return st;
-  }
-
-  function updateMeta(metaPatch) {
-    const st = load();
-    st.meta = Object.assign({}, st.meta, metaPatch || {});
-    save(st);
-    return st;
-  }
-
-  function updatePrompt(prompt) {
-    const st = load();
-    const p = (prompt || "").trim();
-    st.last_prompt = p;
-    st._userPrompt = p;
-    if (!st.meta.originalPrompt) {
-      st.meta.originalPrompt = p;
-    }
-    save(st);
-    return st;
+    const s = defaultState();
+    save(s);
+    return load();
   }
 
   function nextChapter() {
-    const st = load();
-    if (!st.chapterIndex || st.chapterIndex < 1) {
-      st.chapterIndex = 1;
-    } else {
-      st.chapterIndex += 1;
+    const s = load();
+    s.chapterIndex = Number(s.chapterIndex || 0) + 1;
+    save(s);
+  }
+
+  function updatePrompt(newPrompt) {
+    const s = load();
+    const trimmed = String(newPrompt || "").trim();
+
+    // Viktigt: om samma prompt → ändra INTE last_prompt
+    // annars tror AI:n att ny bok börjar.
+    if (trimmed && trimmed !== s.last_prompt) {
+      s.last_prompt = trimmed;
     }
-    save(st);
-    return st;
+
+    s._userPrompt = trimmed;
+    save(s);
   }
 
-  function addChapterToHistory(chapterText) {
-    const st = load();
-    if (!Array.isArray(st.previousChapters)) {
-      st.previousChapters = [];
+  function addChapterToHistory(text) {
+    const s = load();
+    if (text && typeof text === "string") {
+      s.previousChapters.push(text.trim());
     }
-    st.previousChapters.push(String(chapterText || ""));
-    save(st);
-    return st;
+    save(s);
   }
 
-  function updateSummary(summary) {
-    const st = load();
-    st.previousSummary = String(summary || "");
-    save(st);
-    return st;
+  function updateSummary(summaryText) {
+    const s = load();
+    s.previousSummary = summaryText || "";
+    save(s);
   }
 
-  // För felsökning vid behov
-  function debugDump() {
-    return load();
+  function updateMeta(metaObj) {
+    const s = load();
+    s.meta = Object.assign({}, s.meta, metaObj || {});
+    save(s);
   }
+
+  // -----------------------------------------------------------
+  // Exponera
+  // -----------------------------------------------------------
 
   global.BNWorldState = {
     load,
     save,
     reset,
-    updateMeta,
-    updatePrompt,
     nextChapter,
+    updatePrompt,
     addChapterToHistory,
     updateSummary,
-    debugDump
+    updateMeta
   };
+
+  console.log("worldstate.gc.js laddad (GC v6.0)");
 })(window);
