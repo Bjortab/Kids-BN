@@ -1,31 +1,26 @@
 // ==========================================================
-// BN-KIDS — WS BUTTON (GC v4.0)
-// - Kopplar UI:t till BNWorldState + backend /api/generate
-// - Hanterar kapitelIndex, prompt-flöde, recap-historik
-// - Request-lock: inga dubbla svar som skriver över varandra
+// BN-KIDS — WS BUTTON (GC v6.0)
+// Kopplar UI → BNWorldState (GC v6) → backend /api/generate
 //
-// Förväntar sig i DOM:
-// - [data-id="btn-create"]  (Skapa saga / nästa kapitel)
-// - [data-id="prompt"]      (barnets input)
-// - [data-id="story"]       (ut-texten)
-// - [data-id="spinner"]     (ladd-indikator)
-// - [data-id="error"]       (felmeddelande)
-// - #hero, #age, #length    (formfält)
-// - #clear-transcript       (Rensa-knapp)
+// Fokus:
+// - Stabil kapitelkänsla (ingen omstart om prompten är samma)
+// - Rätt meta (ålder, längd, hjälte, totalChapters)
+// - Spinner + felhantering
+// - Både "Skapa saga" och "Skapa saga (WS dev)" funkar
 //
-// Kräver att worldstate.gc.js är laddad före denna fil.
-// Backend: functions/generate.js → POST /api/generate
+// Kräver:
+//  - worldstate.gc.js (GC v6.0) laddad före denna
+//  - Cloudflare Pages Function: /api/generate (GC v6.x)
 // ==========================================================
 
 (function (global) {
   "use strict";
 
-  const log = (...args) => console.log("[WS GC]", ...args);
+  const log = (...args) => console.log("[WS GC v6]", ...args);
 
   const BNWorldState = global.BNWorldState;
-
   if (!BNWorldState) {
-    console.error("[WS GC] BNWorldState saknas – kontrollera worldstate.gc.js");
+    console.error("[WS GC v6] BNWorldState saknas – kontrollera worldstate.gc.js");
   }
 
   let latestRequestId = 0;
@@ -44,18 +39,37 @@
   function setSpinner(active, msg) {
     const spinner = $('[data-id="spinner"]');
     const errorEl = $('[data-id="error"]');
-    if (spinner) spinner.style.display = active ? "flex" : "none";
+
+    if (spinner) {
+      spinner.dataset.active = active ? "1" : "0";
+      spinner.style.display = active ? "block" : "none";
+      const textSpan = spinner.querySelector('[data-id="spinner-text"]');
+      if (textSpan && msg) textSpan.textContent = msg;
+    }
+
     if (errorEl) {
-      if (msg) errorEl.textContent = msg;
-      else if (!active) errorEl.textContent = "";
+      if (active) {
+        // rensa fel när vi startar nytt anrop
+        errorEl.textContent = "";
+        errorEl.style.display = "none";
+      } else if (!active && !errorEl.textContent) {
+        errorEl.style.display = "none";
+      }
     }
   }
 
+  function showError(msg) {
+    const errorEl = $('[data-id="error"]');
+    if (!errorEl) return;
+    errorEl.textContent = msg || "Något gick fel.";
+    errorEl.style.display = "block";
+  }
+
   function getFormValues() {
-    const heroInput = document.getElementById("hero");
-    const ageSel = document.getElementById("age");
-    const lengthSel = document.getElementById("length");
-    const promptEl = $('[data-id="prompt"]');
+    const heroInput = document.getElementById("hero") || $('[data-id="hero"]');
+    const ageSel = document.getElementById("age") || $('[data-id="age"]');
+    const lengthSel = document.getElementById("length") || $('[data-id="length"]');
+    const promptEl = document.getElementById("prompt") || $('[data-id="prompt"]');
 
     const hero =
       heroInput && heroInput.value ? heroInput.value.trim() : "";
@@ -67,7 +81,7 @@
       ageSel.selectedOptions[0] &&
       ageSel.selectedOptions[0].textContent
         ? ageSel.selectedOptions[0].textContent.trim()
-        : ageValue || "7–8 år";
+        : ageValue || "9–10 år";
 
     const lengthValue =
       lengthSel && lengthSel.value ? lengthSel.value : "";
@@ -77,7 +91,7 @@
       lengthSel.selectedOptions[0] &&
       lengthSel.selectedOptions[0].textContent
         ? lengthSel.selectedOptions[0].textContent.trim()
-        : lengthValue || "Lagom";
+        : lengthValue || "Medium";
 
     const prompt =
       promptEl && promptEl.value ? promptEl.value.trim() : "";
@@ -92,7 +106,6 @@
     };
   }
 
-  // Kort sammanfattning att lägga i worldstate.previousSummary
   function makeShortSummary(chapterText) {
     if (!chapterText) return "";
     const clean = chapterText.replace(/\s+/g, " ").trim();
@@ -100,85 +113,101 @@
     return clean.slice(0, 320) + " …";
   }
 
-  // -------------------------------------------------------
-  // Reset-knapp → rensa story + worldstate
-  // -------------------------------------------------------
+  // Rensa-knapp → nollställ worldstate + text
   function hookResetButton() {
-    const clearBtn = document.getElementById("clear-transcript");
+    // Stöd både id="clear-transcript" och data-id="btn-clear-transcript"
+    const clearBtn =
+      document.getElementById("clear-transcript") ||
+      $('[data-id="btn-clear-transcript"]');
+
     const storyEl =
-      $('[data-id="story"]') || document.getElementById("story");
+      $('[data-id="story"]') || document.getElementById("story-output");
+
     if (!clearBtn) {
-      log("hittar ingen Rensa-knapp (clear-transcript)");
+      log("Hittar ingen Rensa-knapp (clear-transcript / btn-clear-transcript)");
       return;
     }
+
     clearBtn.addEventListener("click", () => {
       try {
         if (BNWorldState && typeof BNWorldState.reset === "function") {
           BNWorldState.reset();
         }
         if (storyEl) storyEl.textContent = "";
-        const promptEl = $('[data-id="prompt"]');
+        const promptEl =
+          document.getElementById("prompt") || $('[data-id="prompt"]');
         if (promptEl) promptEl.value = "";
         log("Worldstate + text reset via Rensa-knappen");
       } catch (e) {
-        console.warn("[WS GC] reset via Rensa misslyckades", e);
+        console.warn("[WS GC v6] reset via Rensa misslyckades", e);
       }
     });
   }
 
-  // -------------------------------------------------------
-  // Bind create/next-chapter-knappen
-  // -------------------------------------------------------
-  function bindCreateButton() {
-    const btn = $('[data-id="btn-create"]');
-    if (!btn) {
-      log("hittar inte btn-create i DOM:en");
+  function bindCreateButtons() {
+    const btnMain = $('[data-id="btn-create"]');
+    const btnDev = $('[data-id="btn-ws-dev"]');
+
+    if (!btnMain && !btnDev) {
+      log("Hittar varken btn-create eller btn-ws-dev i DOM:en");
       return;
     }
-    btn.addEventListener("click", handleCreateClick);
-    log("Skapa/kapitel-knapp bunden");
+
+    if (btnMain) {
+      btnMain.addEventListener("click", (e) => {
+        e.preventDefault();
+        handleCreateClick({ mode: "normal" });
+      });
+    }
+
+    if (btnDev) {
+      // WS dev kör exakt samma kedja, bara extra logg
+      btnDev.addEventListener("click", (e) => {
+        e.preventDefault();
+        log("WS DEV-läge aktiverat (samma motor, extra logg).");
+        handleCreateClick({ mode: "dev" });
+      });
+    }
+
+    log("Skapa/kapitel-knappar bundna");
   }
 
   // -------------------------------------------------------
-  // HUVUD: klick på skapa/kapitel-knappen
+  // HUVUD: klick på "Skapa saga" / "Skapa saga (WS dev)"
   // -------------------------------------------------------
-  async function handleCreateClick(ev) {
-    ev.preventDefault();
-
+  async function handleCreateClick({ mode } = { mode: "normal" }) {
     if (!BNWorldState) {
-      console.error("[WS GC] BNWorldState saknas, kan inte fortsätta.");
+      console.error("[WS GC v6] BNWorldState saknas, kan inte fortsätta.");
+      showError("Tekniskt fel: worldstate saknas.");
       return;
     }
 
-    const createBtn = $('[data-id="btn-create"]');
+    const btnMain = $('[data-id="btn-create"]');
+    const btnDev = $('[data-id="btn-ws-dev"]');
     const storyEl =
-      $('[data-id="story"]') || document.getElementById("story");
-    const errorEl = $('[data-id="error"]');
+      $('[data-id="story"]') || document.getElementById("story-output");
 
-    if (errorEl) errorEl.textContent = "";
+    const { hero, ageValue, ageLabel, lengthValue, lengthLabel, prompt } =
+      getFormValues();
 
-    const {
-      hero,
-      ageValue,
-      ageLabel,
-      lengthValue,
-      lengthLabel,
-      prompt
-    } = getFormValues();
-
-    // 1) Ladda befintligt worldstate
+    // 1) Läs befintligt state
     let ws = BNWorldState.load();
-
     const hasHistory =
-      ws.previousChapters &&
-      Array.isArray(ws.previousChapters) &&
-      ws.previousChapters.length > 0;
+      ws.previousChapters && Array.isArray(ws.previousChapters) && ws.previousChapters.length > 0;
 
     const isNewBook = !hasHistory;
 
-    // 2) Ny bok → reset + sätt meta + första prompt
+    // 2) Om ny bok → reset + sätt meta + prompt + chapterIndex 1
     if (isNewBook) {
       ws = BNWorldState.reset();
+
+      // totalChapters efter längd-val
+      let totalChapters = 8;
+      const lv = (lengthValue || "").toLowerCase();
+      if (lv.includes("short")) totalChapters = 6;
+      else if (lv.includes("long")) totalChapters = 12;
+      else totalChapters = 9;
+
       ws.meta.hero = hero;
       ws.meta.age = ageValue || ageLabel;
       ws.meta.ageValue = ageValue || "";
@@ -186,92 +215,107 @@
       ws.meta.length = lengthValue || lengthLabel;
       ws.meta.lengthValue = lengthValue || "";
       ws.meta.lengthLabel = lengthLabel;
-      ws.meta.originalPrompt = prompt || "";
-      ws.meta.totalChapters = ws.meta.totalChapters || 10; // t.ex. 10 kap som standard
+      ws.meta.totalChapters = totalChapters;
+
       ws.story_mode = "chapter_book";
-      ws.chapterIndex = 0; // startar på 0, vi höjer till 1 nedan
+      ws.chapterIndex = 1;
+      ws.previousChapters = [];
+      ws.previousSummary = "";
 
       BNWorldState.updateMeta(ws.meta);
       BNWorldState.updatePrompt(prompt || "");
-      ws = BNWorldState.nextChapter(); // kapitelIndex = 1
+      ws = BNWorldState.load();
+
+      log("Ny bok initierad:", {
+        hero: ws.meta.hero,
+        age: ws.meta.age,
+        length: ws.meta.length,
+        totalChapters: ws.meta.totalChapters
+      });
     } else {
       // Fortsättning på befintlig bok
-      ws.meta.hero = hero || ws.meta.hero || "hjälten";
-      ws.meta.age = ageValue || ws.meta.age || ageLabel;
-      ws.meta.ageValue = ageValue || ws.meta.ageValue || "";
-      ws.meta.ageLabel = ageLabel || ws.meta.ageLabel || "7–8 år";
-      ws.meta.length = lengthValue || ws.meta.length || lengthLabel;
-      ws.meta.lengthValue =
-        lengthValue || ws.meta.lengthValue || "";
-      ws.meta.lengthLabel =
-        lengthLabel || ws.meta.lengthLabel || "Lagom";
+      // Uppdatera meta vid behov (om användaren ändrat ålder/längd mitt i)
+      BNWorldState.updateMeta({
+        hero,
+        age: ageValue || ageLabel,
+        ageValue,
+        ageLabel,
+        length: lengthValue || lengthLabel,
+        lengthValue,
+        lengthLabel
+      });
 
-      BNWorldState.updateMeta(ws.meta);
-
-      // Om prompten ändrats → uppdatera
-      if (prompt && prompt !== ws.last_prompt) {
-        ws = BNWorldState.updatePrompt(prompt);
+      // Prompt-hantering:
+      // - Ny prompt (skiljer sig) → updatePrompt (uppdaterar last_prompt + _userPrompt)
+      // - Tom prompt → lämna last_prompt, men uppdatera _userPrompt
+      // - Samma prompt → uppdatera _userPrompt men inte last_prompt
+      if (prompt) {
+        BNWorldState.updatePrompt(prompt);
+      } else {
+        // Sätt bara _userPrompt till senaste last_prompt (för säkerhets skull)
+        BNWorldState.updatePrompt(ws.last_prompt || "");
       }
 
-      // Öka kapitelindex
-      ws = BNWorldState.nextChapter();
+      BNWorldState.nextChapter();
+      ws = BNWorldState.load();
+      log("Fortsätter befintlig bok, kapitel:", ws.chapterIndex);
     }
 
     const currentChapterIndex = ws.chapterIndex || 1;
+    const storyMode = ws.story_mode || "chapter_book";
 
-    // Request-lock
+    // 3) Request-lock
     const myRequestId = ++latestRequestId;
-    log("RequestId:", myRequestId, "kapitel:", currentChapterIndex);
-
     setSpinner(true, "Skapar kapitel …");
-    if (createBtn) createBtn.disabled = true;
+    if (btnMain) btnMain.disabled = true;
+    if (btnDev) btnDev.disabled = true;
 
     try {
-      // 3) Bygg payload till backend /api/generate
-      const body = {
-        prompt: ws._userPrompt || ws.last_prompt || "",
-        heroName: ws.meta.hero || "hjälten",
-        age: ws.meta.ageValue || ws.meta.ageLabel || "7–8 år",
-        lengthPreset: ws.meta.lengthValue || ws.meta.lengthLabel || "medium",
-        storyMode: ws.story_mode || "chapter_book",
+      const apiBody = {
+        prompt: ws._userPrompt || ws.last_prompt || prompt || "",
+        heroName: ws.meta.hero || hero,
+        ageGroupRaw: ws.meta.age || ageValue || ageLabel,
+        lengthPreset: ws.meta.lengthValue || ws.meta.length || lengthValue || "medium",
+        storyMode,
         chapterIndex: currentChapterIndex,
         worldState: ws,
-        totalChapters: ws.meta.totalChapters || 10
+        totalChapters: ws.meta.totalChapters || 8
       };
+
+      if (!apiBody.prompt) {
+        throw new Error("Barnets idé/prompt saknas.");
+      }
 
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json"
+          "Content-Type": "application/json"
         },
-        body: JSON.stringify(body)
+        body: JSON.stringify(apiBody)
       });
 
-      const rawText = await res.text();
-      let data;
-      try {
-        data = JSON.parse(rawText);
-      } catch (e) {
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
         throw new Error(
-          "Kunde inte tolka JSON-svar: " + rawText.slice(0, 200)
+          "Fel från /api/generate (" + res.status + "): " + txt.slice(0, 300)
         );
       }
 
-      if (!data || !data.ok) {
+      const data = await res.json().catch(() => ({}));
+      if (!data || data.ok === false) {
         throw new Error(
-          data && data.error
-            ? data.error
-            : "Okänt fel från /api/generate"
+          data && data.error ? data.error : "Okänt fel från motorn."
         );
       }
 
-      const chapterText = data.story || "";
+      const chapterText =
+        (data.story && String(data.story).trim()) || "";
+
       if (!chapterText) {
-        throw new Error("Tomt kapitel tillbaka från motorn.");
+        throw new Error("Tomt svar från berättelsemotorn.");
       }
 
-      // 4) Kolla request-lock (ignorera gamla svar)
+      // 4) Request-lock check: ignorera föråldrade svar
       if (myRequestId !== latestRequestId) {
         log(
           "Ignorerar föråldrat svar. Mitt:",
@@ -282,12 +326,12 @@
         return;
       }
 
-      // 5) Skriv till UI
+      // 5) Skriv ut i UI
       if (storyEl) {
         storyEl.textContent = chapterText;
       }
 
-      // 6) Uppdatera worldstate: historik + short summary
+      // 6) Uppdatera worldstate med kapitel + summary
       BNWorldState.addChapterToHistory(chapterText);
       const shortSummary = makeShortSummary(chapterText);
       BNWorldState.updateSummary(shortSummary);
@@ -295,19 +339,19 @@
       log(
         "Kapitel klart:",
         currentChapterIndex,
-        "längd:",
+        "längd (tecken):",
         chapterText.length
       );
     } catch (err) {
-      console.error("[WS GC] fel:", err);
-      if (errorEl) {
-        errorEl.textContent =
-          "Något gick fel när kapitlet skulle skapas: " +
-          (err.message || err);
-      }
+      console.error("[WS GC v6] fel:", err);
+      showError(
+        "Något gick fel när kapitlet skulle skapas: " +
+          (err.message || String(err))
+      );
     } finally {
       setSpinner(false);
-      if (createBtn) createBtn.disabled = false;
+      if (btnMain) btnMain.disabled = false;
+      if (btnDev) btnDev.disabled = false;
     }
   }
 
@@ -315,7 +359,8 @@
   // Init
   // -------------------------------------------------------
   window.addEventListener("DOMContentLoaded", function () {
-    bindCreateButton();
+    bindCreateButtons();
     hookResetButton();
+    log("ws_button.gc.js laddad (GC v6.0)");
   });
 })(window);
