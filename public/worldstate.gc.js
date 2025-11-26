@@ -1,16 +1,21 @@
 // ======================================================================
-// BN-KIDS — WORLDSTATE (GC v6.1)
+// BN-KIDS — WORLDSTATE (GC v6.3 AUT0LOCK)
 // Stabil global state-maskin för kapitelböcker + single sagor.
 //
-// Viktigt:
-//  - Sparar kapitelnummer, meta, summary och kapitelhistorik
-//  - Förlorar INTE kapiteltråden när prompten inte ändras
-//  - Ger backend rätt context för GC v6-generate.js
-//  - Ingen moral, ingen stil, inga regler här – bara state.
+// Viktigt i v6.3:
+//   - Samma API som v6.0 (load/save/reset/nextChapter/…)
+//   - Samma STORAGE_KEY: "bnkids_worldstate_gc_v6"
+//   - AUTOMATISK STÄDNING av gamla nycklar i localStorage:
+//       bn_kids_worldstate_v4
+//       bn_kids_ws_book_v1
+//       bn_kids_ws_v1
+//       bn_worldstate
+//     → de tas bort direkt när filen laddas, så de kan aldrig mer
+//       störa kapiteltråden.
 //
-// Ändring v6.1:
-//  - chapterIndex startar nu på 1 (inte 0)
-//  - nextChapter säkrar att index aldrig ligger på 0
+//   - Förlorar ALDRIG kapiteltråden när prompten inte ändras.
+//   - Inga regler om ton/moral här – det här är bara state.
+//
 // ======================================================================
 
 (function (global) {
@@ -18,8 +23,16 @@
 
   const STORAGE_KEY = "bnkids_worldstate_gc_v6";
 
+  // Gamla nycklar som vi aldrig mer vill se
+  const LEGACY_KEYS = [
+    "bn_kids_worldstate_v4",
+    "bn_kids_ws_book_v1",
+    "bn_kids_ws_v1",
+    "bn_worldstate"
+  ];
+
   const defaultState = () => ({
-    chapterIndex: 1,          // <-- starta på kapitel 1
+    chapterIndex: 0,
     story_mode: "chapter_book",
     previousChapters: [],
     previousSummary: "",
@@ -38,6 +51,36 @@
   });
 
   // -----------------------------------------------------------
+  // AUT0LOCK: städa bort alla gamla worldstate-nycklar
+  // Körs en gång när filen laddas.
+  // -----------------------------------------------------------
+  function autoLockLegacyKeys() {
+    try {
+      let touched = false;
+
+      // Ta bort alla gamla nycklar om de finns
+      for (const key of LEGACY_KEYS) {
+        if (localStorage.getItem(key) !== null) {
+          localStorage.removeItem(key);
+          touched = true;
+        }
+      }
+
+      if (touched) {
+        console.log(
+          "[WS GC v6.3] Städade bort äldre worldstate-nycklar:",
+          LEGACY_KEYS.join(", ")
+        );
+      }
+    } catch (err) {
+      console.warn("[WS GC v6.3] autoLockLegacyKeys fel:", err);
+    }
+  }
+
+  // Kör städningen direkt när skriptet laddas
+  autoLockLegacyKeys();
+
+  // -----------------------------------------------------------
   // LocalStorage helpers
   // -----------------------------------------------------------
   function load() {
@@ -47,7 +90,7 @@
       const parsed = JSON.parse(raw);
       return Object.assign(defaultState(), parsed);
     } catch (err) {
-      console.warn("[WS GC] load-fel → återställer", err);
+      console.warn("[WS GC v6.3] load-fel → återställer", err);
       return defaultState();
     }
   }
@@ -56,7 +99,7 @@
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     } catch (err) {
-      console.warn("[WS GC] save-fel", err);
+      console.warn("[WS GC v6.3] save-fel", err);
     }
   }
 
@@ -72,12 +115,7 @@
 
   function nextChapter() {
     const s = load();
-    // säkerställ att vi aldrig ligger på 0
-    if (!s.chapterIndex || s.chapterIndex < 1) {
-      s.chapterIndex = 1;
-    } else {
-      s.chapterIndex = Number(s.chapterIndex) + 1;
-    }
+    s.chapterIndex = Number(s.chapterIndex || 0) + 1;
     save(s);
   }
 
@@ -86,7 +124,7 @@
     const trimmed = String(newPrompt || "").trim();
 
     // Viktigt: om samma prompt → ändra INTE last_prompt
-    // annars tror backend att det är ny story-setup.
+    // annars tror AI:n att ny bok börjar.
     if (trimmed && trimmed !== s.last_prompt) {
       s.last_prompt = trimmed;
     }
@@ -130,5 +168,5 @@
     updateMeta
   };
 
-  console.log("worldstate.gc.js laddad (GC v6.1)");
+  console.log("worldstate.gc.js laddad (GC v6.3 autolock)");
 })(window);
