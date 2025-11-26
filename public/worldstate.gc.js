@@ -1,13 +1,16 @@
 // ======================================================================
-// BN-KIDS — WORLDSTATE (GC v6.0)
+// BN-KIDS — WORLDSTATE (GC v6.1)
 // Stabil global state-maskin för kapitelböcker + single sagor.
 //
 // Viktigt:
 //  - Sparar kapitelnummer, meta, summary och kapitelhistorik
-//  - Förlorar ALDRIG kapiteltråden när prompten inte ändras
-//  - Ger backend rätt context för GC v6 generate.js
+//  - Förlorar INTE kapiteltråden när prompten inte ändras
+//  - Ger backend rätt context för GC v6-generate.js
 //  - Ingen moral, ingen stil, inga regler här – bara state.
 //
+// Ändring v6.1:
+//  - chapterIndex startar nu på 1 (inte 0)
+//  - nextChapter säkrar att index aldrig ligger på 0
 // ======================================================================
 
 (function (global) {
@@ -16,7 +19,7 @@
   const STORAGE_KEY = "bnkids_worldstate_gc_v6";
 
   const defaultState = () => ({
-    chapterIndex: 0,
+    chapterIndex: 1,          // <-- starta på kapitel 1
     story_mode: "chapter_book",
     previousChapters: [],
     previousSummary: "",
@@ -69,7 +72,12 @@
 
   function nextChapter() {
     const s = load();
-    s.chapterIndex = Number(s.chapterIndex || 0) + 1;
+    // säkerställ att vi aldrig ligger på 0
+    if (!s.chapterIndex || s.chapterIndex < 1) {
+      s.chapterIndex = 1;
+    } else {
+      s.chapterIndex = Number(s.chapterIndex) + 1;
+    }
     save(s);
   }
 
@@ -78,7 +86,7 @@
     const trimmed = String(newPrompt || "").trim();
 
     // Viktigt: om samma prompt → ändra INTE last_prompt
-    // annars tror AI:n att ny bok börjar.
+    // annars tror backend att det är ny story-setup.
     if (trimmed && trimmed !== s.last_prompt) {
       s.last_prompt = trimmed;
     }
@@ -122,5 +130,5 @@
     updateMeta
   };
 
-  console.log("worldstate.gc.js laddad (GC v6.0)");
+  console.log("worldstate.gc.js laddad (GC v6.1)");
 })(window);
