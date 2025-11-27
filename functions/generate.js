@@ -1,10 +1,10 @@
 // functions/generate.js
 // Pages Function: POST /api/generate
 //
-// BN-KIDS GC v8.2 – STORY ENGINE-INTEGRATION
-// - Om requesten kommer från nya story_engine.gc.js (har storyEngineVersion)
-//   → använd prompten rakt av i ENGINE-LÄGE (ingen gammal BN-flow-mall).
-// - Annars → använd legacy-läge (gamla BN-flow) för kompatibilitet.
+// BN-KIDS GC v9.0
+// - Enkel, stabil version utan ”engine-läge-trix”
+// - Mindre floskler (förbjuder klassiska öppningar och klyschor)
+// - Starkare kapitelkontinuitet: fortsätt där förra kapitlet slutade
 
 export async function onRequestOptions({ env }) {
   const origin =
@@ -108,77 +108,10 @@ export async function onRequestPost({ request, env }) {
     const model = env.OPENAI_MODEL || "gpt-4o-mini";
 
     // ------------------------------------------------------
-    // ENGINE-LÄGE? (ny story_engine v10.x)
+    // Kapitelroll & historik
     // ------------------------------------------------------
-    const engineVersion =
-      body.storyEngineVersion ||
-      body.story_engine_version ||
-      worldState.storyEngineVersion;
-
-    const promptStr = String(promptRaw || "");
-    const hasEngineMarker =
-      typeof engineVersion === "string" &&
-      engineVersion.includes("bn-story-engine-gc");
-
-    const looksLikeEnginePrompt =
-      /=== REGLER FÖR DETTA KAPITEL ===/i.test(promptStr) ||
-      /=== BARNETS SENASTE ÖNSKAN \/ PROMPT ===/i.test(promptStr);
-
-    const isEnginePrompt = hasEngineMarker || looksLikeEnginePrompt;
-
-    if (isEnginePrompt) {
-      // ENGINE-LÄGE:
-      // - Frontend-motorn har byggt en komplett superprompt
-      // - Backend lägger bara på en tunn, säkerhetsfokuserad systemprompt
-      // - INGA extra "börja i vardagen"-instruktioner
-
-      const engineSystemPrompt = buildSystemPrompt_BNKids_engineMode(ageKey);
-
-      const payload = {
-        model,
-        temperature: 0.6, // lite lägre för stabilitet/lydnad
-        max_tokens: maxTokens,
-        messages: [
-          { role: "system", content: engineSystemPrompt },
-          { role: "user", content: promptStr }
-        ]
-      };
-
-      const res = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${env.OPENAI_API_KEY}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(payload)
-      });
-
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        return json(
-          {
-            ok: false,
-            error: "OpenAI-fel",
-            details: text.slice(0, 500)
-          },
-          502,
-          origin
-        );
-      }
-
-      const data = await res.json();
-      const story =
-        data.choices?.[0]?.message?.content?.trim() || "";
-
-      return json({ ok: true, story }, 200, origin);
-    }
-
-    // ------------------------------------------------------
-    // LEGACY-LÄGE (utan engine-prompt)
-    // Behåller ditt gamla BN-flow så att äldre klienter funkar.
-    // ------------------------------------------------------
-
-    const userWantsEnd = /avslut|knyt ihop|slut(et)?/i.test(promptStr || "");
+    const userPromptStr = String(promptRaw || "");
+    const userWantsEnd = /avslut|knyt ihop|slut(et)?/i.test(userPromptStr);
 
     let chapterRole;
     if (!storyMode || storyMode === "single_story") {
@@ -205,15 +138,31 @@ export async function onRequestPost({ request, env }) {
       .slice(-3)
       .join("\n\n");
 
+    const lastChapterText =
+      previousChapters.length > 0
+        ? String(previousChapters[previousChapters.length - 1] || "")
+        : "";
+
+    // Sista biten av förra kapitlet som ankare
+    const lastChapterEnding = lastChapterText
+      ? shorten(lastChapterText.slice(-400), 400)
+      : "";
+
     const effectivePrompt =
-      promptStr && promptStr.trim()
-        ? promptStr.trim()
+      userPromptStr && userPromptStr.trim()
+        ? userPromptStr.trim()
         : (worldState._userPrompt ||
            worldState.last_prompt ||
            "");
 
-    const systemPrompt = buildSystemPrompt_BNKids_v7(ageKey);
+    // ------------------------------------------------------
+    // SYSTEMPROMPT – BN-Kids stil + anti-floskler
+    // ------------------------------------------------------
+    const systemPrompt = buildSystemPrompt_BNKids_v9(ageKey);
 
+    // ------------------------------------------------------
+    // USERPROMPT – barnets idé + worldstate + kapitelroll
+    // ------------------------------------------------------
     const lines = [];
 
     // Barnets idé
@@ -234,7 +183,7 @@ export async function onRequestPost({ request, env }) {
     }
     lines.push("");
 
-    // Sammanfattning + historik
+    // Historik / sammanfattning
     if (storyMode === "chapter_book") {
       if (previousSummary) {
         lines.push(
@@ -256,38 +205,42 @@ export async function onRequestPost({ request, env }) {
       }
     }
 
+    // Extra ankare: slutet på förra kapitlet
+    if (storyMode === "chapter_book" && chapterIndex > 1 && lastChapterEnding) {
+      lines.push("Här är slutet på det senaste kapitlet. Du ska fortsätta direkt efter detta, utan att starta om:");
+      lines.push(lastChapterEnding);
+      lines.push("");
+    }
+
     // Kapitelroll-instruktioner
     lines.push(`Kapitelroll just nu: ${chapterRole}.`);
 
     if (chapterRole === "chapter_1" && storyMode === "chapter_book") {
       lines.push(
-        "Kapitel 1 ska börja i vardagen: visa plats, tid och en enkel aktivitet innan magi/äventyr eller huvudproblemet dyker upp."
+        "Kapitel 1 ska introducera vardagen, huvudpersonen och första fröet till problemet eller äventyret."
       );
       lines.push(
-        "Barnets idé ska vävas in gradvis – inte allt på första meningen."
+        "Du får gärna börja lugnt, men variera inledningen och undvik klichéer som 'Det var en solig dag' eller 'I den lilla byn'."
       );
     } else if (chapterRole === "chapter_middle" && storyMode === "chapter_book") {
       lines.push(
-        "Detta är ett mittenkapitel. Fortsätt samma huvudmål som tidigare."
+        "Detta är ett mittenkapitel. Fortsätt samma huvudmål som tidigare, med ett tydligt hinder eller delmål."
       );
       lines.push(
-        "Visa ett tydligt delmål eller hinder på vägen, men introducera inte en helt ny huvudkonflikt."
+        "Starta INTE om berättelsen. Hoppa inte tillbaka i tiden och skriv inte en ny 'det var en solig eftermiddag'-scen."
       );
       lines.push(
-        "Upprepa inte exakt samma händelse (t.ex. springa över samma bro igen utan förklaring). För handlingen framåt."
+        "Fortsätt där förra kapitlet slutade, i samma situation, så att det känns som ett naturligt nästa steg."
       );
     } else if (chapterRole === "chapter_final" && storyMode === "chapter_book") {
       lines.push(
-        "Detta ska vara ett avslutande kapitel i samma bok, med samma karaktärer och samma huvudmål."
+        "Detta är ett avslutande kapitel i samma bok, med samma karaktärer och samma huvudmål."
       );
       lines.push(
-        "Du får INTE starta en ny berättelse eller hoppa till en helt ny plats som inte förberetts."
+        "Introducera inte stora nya karaktärer eller ett helt nytt huvudproblem."
       );
       lines.push(
         "Knyt ihop de viktigaste trådarna och lös huvudkonflikten tydligt och barnvänligt."
-      );
-      lines.push(
-        "Avsluta varmt och hoppfullt men utan moral-predikningar."
       );
     }
 
@@ -297,23 +250,17 @@ export async function onRequestPost({ request, env }) {
     if (storyMode === "chapter_book" && chapterIndex > 1) {
       if (promptChanged) {
         lines.push(
-          "Viktigt: Barnet har nu ändrat eller lagt till en ny önskan för JUST DETTA KAPITEL."
+          "Viktigt: Barnet har ändrat eller lagt till en ny önskan för JUST DETTA KAPITEL."
         );
         lines.push(
-          "Du ska FORTSÄTTA samma bok, men låta denna nya önskan styra vad som händer nu."
-        );
-        lines.push(
-          "Du får INTE börja om från början – allt som hänt i tidigare kapitel gäller fortfarande."
+          "Fortsätt samma bok och samma pågående situation, men låt den nya önskan styra vad som händer nu."
         );
       } else {
         lines.push(
           "Viktigt: Barnet har INTE ändrat prompten sedan förra kapitlet."
         );
         lines.push(
-          "Fortsätt exakt där förra kapitlet slutade. Starta inte om, hoppa inte tillbaka och hitta inte på en ny huvudberättelse."
-        );
-        lines.push(
-          "Ingen repetition av 'början på äventyret' – gå vidare framåt i samma story."
+          "Fortsätt direkt där förra kapitlet slutade. Starta inte om med en ny dag, ny koja eller ny 'första scen'."
         );
       }
       lines.push("");
@@ -328,6 +275,9 @@ export async function onRequestPost({ request, env }) {
 
     const userPrompt = lines.join("\n");
 
+    // ------------------------------------------------------
+    // OpenAI-anrop
+    // ------------------------------------------------------
     const payload = {
       model,
       temperature: 0.7,
@@ -443,48 +393,37 @@ function getLengthInstructionAndTokens(ageKey, lengthPreset) {
   return { lengthInstruction, maxTokens };
 }
 
-// Minimal, säker systemprompt för ENGINE-LÄGE (story_engine v10.x)
-function buildSystemPrompt_BNKids_engineMode(ageKey) {
+// Ny systemprompt – utan tvingad ”börja i vardagen”-mall och med anti-floskler
+function buildSystemPrompt_BNKids_v9(ageKey) {
   return `
-Du är en professionell barnboksförfattare som skriver på svenska för barn i åldersgruppen ${ageKey}.
-Du kommer att få en detaljerad instruktion med regler, tidigare kapitel och barnets idé.
-Följ dessa instruktioner mycket noggrant.
-
-- Anpassa språk, tempo och komplexitet till åldersgruppen.
-- Håll tonen trygg och varm, utan skräck eller grovt innehåll.
-- Respektera berättelsens kontinuitet: ändra inte tillbaka tiden, byt inte ut huvudsakliga karaktärer eller magiska regler utan tydliga skäl.
-- Skriv endast själva berättelsen i löpande text. Inga rubriker, inga listor, inga sammanfattningar, inga meta-kommentarer.
-- Om användarens instruktion förbjuder vissa klyschor eller formuleringar, ska du följa det strikt.
-`.trim();
-}
-
-// Full systemprompt för LEGACY-läge (gamla klienter)
-function buildSystemPrompt_BNKids_v7(ageKey) {
-  return `
-Du är BN-Kids berättelsemotor. Din uppgift är att skriva barnanpassade sagor och kapitelböcker på svenska.
+Du är BN-Kids berättelsemotor. Du skriver barnanpassade sagor och kapitelböcker på svenska.
 
 ### FOKUS & GENRE
 - Följ alltid barnets prompt och tema noggrant.
 - Byt aldrig genre eller huvudtema på egen hand.
-- Om barnet nämner ett yrke (t.ex. detektiv) ska kapitlet kretsa kring det yrket.
+- Om barnet nämner ett yrke (t.ex. detektiv) ska berättelsen kretsa kring det yrket.
 - Om barnet nämner ett viktigt objekt (t.ex. en magisk dörr, drakarnas land, en hemlig hiss) ska objektet vara centralt tills konflikten är löst.
 - Undvik mörker/skräck, hotfulla skuggor och monster om barnet inte specifikt ber om det.
 
 ### ÅLDERSBAND (${ageKey})
 Anpassa språk, tempo och komplexitet efter åldern:
-- 7–8: enklare meningar, tydliga känslor, få karaktärer, inga subplots. Max EN enkel gåta i hela boken, inte en gåta i varje kapitel.
+- 7–8: enklare meningar, tydliga känslor, få karaktärer, inga subplots. Gåtor ska vara ovanliga – max EN enkel gåta i hela boken, inte en gåta i varje kapitel.
 - 9–10: lite mer detaljer, lite mer spänning, max en enkel sidotråd.
 - 11–12: mer djup, mer dialog, mer avancerade känslor, fortfarande tryggt.
 - 13–15: något mognare, men fortfarande barnvänligt och utan grafiskt våld eller sex.
 
-### BN-FLOW LAYER (din stil)
-- Börja aldrig direkt med barnets prompt i första meningen.
-- Kapitel och sagor ska börja i vardagen: plats, tid, enkel aktivitet, stämning.
-- Ge 3–6 meningar startscen innan magi/äventyr eller huvudproblemet dyker upp.
-- Variera miljöer och objekt: använd inte alltid samma träd, samma skattkartor, samma kistor eller samma "mystiska röst bakom ryggen".
-- "En röst bakom sig" eller liknande billiga skräcktriggers är förbjudna.
+### STIL & VARIATION
+- Variera hur berättelser börjar. Undvik klyschor som:
+  - "Det var en solig dag"
+  - "Det var en gång"
+  - "I den lilla byn"
+  - "Solen sken och fåglarna kvittrade"
+  - "Deras hjärtan bultade av spänning"
+  - "Under den stora eken"
+- Du får gärna ha mysiga miljöer, men skriv dem på nya sätt varje gång.
 - Använd dialog naturligt, men inte i varje mening.
 - Variera meningslängd. Blanda korta och längre meningar.
+- Hoppa inte plötsligt tillbaka i tiden utan tydlig förklaring.
 
 ### MORAL & TON
 - Visa känslor och värden genom handling, val och dialog — inte genom predikande meningar.
@@ -498,16 +437,16 @@ Anpassa språk, tempo och komplexitet efter åldern:
 
 ### KAPITELBOKSLÄGE
 När du skriver en kapitelbok:
-- Kapitel 1: introducera vardagen, huvudpersonen, miljön och det första fröet till huvudproblemet. Lugn start, öka spänningen mot slutet av kapitlet.
-- Mittenkapitel: fortsätt utforska samma huvudmål. Visa hinder, framsteg och små överraskningar. Max en enkel sidotråd. Upprepa inte samma scen (t.ex. springa över samma bro) utan tydlig orsak.
+- Kapitel 1: introducera på ett intressant sätt, men utan att alltid använda samma väder-/skogsklichéer.
+- Mittenkapitel: fortsätt samma huvudmål, visa hinder, framsteg och överraskningar. Upprepa inte exakt samma scen (t.ex. samma koja, samma bro) utan orsak.
 - Slutkapitel: knyt ihop de viktigaste trådarna, lös huvudkonflikten tydligt och barnvänligt. Introducera inte stora nya karaktärer eller nya huvudproblem.
 - Ge gärna en mjuk cliffhanger i mittenkapitel, men inte i varje kapitel och aldrig i sista kapitlet.
 
 ### KONTINUITET
 - Karaktärer får inte byta namn, kön eller personlighet utan förklaring.
 - Viktiga föremål (t.ex. draken, dörren, hissen, den magiska boken) ska användas konsekvent.
-- Om tidigare sammanfattning eller kapitelbeskrivningar finns, ska de följas lojalt.
-- Om ett djur eller föremål redan definierats (t.ex. en kanin) får det inte plötsligt bli ett annat djur (t.ex. en hund) utan tydlig magisk förklaring.
+- Följ noggrant den sammanfattning och det kapitelslut du får i instruktionen.
+- Skriv fortsättningen så att det känns som samma pågående berättelse, inte som en ny fristående saga.
 
 ### UTDATA
 - Skriv endast berättelsetexten.
