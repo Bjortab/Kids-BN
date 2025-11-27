@@ -1,22 +1,24 @@
 // ==========================================================================
-// BN-KIDS — STORY ENGINE (GC v10.9)
+// BN-KIDS — STORY ENGINE (GC v10.10)
 // Frontend-shim mot backend /api/generate
 // - Läser worldState-meta (ålder, längd, hjälte, kapitelIndex, previousChapters)
-// - Bygger en stark, kontinuitets-säker prompt (ingen "ny lördag" i varje kapitel)
+// - Bygger en stark, kontinuitets-säker prompt med:
+//    * anti-floskel-regler
+//    * kapitelroller (start/mitt/slut)
+//    * miljövariation (inte alltid koja/ek/skog)
 // - Anropar Cloudflare Pages Function /api/generate
 // - Returnerar ren text till ws_button.gc.js
 //
 // Viktigt:
-//  - Backend functions/generate.js (GC v6) är LÅST och är kvar som "hjärna".
+//  - Backend functions/generate.js (GC v6) är LÅST och oförändrad.
 //  - Vi ändrar INTE API-formatet mot backend, bara innehållet i "prompt".
-//  - Denna fil är nu lite smartare men har samma publika API som tidigare.
+//  - Publikt API är oförändrat: BNStoryEngine.generateChapter(opts)
 // ==========================================================================
 
 (function (global) {
   "use strict";
 
-  const ENGINE_VERSION = "bn-story-engine-gc-v10.9";
-
+  const ENGINE_VERSION = "bn-story-engine-gc-v10.10";
   const log = (...a) => console.log("[STORY GC]", ...a);
 
   // ------------------------------------------------------------
@@ -26,9 +28,7 @@
   async function callApi(apiUrl, payload) {
     const res = await fetch(apiUrl, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
 
@@ -61,17 +61,9 @@
     return [];
   }
 
-  /**
-   * Plocka fram "barnets prompt" ur worldState.
-   * - _userPrompt / last_prompt = senaste önskan
-   * - meta.originalPrompt = ursprunglig idé (om den finns)
-   */
   function extractPromptsFromWorldState(ws) {
     if (!ws) {
-      return {
-        childPrompt: "",
-        basePrompt: ""
-      };
+      return { childPrompt: "", basePrompt: "" };
     }
 
     const meta = ws.meta || {};
@@ -116,32 +108,28 @@
       meta.storyTitle ||
       "";
 
+    // ev framtida location-tracking
+    const locationsUsed = safeArray(meta.locationsUsed);
+
     return {
       heroName,
       ageGroupRaw,
       lengthPreset,
       storyMode,
       totalChapters,
-      bookTitle
+      bookTitle,
+      locationsUsed
     };
   }
 
-  /**
-   * Försök härleda en numerisk ålder från ageGroupRaw, t.ex. "7-8 år".
-   */
   function deriveNumericAge(ageGroupRaw) {
     if (typeof ageGroupRaw === "number") return ageGroupRaw;
-
-    if (!ageGroupRaw || typeof ageGroupRaw !== "string") {
-      return 8;
-    }
-
+    if (!ageGroupRaw || typeof ageGroupRaw !== "string") return 8;
     const match = ageGroupRaw.match(/(\d+)/);
     if (match) {
       const n = parseInt(match[1], 10);
       if (!isNaN(n)) return n;
     }
-
     return 8;
   }
 
@@ -188,9 +176,42 @@
   }
 
   /**
-   * Bygg ett "minnesblock" från tidigare kapitel:
-   *  - Kapitel 1 (start)
-   *  - Senaste kapitel (måste följas)
+   * Skanna tidigare kapitel efter återkommande klyschor/miljöer.
+   * Vi använder detta bara för att formulera "använd inte X igen".
+   */
+  function analyseCliches(previousChapters) {
+    const chapters = safeArray(previousChapters);
+    const all = chapters.join("\n").toLowerCase();
+
+    return {
+      hasKoja: all.includes("koja"),
+      hasStorEk:
+        all.includes("stora eken") ||
+        all.includes("stor ek"),
+      hasSolDag:
+        all.includes("solig dag") ||
+        all.includes("solig eftermiddag") ||
+        all.includes("solig morgon"),
+      hasFaglar:
+        all.includes("fåglarna kvittrade") ||
+        all.includes("fåglar kvittrade"),
+      hasMorkSkugga:
+        all.includes("mörk skugga") ||
+        all.includes("skugga som rörde sig"),
+      hasLillaByn:
+        all.includes("lilla byn") ||
+        all.includes("liten by"),
+      hasVindenLekte:
+        all.includes("vinden lekte") ||
+        all.includes("vinden svepte genom grenarna"),
+      hasOscarLåg:
+        all.includes("oscar låg") ||
+        all.includes("björn låg")
+    };
+  }
+
+  /**
+   * Bygger minnesblock (kap 1 + senaste kapitel).
    */
   function buildMemoryBlock(previousChapters) {
     const chapters = safeArray(previousChapters);
@@ -214,7 +235,7 @@
     }
 
     if (lastChapter && lastChapter !== firstChapter) {
-      memoryText += "--- Senaste kapitel (måste följas exakt) ---\n";
+      memoryText += "--- Senaste kapitel (måste följas) ---\n";
       memoryText += lastChapter.trim() + "\n\n";
     }
 
@@ -232,21 +253,22 @@
     if (chapterIndex <= 1) {
       rules.push(
         "- Du skriver KAPITEL 1.",
-        "- Kapitel 1 ska börja i barnets vardag och sedan föra in det magiska (t.ex. en magisk björk).",
+        "- Kapitel 1 ska börja i barnets vardag och sedan föra in det magiska (t.ex. den stora trollkarlen, en magisk bok eller ett konstigt föremål).",
         "- Detta vardagsstart-scenario får ALDRIG upprepas i senare kapitel."
       );
     } else {
       rules.push(
         "- Du skriver KAPITEL " + chapterIndex + ".",
-        "- Du måste EXAKT fortsätta där senaste kapitlet slutade – samma plats, samma tidpunkt och samma personer om inget annat är tydligt motiverat.",
-        "- Du får INTE börja om dagen, året eller platsen.",
-        "- Du får INTE introducera en magisk plats, magiskt föremål eller nyckelhändelse som om det vore första gången om den redan funnits i tidigare kapitel.",
-        "- Du får INTE upprepa fraser i stil med: \"Det var en solig lördagmorgon i den lilla byn där Björn bodde\" om det redan hänt i kapitel 1."
+        "- Du ska knyta an till slutet på förra kapitlet med 1–3 meningar, så att läsaren känner igen situationen.",
+        "- Därefter får tiden gärna gå framåt (en stund senare, senare samma dag eller nästa dag).",
+        "- Du får INTE nollställa historien: ingen ny barndomsstart, ingen ny \"solig dag\" i byn, ingen ny första presentation av huvudpersonerna.",
+        "- Du får INTE presentera stora magiska saker (trollkarlen, den magiska platsen, boken) som om de vore nya om de redan funnits.",
+        "- Du får INTE skriva om samma scen med andra ord; storyn ska röra sig framåt."
       );
 
       if (memory && memory.lastChapter) {
         rules.push(
-          "- Läs noga slutet på senaste kapitlet och fortsätt scenen därifrån. Du ska känna att kameran står kvar där den stod i slutet av förra kapitlet."
+          "- Läs slutet på senaste kapitlet noga och fortsätt logiskt därifrån, men låt handlingen ta nästa steg (ny plats, nytt problem eller ny insikt)."
         );
       }
     }
@@ -254,28 +276,41 @@
     return rules;
   }
 
-  function buildPromptHandlingRules(childPrompt, mode) {
+  function buildPromptHandlingRules(childPrompt, basePrompt, storyMode) {
     const rules = [];
 
+    const coreIdea =
+      basePrompt && basePrompt.length > 0
+        ? basePrompt
+        : childPrompt;
+
+    if (coreIdea) {
+      rules.push(
+        '- Hela boken kretsar kring barnets idé: "' +
+          coreIdea +
+          '". Varje kapitel ska föra den idén framåt (inte byta tema).'
+      );
+    }
+
     rules.push(
-      "- Barnets senaste önskan/prompt ska alltid vävas in i den pågående scenen, inte starta en helt ny bok.",
-      "- Om barnet t.ex. skriver \"Björn förvandlar en hund så att den får vingar\" och historien redan utspelar sig vid en magisk björk, ska hunden dyka upp i samma scen och förvandlingen ske med hjälp av den redan etablerade magin.",
-      "- Du får inte teleportera huvudpersonen till en helt ny plats eller ny tid utan tydlig brygga från det som hänt tidigare."
+      "- Barnets senaste önskan/prompt ska alltid vävas in i den pågående berättelsen, inte starta en helt ny bok.",
+      "- Om barnet t.ex. skriver \"Björn och Oscar blir lärjungar hos den stora trollkarlen Morris\" ska varje kapitel fortsätta det lärlingsäventyret, med nya steg i deras relation till trollkarlen och nya magiska utmaningar.",
+      "- Du får inte teleportera huvudpersonerna till en helt ny, slumpmässig berättelse som inte har med grundidén att göra."
     );
 
     if (childPrompt && childPrompt.trim().length > 0) {
       rules.push(
-        '- I det här kapitlet ska du särskilt väva in följande barnprompt i den pågående scenen (utan att starta om sagan): "' +
+        '- I det här kapitlet ska du särskilt väva in följande barnprompt (utan att starta om sagan): "' +
           childPrompt.trim() +
           '".'
       );
     }
 
-    if (mode) {
+    if (storyMode) {
       rules.push(
-        "- Anpassa kapitlet till läget: \"" +
-          mode +
-          "\" (t.ex. kapitelbok), så det känns som en del av en sammanhängande bok."
+        '- Anpassa kapitlet till läget: "' +
+          storyMode +
+          '" (t.ex. kapitelbok för barn).'
       );
     }
 
@@ -287,8 +322,8 @@
 
     rules.push(
       "- Skriv på enkel, levande svenska anpassad för " + ageRules.label + ".",
-      "- Undvik floskler och tomma fraser (t.ex. \"det var en gång\" om det inte är helt nödvändigt).",
-      "- Undvik upprepade inledningar i varje kapitel (ingen ny \"fin lördagmorgon\" om det redan är etablerat).",
+      "- Undvik floskler och tomma fraser. Skriv konkret vad som händer, vad barnen tänker och vad de ser.",
+      "- Börja inte kapitlet med väderrapport eller naturbeskrivning. Gå direkt in i en handling, tanke eller replik.",
       "- Använd " +
         ageRules.sentenceLength +
         " meningar och " +
@@ -300,7 +335,7 @@
     rules.push(
       "- Gåtor får förekomma, men sparsamt. Totalt i boken får det vara max " +
         ageRules.maxRiddlesPerBook +
-        " enkla gåtor. Undvik att stoppa in gåtor i varje kapitel om det inte är väldigt motiverat."
+        " enkla gåtor. Ha inte med nya gåtor i varje kapitel om det inte är väldigt motiverat."
     );
 
     if (typeof totalChapters === "number" && totalChapters > 0) {
@@ -308,26 +343,138 @@
         rules.push(
           "- Detta är det SISTA kapitlet i boken. Du ska GE EN KÄNSLA AV AVSLUT.",
           "- Skriv INTE fraser i stil med \"detta var bara början\" eller lova en fortsättning.",
-          "- Se till att trådarna i äventyret knyts ihop på ett tryggt sätt för barnet."
+          "- Knyt ihop huvudäventyret på ett tryggt sätt."
         );
       } else {
         rules.push(
           "- Avsluta kapitlet med en mild krok (cliffhanger) som gör barnet nyfiket på nästa kapitel, utan att bli för läskigt."
         );
       }
-    } else {
-      if (chapterIndex >= 3) {
-        rules.push(
-          "- Du behöver inte alltid öppna upp för en oändlig fortsättning. I senare kapitel kan du ibland knyta ihop ett deläventyr på ett tryggt sätt."
-        );
-      }
+    } else if (chapterIndex >= 3) {
+      rules.push(
+        "- I senare kapitel kan du ibland knyta ihop ett deläventyr på ett tryggt sätt, istället för att alltid öppna nya trådar."
+      );
     }
 
     return rules;
   }
 
   /**
-   * Bygg den stora prompten som vi skickar vidare som "prompt" till backend.
+   * Anti-floskel-/anti-klyscha-regler, inkl. miljöstyrning.
+   */
+  function buildAntiClicheRules(clicheScan) {
+    const rules = [
+      "=== ANTI-FLOSKEL-REGLER ===",
+      "- Använd INTE standardformuleringar som:",
+      '  * \"Det var en solig dag\" / \"Det var en solig morgon\" / \"Det var en solig eftermiddag\"',
+      '  * \"Fåglarna kvittrade\"',
+      '  * \"Vinden lekte i grenarna\" eller liknande',
+      '  * \"De var modiga\" som enda beskrivning av känslor',
+      '  * \"De vände sig om och såg en mörk skugga\"',
+      '  * \"den lilla byn\" som upprepas om och om igen',
+      "- Beskriv istället något mer konkret och unikt med just den här platsen, den här dagen och de här barnen."
+    ];
+
+    if (clicheScan.hasKoja) {
+      rules.push(
+        "- Kojor har redan förekommit i tidigare kapitel. I detta kapitel ska du INTE använda kojan som huvudmiljö, om inte barnet uttryckligen ber om det."
+      );
+    }
+
+    if (clicheScan.hasStorEk) {
+      rules.push(
+        "- Den stora eken har redan varit med. Välj en annan tydlig plats istället för att börja om vid samma träd."
+      );
+    }
+
+    if (clicheScan.hasSolDag) {
+      rules.push(
+        "- Undvik att börja med en ny \"solig dag\". Om väder nämns ska det vara kort och inte upprepas från tidigare kapitel."
+      );
+    }
+
+    if (clicheScan.hasFaglar) {
+      rules.push(
+        "- Undvik frasen \"fåglarna kvittrade\". Om ljud ska beskrivas, hitta något mer specifikt och varierat."
+      );
+    }
+
+    if (clicheScan.hasMorkSkugga) {
+      rules.push(
+        "- Undvik \"mörk skugga\" som standardspänning. Hitta en annan typ av spänning som passar barnets ålder."
+      );
+    }
+
+    if (clicheScan.hasLillaByn) {
+      rules.push(
+        "- Om byn nämns igen, ge den nya detaljer istället för att bara kalla den \"den lilla byn\" varje gång."
+      );
+    }
+
+    if (clicheScan.hasOscarLåg || clicheScan.hasVindenLekte) {
+      rules.push(
+        "- Börja inte kapitlet med att någon ligger och tittar upp i grenverket eller med en vindbeskrivning. Gå istället direkt in i en handling, tanke eller dialog."
+      );
+    }
+
+    return rules;
+  }
+
+  /**
+   * Kapitel-roll: vad ska kapitel 1, 2, mitten, sista göra?
+   */
+  function buildChapterArcRules(chapterIndex, totalChapters, basePrompt, childPrompt) {
+    const rules = [];
+    const idea = basePrompt || childPrompt || "";
+
+    rules.push("=== KAPITELROLL ===");
+
+    if (!totalChapters || totalChapters <= 1) {
+      // Okänd längd → generella råd
+      if (chapterIndex === 1) {
+        rules.push(
+          "- Kapitel 1: etablera vardagen, huvudpersonerna och kroken in i äventyret. Sätt igång huvudspåret i barnets idé."
+        );
+      } else {
+        rules.push(
+          "- Detta är ett mittkapitel. För handlingen framåt med nya steg i samma äventyr, istället för att upprepa början."
+        );
+      }
+      return rules;
+    }
+
+    if (chapterIndex === 1) {
+      rules.push(
+        "- Kapitel 1 ska etablera vardagen, huvudpersonerna, platsen och den första kontakten med det magiska (t.ex. trollkarlen, boken, portalen).",
+        "- Lägg en tydlig krok som gör att barnen vill fortsätta läsa nästa kapitel."
+      );
+    } else if (chapterIndex === 2 && totalChapters >= 3) {
+      rules.push(
+        "- Kapitel 2 ska ta huvudpersonerna UT ur startmiljön och in i första riktiga steget i äventyret.",
+        "- Visa att deras beslut i kapitel 1 får konsekvenser. De rör sig mot målet i barnets idé."
+      );
+    } else if (chapterIndex < totalChapters) {
+      rules.push(
+        "- Detta är ett mittkapitel. Håll fokus på samma huvudmål. Introducera ett hinder, en ledtråd eller en ny plats som för dem närmare lösningen.",
+        "- Undvik att fastna i samma miljö eller upprepa samma typ av dilemma som redan hänt."
+      );
+    }
+
+    if (chapterIndex === totalChapters) {
+      rules.push(
+        "- Detta är sista kapitlet. Låt huvudpersonerna lyckas eller förlora på ett tydligt och tryggt sätt.",
+        "- Koppla direkt till barnets ursprungliga idé: \""
+          + idea +
+          "\" (om den finns). Visa hur just den idén får sitt svar eller sin upplösning.",
+        "- Ge en känsla av att äventyret har fått ett slut, även om barnen skulle kunna hitta på fler äventyr senare."
+      );
+    }
+
+    return rules;
+  }
+
+  /**
+   * Bygg prompten som skickas som "prompt" till backend.
    */
   function buildStoryPromptFromWorldState(ws, chapterIndex, storyMode) {
     const meta = extractMeta(ws);
@@ -343,6 +490,7 @@
       [];
 
     const memory = buildMemoryBlock(previousChapters);
+    const clicheScan = analyseCliches(previousChapters);
 
     const totalChapters =
       typeof meta.totalChapters === "number" && meta.totalChapters > 0
@@ -364,7 +512,7 @@
 
     const intro = [
       "Du är en professionell barnboksförfattare och fungerar som en \"story engine\" i ett system som skriver kapitelböcker för barn.",
-      "Du skriver nu ett ENDA kapitel i en pågående bok. Detta kapitel ska HÅLLA HÅRT I kontinuiteten från tidigare kapitel.",
+      "Du skriver nu ett ENDA kapitel i en pågående bok. Detta kapitel ska hålla hårt i kontinuiteten men ändå föra handlingen tydligt framåt.",
       "Du skriver alltid på svenska.",
       "",
       titleLine.trim(),
@@ -391,6 +539,7 @@
     const continuityRules = buildContinuityRules(chapterIndex, memory);
     const promptHandlingRules = buildPromptHandlingRules(
       childPrompt,
+      basePrompt,
       storyMode
     );
     const styleRules = buildStyleRules(
@@ -398,10 +547,23 @@
       chapterIndex,
       totalChapters
     );
+    const antiClicheRules = buildAntiClicheRules(clicheScan);
+    const chapterArcRules = buildChapterArcRules(
+      chapterIndex,
+      totalChapters,
+      basePrompt,
+      childPrompt
+    );
 
     const rulesSection =
       "=== REGLER FÖR DETTA KAPITEL ===\n" +
-      continuityRules.concat(promptHandlingRules, styleRules).join("\n") +
+      continuityRules
+        .concat(promptHandlingRules, styleRules)
+        .join("\n") +
+      "\n\n" +
+      antiClicheRules.join("\n") +
+      "\n\n" +
+      chapterArcRules.join("\n") +
       "\n\n";
 
     let childPromptSection = "";
@@ -423,9 +585,10 @@
       "- Skriv nästa kapitel i boken, på svenska, som riktar sig till " +
         ageRules.label +
         ".",
-      "- Fortsätt exakt från slutet av det senaste kapitlet (om sådant finns).",
-      "- Väv in barnets senaste önskan/prompt i den pågående scenen utan att starta om sagan.",
-      "- Håll texten till ungefär 400–700 ord för 7–8 år, och något längre är okej för äldre barn.",
+      "- Knyt an till slutet av förra kapitlet med några få meningar och låt sedan handlingen ta ett TYDLIGT nästa steg.",
+      "- Använd en ny eller tydligt utvecklad miljö om tidigare kapitel redan använt t.ex. koja, stor ek, standard-skog. Undvik att återvända till exakt samma startläge.",
+      "- Väv in barnets idé och senaste önskan i det som händer i kapitlet, utan att starta om berättelsen.",
+      "- Håll texten till ungefär 400–700 ord för 7–8 år; något längre är okej för äldre barn.",
       "- Använd styckeindelning så texten blir luftig och lättläst.",
       "- Skriv endast själva kapitlet. Inga metakommentarer, inga rubriker som \"Kapitel " +
         chapterIndex +
@@ -470,7 +633,6 @@
       bookTitle
     } = extractMeta(ws);
 
-    // Bygg en stark, kontinuitets-säker prompt baserat på worldState
     const strongPrompt = buildStoryPromptFromWorldState(
       ws,
       chapterIndex,
@@ -478,7 +640,7 @@
     );
 
     const payload = {
-      // OBS: vi behåller samma nycklar som tidigare
+      // Samma nycklar som tidigare:
       prompt: strongPrompt,
       heroName,
       ageGroup: ageGroupRaw,
@@ -487,7 +649,7 @@
       chapterIndex,
       worldState: ws,
       totalChapters,
-      // Lite extra info som backend kan ignorera om den vill
+      // Extra info som backend kan ignorera:
       bookTitle,
       storyEngineVersion: ENGINE_VERSION
     };
@@ -518,6 +680,6 @@
     ENGINE_VERSION
   };
 
-  log("story_engine.gc.js laddad (GC v10.9)");
+  log("story_engine.gc.js laddad (GC v10.10)");
 
 })(window);
