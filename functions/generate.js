@@ -1,11 +1,10 @@
 // functions/generate.js
 // Pages Function: POST /api/generate
 //
-// BN-KIDS GC v8.1 – fokus på:
-// - Stöd för ny STORY ENGINE (v10.x) som skickar en färdig superprompt
-// - När prompten är en "engine-prompt": använd den rakt av (ingen extra BN-flow mall)
-// - Behåller gammalt läge för äldre klienter (utan engine-prompt)
-// - Mindre risk för floskler från backend (ingen tvingad "börja i vardagen"-mall i engine-läget)
+// BN-KIDS GC v8.2 – STORY ENGINE-INTEGRATION
+// - Om requesten kommer från nya story_engine.gc.js (har storyEngineVersion)
+//   → använd prompten rakt av i ENGINE-LÄGE (ingen gammal BN-flow-mall).
+// - Annars → använd legacy-läge (gamla BN-flow) för kompatibilitet.
 
 export async function onRequestOptions({ env }) {
   const origin =
@@ -109,28 +108,39 @@ export async function onRequestPost({ request, env }) {
     const model = env.OPENAI_MODEL || "gpt-4o-mini";
 
     // ------------------------------------------------------
-    // NYTT: Kolla om promptRaw är en färdig "engine-prompt"
-    // (från story_engine.gc.js v10.x)
+    // ENGINE-LÄGE? (ny story_engine v10.x)
     // ------------------------------------------------------
-    const isEnginePrompt =
-      typeof promptRaw === "string" &&
-      /=== REGLER FÖR DETTA KAPITEL ===/i.test(promptRaw);
+    const engineVersion =
+      body.storyEngineVersion ||
+      body.story_engine_version ||
+      worldState.storyEngineVersion;
+
+    const promptStr = String(promptRaw || "");
+    const hasEngineMarker =
+      typeof engineVersion === "string" &&
+      engineVersion.includes("bn-story-engine-gc");
+
+    const looksLikeEnginePrompt =
+      /=== REGLER FÖR DETTA KAPITEL ===/i.test(promptStr) ||
+      /=== BARNETS SENASTE ÖNSKAN \/ PROMPT ===/i.test(promptStr);
+
+    const isEnginePrompt = hasEngineMarker || looksLikeEnginePrompt;
 
     if (isEnginePrompt) {
       // ENGINE-LÄGE:
-      // - Vi litar på att frontend har byggt en komplett superprompt
+      // - Frontend-motorn har byggt en komplett superprompt
       // - Backend lägger bara på en tunn, säkerhetsfokuserad systemprompt
-      // - Inga extra "börja i vardagen"-instruktioner eller egna mallar
+      // - INGA extra "börja i vardagen"-instruktioner
 
       const engineSystemPrompt = buildSystemPrompt_BNKids_engineMode(ageKey);
 
       const payload = {
         model,
-        temperature: 0.65, // lite lägre för stabilitet
+        temperature: 0.6, // lite lägre för stabilitet/lydnad
         max_tokens: maxTokens,
         messages: [
           { role: "system", content: engineSystemPrompt },
-          { role: "user", content: String(promptRaw) }
+          { role: "user", content: promptStr }
         ]
       };
 
@@ -168,7 +178,7 @@ export async function onRequestPost({ request, env }) {
     // Behåller ditt gamla BN-flow så att äldre klienter funkar.
     // ------------------------------------------------------
 
-    const userWantsEnd = /avslut|knyt ihop|slut(et)?/i.test(promptRaw || "");
+    const userWantsEnd = /avslut|knyt ihop|slut(et)?/i.test(promptStr || "");
 
     let chapterRole;
     if (!storyMode || storyMode === "single_story") {
@@ -196,8 +206,8 @@ export async function onRequestPost({ request, env }) {
       .join("\n\n");
 
     const effectivePrompt =
-      promptRaw && String(promptRaw).trim()
-        ? String(promptRaw).trim()
+      promptStr && promptStr.trim()
+        ? promptStr.trim()
         : (worldState._userPrompt ||
            worldState.last_prompt ||
            "");
