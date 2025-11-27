@@ -1,7 +1,7 @@
 // functions/generate.js
 // Pages Function: POST /api/generate
 //
-// BN-KIDS GC v8.0 – fokus på:
+// BN-KIDS GC v8.1 – fokus på:
 // - Stöd för ny STORY ENGINE (v10.x) som skickar en färdig superprompt
 // - När prompten är en "engine-prompt": använd den rakt av (ingen extra BN-flow mall)
 // - Behåller gammalt läge för äldre klienter (utan engine-prompt)
@@ -72,7 +72,7 @@ export async function onRequestPost({ request, env }) {
     const storyMode =
       body.storyMode ||
       body.story_mode ||
-      (body.chapterIndex ? "chapter_book" : "single_story";
+      (body.chapterIndex ? "chapter_book" : "single_story");
 
     const chapterIndex = Number(body.chapterIndex || 1);
     const worldState = body.worldState || {};
