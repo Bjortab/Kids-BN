@@ -1,12 +1,11 @@
 // functions/generate.js
 // Pages Function: POST /api/generate
 //
-// BN-KIDS GC v7.1 – fokus på:
-// - Stabil kapiteltråd (ingen omstart bara för att man klickar igen)
-// - promptChanged-stöd från ws_button.gc.js v7.1
-// - Kapitelroller: chapter_1 / chapter_middle / chapter_final / single_story
-// - Mindre moral-floskler, mindre "äventyret har bara börjat"
-// - Bättre respekt för barnets prompt + tidigare kapitel
+// BN-KIDS GC v8.0 – fokus på:
+// - Stöd för ny STORY ENGINE (v10.x) som skickar en färdig superprompt
+// - När prompten är en "engine-prompt": använd den rakt av (ingen extra BN-flow mall)
+// - Behåller gammalt läge för äldre klienter (utan engine-prompt)
+// - Mindre risk för floskler från backend (ingen tvingad "börja i vardagen"-mall i engine-läget)
 
 export async function onRequestOptions({ env }) {
   const origin =
@@ -73,7 +72,7 @@ export async function onRequestPost({ request, env }) {
     const storyMode =
       body.storyMode ||
       body.story_mode ||
-      (body.chapterIndex ? "chapter_book" : "single_story");
+      (body.chapterIndex ? "chapter_book" : "single_story";
 
     const chapterIndex = Number(body.chapterIndex || 1);
     const worldState = body.worldState || {};
@@ -107,9 +106,68 @@ export async function onRequestPost({ request, env }) {
       lengthPreset
     );
 
+    const model = env.OPENAI_MODEL || "gpt-4o-mini";
+
     // ------------------------------------------------------
-    // Kapitelroll: styr hur modellen ska bete sig
+    // NYTT: Kolla om promptRaw är en färdig "engine-prompt"
+    // (från story_engine.gc.js v10.x)
     // ------------------------------------------------------
+    const isEnginePrompt =
+      typeof promptRaw === "string" &&
+      /=== REGLER FÖR DETTA KAPITEL ===/i.test(promptRaw);
+
+    if (isEnginePrompt) {
+      // ENGINE-LÄGE:
+      // - Vi litar på att frontend har byggt en komplett superprompt
+      // - Backend lägger bara på en tunn, säkerhetsfokuserad systemprompt
+      // - Inga extra "börja i vardagen"-instruktioner eller egna mallar
+
+      const engineSystemPrompt = buildSystemPrompt_BNKids_engineMode(ageKey);
+
+      const payload = {
+        model,
+        temperature: 0.65, // lite lägre för stabilitet
+        max_tokens: maxTokens,
+        messages: [
+          { role: "system", content: engineSystemPrompt },
+          { role: "user", content: String(promptRaw) }
+        ]
+      };
+
+      const res = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        return json(
+          {
+            ok: false,
+            error: "OpenAI-fel",
+            details: text.slice(0, 500)
+          },
+          502,
+          origin
+        );
+      }
+
+      const data = await res.json();
+      const story =
+        data.choices?.[0]?.message?.content?.trim() || "";
+
+      return json({ ok: true, story }, 200, origin);
+    }
+
+    // ------------------------------------------------------
+    // LEGACY-LÄGE (utan engine-prompt)
+    // Behåller ditt gamla BN-flow så att äldre klienter funkar.
+    // ------------------------------------------------------
+
     const userWantsEnd = /avslut|knyt ihop|slut(et)?/i.test(promptRaw || "");
 
     let chapterRole;
@@ -123,9 +181,6 @@ export async function onRequestPost({ request, env }) {
       chapterRole = "chapter_middle";
     }
 
-    // ------------------------------------------------------
-    // Historik från worldState
-    // ------------------------------------------------------
     const previousSummary =
       worldState.previousSummary ||
       worldState.summary ||
@@ -147,14 +202,8 @@ export async function onRequestPost({ request, env }) {
            worldState.last_prompt ||
            "");
 
-    // ------------------------------------------------------
-    // SYSTEMPROMPT – BN-Kids stil + regler
-    // ------------------------------------------------------
     const systemPrompt = buildSystemPrompt_BNKids_v7(ageKey);
 
-    // ------------------------------------------------------
-    // USERPROMPT – barnets idé + worldstate + kapitelroll + promptChanged
-    // ------------------------------------------------------
     const lines = [];
 
     // Barnets idé
@@ -269,14 +318,9 @@ export async function onRequestPost({ request, env }) {
 
     const userPrompt = lines.join("\n");
 
-    // ------------------------------------------------------
-    // OpenAI-anrop
-    // ------------------------------------------------------
-    const model = env.OPENAI_MODEL || "gpt-4o-mini";
-
     const payload = {
       model,
-      temperature: 0.7, // lite lägre för mindre random omstarter
+      temperature: 0.7,
       max_tokens: maxTokens,
       messages: [
         { role: "system", content: systemPrompt },
@@ -389,6 +433,22 @@ function getLengthInstructionAndTokens(ageKey, lengthPreset) {
   return { lengthInstruction, maxTokens };
 }
 
+// Minimal, säker systemprompt för ENGINE-LÄGE (story_engine v10.x)
+function buildSystemPrompt_BNKids_engineMode(ageKey) {
+  return `
+Du är en professionell barnboksförfattare som skriver på svenska för barn i åldersgruppen ${ageKey}.
+Du kommer att få en detaljerad instruktion med regler, tidigare kapitel och barnets idé.
+Följ dessa instruktioner mycket noggrant.
+
+- Anpassa språk, tempo och komplexitet till åldersgruppen.
+- Håll tonen trygg och varm, utan skräck eller grovt innehåll.
+- Respektera berättelsens kontinuitet: ändra inte tillbaka tiden, byt inte ut huvudsakliga karaktärer eller magiska regler utan tydliga skäl.
+- Skriv endast själva berättelsen i löpande text. Inga rubriker, inga listor, inga sammanfattningar, inga meta-kommentarer.
+- Om användarens instruktion förbjuder vissa klyschor eller formuleringar, ska du följa det strikt.
+`.trim();
+}
+
+// Full systemprompt för LEGACY-läge (gamla klienter)
 function buildSystemPrompt_BNKids_v7(ageKey) {
   return `
 Du är BN-Kids berättelsemotor. Din uppgift är att skriva barnanpassade sagor och kapitelböcker på svenska.
