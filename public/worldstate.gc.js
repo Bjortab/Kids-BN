@@ -1,105 +1,149 @@
 // ======================================================================
-// BN-KIDS — WORLDSTATE (GC v6.3 AUT0LOCK)
+// BN-KIDS — WORLDSTATE (GC v7.0)
 // Stabil global state-maskin för kapitelböcker + single sagor.
 //
-// Viktigt i v6.3:
-//   - Samma API som v6.0 (load/save/reset/nextChapter/…)
-//   - Samma STORAGE_KEY: "bnkids_worldstate_gc_v6"
-//   - AUTOMATISK STÄDNING av gamla nycklar i localStorage:
-//       bn_kids_worldstate_v4
-//       bn_kids_ws_book_v1
-//       bn_kids_ws_v1
-//       bn_worldstate
-//     → de tas bort direkt när filen laddas, så de kan aldrig mer
-//       störa kapiteltråden.
+// Fokus i v7:
+// - Ny, ren nyckel i localStorage: "bnkids_ws_v7"
+// - Auto-fix av mismatch mellan chapterIndex och previousChapters
+// - Enkel API: load / reset / nextChapter / updatePrompt / addChapterToHistory / updateSummary / updateMeta
+// - Legacy-nycklar rensas bort automatiskt (ingen mer Application → rensa manuellt)
 //
-//   - Förlorar ALDRIG kapiteltråden när prompten inte ändras.
-//   - Inga regler om ton/moral här – det här är bara state.
-//
+// OBS: Ingen stil/moral/regler här – bara STATE.
 // ======================================================================
 
 (function (global) {
   "use strict";
 
-  const STORAGE_KEY = "bnkids_worldstate_gc_v6";
+  // Ny, ren nyckel för v7
+  const STORAGE_KEY = "bnkids_ws_v7";
 
-  // Gamla nycklar som vi aldrig mer vill se
+  // Gamla nycklar vi inte vill bära med oss längre
   const LEGACY_KEYS = [
+    "bnkids_worldstate_gc_v6",
+    "bn_kids_worldstate_v1",
+    "bn_kids_worldstate_v2",
+    "bn_kids_worldstate_v3",
     "bn_kids_worldstate_v4",
     "bn_kids_ws_book_v1",
-    "bn_kids_ws_v1",
-    "bn_worldstate"
+    "bnkids_ws_v6",
+    "bnkids_worldstate_gc_v5"
   ];
 
-  const defaultState = () => ({
-    chapterIndex: 0,
-    story_mode: "chapter_book",
-    previousChapters: [],
-    previousSummary: "",
-    last_prompt: "",
-    _userPrompt: "",
-    meta: {
-      hero: "",
-      age: "",
-      ageValue: "",
-      ageLabel: "",
-      length: "",
-      lengthValue: "",
-      lengthLabel: "",
-      totalChapters: 8
-    }
-  });
+  const CURRENT_VERSION = 7;
 
-  // -----------------------------------------------------------
-  // AUT0LOCK: städa bort alla gamla worldstate-nycklar
-  // Körs en gång när filen laddas.
-  // -----------------------------------------------------------
-  function autoLockLegacyKeys() {
+  function defaultState() {
+    return {
+      version: CURRENT_VERSION,
+      chapterIndex: 0,
+      story_mode: "chapter_book",
+      previousChapters: [],
+      previousSummary: "",
+      last_prompt: "",
+      _userPrompt: "",
+      meta: {
+        hero: "",
+        age: "",
+        ageValue: "",
+        ageLabel: "",
+        length: "",
+        lengthValue: "",
+        lengthLabel: "",
+        totalChapters: 8
+      }
+    };
+  }
+
+  function wipeLegacyKeys() {
     try {
-      let touched = false;
-
-      // Ta bort alla gamla nycklar om de finns
-      for (const key of LEGACY_KEYS) {
-        if (localStorage.getItem(key) !== null) {
+      LEGACY_KEYS.forEach((key) => {
+        try {
           localStorage.removeItem(key);
-          touched = true;
+        } catch (e) {
+          // svälj, inte kritiskt
         }
-      }
-
-      if (touched) {
-        console.log(
-          "[WS GC v6.3] Städade bort äldre worldstate-nycklar:",
-          LEGACY_KEYS.join(", ")
-        );
-      }
-    } catch (err) {
-      console.warn("[WS GC v6.3] autoLockLegacyKeys fel:", err);
+      });
+    } catch (e) {
+      console.warn("[WS v7] kunde inte rensa legacy-nycklar", e);
     }
   }
 
-  // Kör städningen direkt när skriptet laddas
-  autoLockLegacyKeys();
+  function normalizeState(raw) {
+    const base = defaultState();
+    if (!raw || typeof raw !== "object") return base;
+
+    const merged = Object.assign({}, base, raw);
+
+    // version-säkring – om version diffar → börja om
+    if (merged.version !== CURRENT_VERSION) {
+      return base;
+    }
+
+    if (!Array.isArray(merged.previousChapters)) {
+      merged.previousChapters = [];
+    }
+
+    if (typeof merged.chapterIndex !== "number" || merged.chapterIndex < 0) {
+      merged.chapterIndex = merged.previousChapters.length;
+    }
+
+    // Hårdlås: chapterIndex = antal sparade kapitel
+    const count = merged.previousChapters.length;
+    if (merged.chapterIndex !== count) {
+      merged.chapterIndex = count;
+    }
+
+    if (!merged.meta || typeof merged.meta !== "object") {
+      merged.meta = base.meta;
+    } else {
+      merged.meta = Object.assign({}, base.meta, merged.meta);
+      if (
+        typeof merged.meta.totalChapters !== "number" ||
+        merged.meta.totalChapters <= 0
+      ) {
+        merged.meta.totalChapters = base.meta.totalChapters;
+      }
+    }
+
+    if (typeof merged.last_prompt !== "string") merged.last_prompt = "";
+    if (typeof merged._userPrompt !== "string") merged._userPrompt = "";
+    if (typeof merged.previousSummary !== "string")
+      merged.previousSummary = "";
+
+    return merged;
+  }
 
   // -----------------------------------------------------------
   // LocalStorage helpers
   // -----------------------------------------------------------
+
   function load() {
+    wipeLegacyKeys();
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return defaultState();
+      if (!raw) {
+        const fresh = defaultState();
+        save(fresh);
+        return fresh;
+      }
       const parsed = JSON.parse(raw);
-      return Object.assign(defaultState(), parsed);
+      const normalized = normalizeState(parsed);
+      // om normalizeState "nollade" state (p.g.a version) → spara tillbaka
+      save(normalized);
+      return normalized;
     } catch (err) {
-      console.warn("[WS GC v6.3] load-fel → återställer", err);
-      return defaultState();
+      console.warn("[WS v7] load-fel → återställer", err);
+      const fresh = defaultState();
+      save(fresh);
+      return fresh;
     }
   }
 
   function save(state) {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      const s = normalizeState(state);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
     } catch (err) {
-      console.warn("[WS GC v6.3] save-fel", err);
+      console.warn("[WS v7] save-fel", err);
     }
   }
 
@@ -108,14 +152,19 @@
   // -----------------------------------------------------------
 
   function reset() {
+    wipeLegacyKeys();
     const s = defaultState();
     save(s);
     return load();
   }
 
+  // Viktigt: chapterIndex baseras ALLTID på antal tidigare kapitel
   function nextChapter() {
     const s = load();
-    s.chapterIndex = Number(s.chapterIndex || 0) + 1;
+    const count = Array.isArray(s.previousChapters)
+      ? s.previousChapters.length
+      : 0;
+    s.chapterIndex = count + 1;
     save(s);
   }
 
@@ -123,12 +172,12 @@
     const s = load();
     const trimmed = String(newPrompt || "").trim();
 
-    // Viktigt: om samma prompt → ändra INTE last_prompt
-    // annars tror AI:n att ny bok börjar.
+    // Om prompten ändras → uppdatera last_prompt
     if (trimmed && trimmed !== s.last_prompt) {
       s.last_prompt = trimmed;
     }
 
+    // _userPrompt = "just nu"-prompten (även om tom)
     s._userPrompt = trimmed;
     save(s);
   }
@@ -136,8 +185,16 @@
   function addChapterToHistory(text) {
     const s = load();
     if (text && typeof text === "string") {
-      s.previousChapters.push(text.trim());
+      const trimmed = text.trim();
+      if (trimmed) {
+        if (!Array.isArray(s.previousChapters)) {
+          s.previousChapters = [];
+        }
+        s.previousChapters.push(trimmed);
+      }
     }
+    // autolock: chapterIndex = antal kapitel i historiken
+    s.chapterIndex = s.previousChapters.length;
     save(s);
   }
 
@@ -149,7 +206,8 @@
 
   function updateMeta(metaObj) {
     const s = load();
-    s.meta = Object.assign({}, s.meta, metaObj || {});
+    const base = defaultState();
+    s.meta = Object.assign({}, base.meta, s.meta || {}, metaObj || {});
     save(s);
   }
 
@@ -168,5 +226,5 @@
     updateMeta
   };
 
-  console.log("worldstate.gc.js laddad (GC v6.3 autolock)");
+  console.log("worldstate.gc.js laddad (GC v7.0) – nyckel:", STORAGE_KEY);
 })(window);
