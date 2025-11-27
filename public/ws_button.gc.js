@@ -1,43 +1,30 @@
 // ==========================================================
-// BN-KIDS — WS BUTTON (GC v7.0 – StoryEngine-läge)
-// Kopplar UI → BNWorldState (GC v6) → generateStoryWithIPFilter
+// BN-KIDS — WS BUTTON (GC v7.1)
+// Kopplar UI → BNWorldState (GC v7) → backend /api/generate
 //
-// Viktigt:
-// - Använder BN Story Engine (story_engine.gc.js + generateStory.ip.gc.js)
-//   för kapitel-flöde och ton (det som funkade förut).
-// - Backend /api/generate används INTE här – istället /api/generate_story
-//   via StoryEngine.
-// - worldstate.gc.v6 används bara för kapitelindex + meta + history.
+// Fokus i v7.1:
+// - Håller kapiteltråden stabil
+// - Skickar med promptChanged → backend vet om prompten ändrats
+// - Rätt meta (ålder, längd, hjälte, totalChapters)
+// - Spinner + felhantering
+// - Både "Skapa saga" och "Skapa saga (WS dev)" funkar
 //
-// Kräver att följande är laddat i index.html (GC-filer):
-//   <script src="/ip_blocklist.js"></script>
-//   <script src="/ip_sanitizer.js"></script>
-//   <script src="/story_engine.gc.js"></script>
-//   <script src="/generateStory.ip.gc.js"></script>
-//   <script src="/worldstate.gc.js"></script>
-//   <script src="/ws_button.gc.js"></script>
+// Kräver:
+//   - worldstate.gc.js (GC v7) laddad före denna
+//   - Cloudflare Pages Function: /api/generate (GC v7.x)
 // ==========================================================
 
 (function (global) {
   "use strict";
 
-  const log = (...args) => console.log("[WS GC v7]", ...args);
+  const log = (...args) => console.log("[WS GC v7.1]", ...args);
 
   const BNWorldState = global.BNWorldState;
-  const generateStoryWithIPFilter = global.generateStoryWithIPFilter;
-
   if (!BNWorldState) {
-    console.error("[WS GC v7] BNWorldState saknas – kontrollera worldstate.gc.js");
-  }
-  if (typeof generateStoryWithIPFilter !== "function") {
-    console.error(
-      "[WS GC v7] generateStoryWithIPFilter saknas – kontrollera att generateStory.ip.gc.js laddas före ws_button.gc.js"
-    );
+    console.error("[WS GC v7.1] BNWorldState saknas – kontrollera worldstate.gc.js");
   }
 
   let latestRequestId = 0;
-  // StoryEngine intern state (behöver inte ligga i worldstate, räcker i minnet)
-  let storyStateMemory = null;
 
   // -------------------------------------------------------
   // Hjälpare
@@ -63,9 +50,10 @@
 
     if (errorEl) {
       if (active) {
+        // rensa fel när vi startar nytt anrop
         errorEl.textContent = "";
         errorEl.style.display = "none";
-      } else if (!errorEl.textContent) {
+      } else if (!active && !errorEl.textContent) {
         errorEl.style.display = "none";
       }
     }
@@ -128,6 +116,7 @@
 
   // Rensa-knapp → nollställ worldstate + text
   function hookResetButton() {
+    // Stöd både id="clear-transcript" och data-id="btn-clear-transcript"
     const clearBtn =
       document.getElementById("clear-transcript") ||
       $('[data-id="btn-clear-transcript"]');
@@ -145,16 +134,13 @@
         if (BNWorldState && typeof BNWorldState.reset === "function") {
           BNWorldState.reset();
         }
-        // Nollställ även StoryEngine-intern state
-        storyStateMemory = null;
-
         if (storyEl) storyEl.textContent = "";
         const promptEl =
           document.getElementById("prompt") || $('[data-id="prompt"]');
         if (promptEl) promptEl.value = "";
-        log("Worldstate + text reset via Rensa-knappen (v7)");
+        log("Worldstate + text reset via Rensa-knappen");
       } catch (e) {
-        console.warn("[WS GC v7] reset via Rensa misslyckades", e);
+        console.warn("[WS GC v7.1] reset via Rensa misslyckades", e);
       }
     });
   }
@@ -176,14 +162,15 @@
     }
 
     if (btnDev) {
+      // WS dev kör exakt samma kedja, bara extra logg
       btnDev.addEventListener("click", (e) => {
         e.preventDefault();
-        log("WS DEV-läge aktiverat (StoryEngine, extra logg).");
+        log("WS DEV-läge aktiverat (samma motor, extra logg).");
         handleCreateClick({ mode: "dev" });
       });
     }
 
-    log("Skapa/kapitel-knappar bundna (v7)");
+    log("Skapa/kapitel-knappar bundna");
   }
 
   // -------------------------------------------------------
@@ -191,13 +178,8 @@
   // -------------------------------------------------------
   async function handleCreateClick({ mode } = { mode: "normal" }) {
     if (!BNWorldState) {
-      console.error("[WS GC v7] BNWorldState saknas, kan inte fortsätta.");
+      console.error("[WS GC v7.1] BNWorldState saknas, kan inte fortsätta.");
       showError("Tekniskt fel: worldstate saknas.");
-      return;
-    }
-    if (typeof generateStoryWithIPFilter !== "function") {
-      console.error("[WS GC v7] generateStoryWithIPFilter saknas.");
-      showError("Tekniskt fel: berättelsemotorn saknas.");
       return;
     }
 
@@ -209,7 +191,7 @@
     const { hero, ageValue, ageLabel, lengthValue, lengthLabel, prompt } =
       getFormValues();
 
-    // 1) Läs befintligt state
+    // 1) Läs befintligt state innan vi uppdaterar prompt
     let ws = BNWorldState.load();
     const hasHistory =
       ws.previousChapters &&
@@ -218,16 +200,21 @@
 
     const isNewBook = !hasHistory;
 
+    // Viktigt: räkna ut promptChanged INNAN vi rör last_prompt i worldstate
+    const trimmedPrompt = String(prompt || "").trim();
+    const promptChanged =
+      !!trimmedPrompt && trimmedPrompt !== (ws.last_prompt || "");
+
     // 2) Om ny bok → reset + sätt meta + prompt + chapterIndex 1
     if (isNewBook) {
       ws = BNWorldState.reset();
-      storyStateMemory = null; // även StoryEngine state nollas
 
       // totalChapters efter längd-val
-      let totalChapters = 9;
+      let totalChapters = 8;
       const lv = (lengthValue || "").toLowerCase();
       if (lv.includes("short")) totalChapters = 6;
       else if (lv.includes("long")) totalChapters = 12;
+      else totalChapters = 9;
 
       ws.meta.hero = hero;
       ws.meta.age = ageValue || ageLabel;
@@ -243,11 +230,14 @@
       ws.previousChapters = [];
       ws.previousSummary = "";
 
+      // Spara första prompten som originalidé
+      ws.meta.originalPrompt = trimmedPrompt || "";
+
       BNWorldState.updateMeta(ws.meta);
-      BNWorldState.updatePrompt(prompt || "");
+      BNWorldState.updatePrompt(trimmedPrompt || "");
       ws = BNWorldState.load();
 
-      log("Ny bok initierad (StoryEngine):", {
+      log("Ny bok initierad:", {
         hero: ws.meta.hero,
         age: ws.meta.age,
         length: ws.meta.length,
@@ -265,28 +255,22 @@
         lengthLabel
       });
 
-      // Prompt-hantering:
-      // - Ny prompt → updatePrompt
-      // - Tom prompt → behåll senaste last_prompt, men uppdatera _userPrompt
-      if (prompt) {
-        BNWorldState.updatePrompt(prompt);
+      if (trimmedPrompt) {
+        // Detta uppdaterar last_prompt ENDAST om den faktiskt ändrats
+        BNWorldState.updatePrompt(trimmedPrompt);
       } else {
+        // Ingen ny text i fältet → _userPrompt = senaste last_prompt
         BNWorldState.updatePrompt(ws.last_prompt || "");
       }
 
+      // Nästa kapitel
       BNWorldState.nextChapter();
       ws = BNWorldState.load();
-      log("Fortsätter befintlig bok, kapitel:", ws.chapterIndex);
+      log("Fortsätter befintlig bok, kapitel:", ws.chapterIndex, "promptChanged:", promptChanged);
     }
 
     const currentChapterIndex = ws.chapterIndex || 1;
     const storyMode = ws.story_mode || "chapter_book";
-
-    const apiPrompt = ws._userPrompt || ws.last_prompt || prompt || "";
-    if (!apiPrompt) {
-      showError("Barnets idé/prompt saknas.");
-      return;
-    }
 
     // 3) Request-lock
     const myRequestId = ++latestRequestId;
@@ -295,29 +279,57 @@
     if (btnDev) btnDev.disabled = true;
 
     try {
-      // *********** HÄR KOPPLAR VI IN BN STORY ENGINE ***********
-      const engineResult = await generateStoryWithIPFilter(apiPrompt, {
-        worldState: ws,
-        storyState: storyStateMemory || {},
+      const apiBody = {
+        prompt: ws._userPrompt || ws.last_prompt || trimmedPrompt || "",
+        heroName: ws.meta.hero || hero,
+        ageGroupRaw: ws.meta.age || ageValue || ageLabel,
+        lengthPreset:
+          ws.meta.lengthValue ||
+          ws.meta.length ||
+          lengthValue ||
+          "medium",
+        storyMode,
         chapterIndex: currentChapterIndex,
-        // Denna endpoint ska redan finnas sedan tidigare setup
-        apiUrl: "/api/generate_story"
+        worldState: ws,
+        totalChapters: ws.meta.totalChapters || 8,
+        // Ny signal till backend: ändrades prompten vid detta klick?
+        promptChanged: !!promptChanged
+      };
+
+      if (!apiBody.prompt) {
+        throw new Error("Barnets idé/prompt saknas.");
+      }
+
+      const res = await fetch("/api/generate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(apiBody)
       });
 
-      let chapterText =
-        engineResult && engineResult.text
-          ? String(engineResult.text).trim()
-          : "";
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(
+          "Fel från /api/generate (" + res.status + "): " + txt.slice(0, 300)
+        );
+      }
+
+      const data = await res.json().catch(() => ({}));
+      if (!data || data.ok === false) {
+        throw new Error(
+          data && data.error ? data.error : "Okänt fel från motorn."
+        );
+      }
+
+      const chapterText =
+        (data.story && String(data.story).trim()) || "";
 
       if (!chapterText) {
         throw new Error("Tomt svar från berättelsemotorn.");
       }
 
-      // Uppdatera storyStateMemory om StoryEngine skickar tillbaka det
-      if (engineResult.storyState) {
-        storyStateMemory = engineResult.storyState;
-      }
-
+      // 4) Request-lock check: ignorera föråldrade svar
       if (myRequestId !== latestRequestId) {
         log(
           "Ignorerar föråldrat svar. Mitt:",
@@ -328,24 +340,24 @@
         return;
       }
 
-      // 4) Skriv ut i UI
+      // 5) Skriv ut i UI
       if (storyEl) {
         storyEl.textContent = chapterText;
       }
 
-      // 5) Uppdatera worldstate med kapitel + summary
+      // 6) Uppdatera worldstate med kapitel + summary
       BNWorldState.addChapterToHistory(chapterText);
       const shortSummary = makeShortSummary(chapterText);
       BNWorldState.updateSummary(shortSummary);
 
       log(
-        "Kapitel klart (StoryEngine):",
+        "Kapitel klart:",
         currentChapterIndex,
         "längd (tecken):",
         chapterText.length
       );
     } catch (err) {
-      console.error("[WS GC v7] fel:", err);
+      console.error("[WS GC v7.1] fel:", err);
       showError(
         "Något gick fel när kapitlet skulle skapas: " +
           (err.message || String(err))
@@ -363,6 +375,6 @@
   window.addEventListener("DOMContentLoaded", function () {
     bindCreateButtons();
     hookResetButton();
-    log("ws_button.gc.js laddad (GC v7.0, StoryEngine-mode)");
+    log("ws_button.gc.js laddad (GC v7.1)");
   });
 })(window);
