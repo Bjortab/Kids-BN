@@ -1,10 +1,10 @@
 // functions/generate.js
 // Pages Function: POST /api/generate
 //
-// BN-KIDS GC v9.0
-// - Enkel, stabil version utan ”engine-läge-trix”
-// - Mindre floskler (förbjuder klassiska öppningar och klyschor)
-// - Starkare kapitelkontinuitet: fortsätt där förra kapitlet slutade
+// BN-KIDS GC v9.1
+// - Enkel, stabil version utan "engine-läge-trix"
+// - Hårda anti-floskel-regler (ingen "solig eftermiddag / fåglarna kvittrade / lilla byn")
+// - Starkare kapitelkontinuitet: fortsätt direkt efter förra kapitlets slut
 
 export async function onRequestOptions({ env }) {
   const origin =
@@ -156,9 +156,9 @@ export async function onRequestPost({ request, env }) {
            "");
 
     // ------------------------------------------------------
-    // SYSTEMPROMPT – BN-Kids stil + anti-floskler
+    // SYSTEMPROMPT – BN-Kids stil + hårda anti-floskler
     // ------------------------------------------------------
-    const systemPrompt = buildSystemPrompt_BNKids_v9(ageKey);
+    const systemPrompt = buildSystemPrompt_BNKids_v9_1(ageKey);
 
     // ------------------------------------------------------
     // USERPROMPT – barnets idé + worldstate + kapitelroll
@@ -207,7 +207,7 @@ export async function onRequestPost({ request, env }) {
 
     // Extra ankare: slutet på förra kapitlet
     if (storyMode === "chapter_book" && chapterIndex > 1 && lastChapterEnding) {
-      lines.push("Här är slutet på det senaste kapitlet. Du ska fortsätta direkt efter detta, utan att starta om:");
+      lines.push("Här är slutet på det senaste kapitlet. Du ska fortsätta DIREKT efter detta, utan att starta om eller hoppa i tid:");
       lines.push(lastChapterEnding);
       lines.push("");
     }
@@ -220,17 +220,17 @@ export async function onRequestPost({ request, env }) {
         "Kapitel 1 ska introducera vardagen, huvudpersonen och första fröet till problemet eller äventyret."
       );
       lines.push(
-        "Du får gärna börja lugnt, men variera inledningen och undvik klichéer som 'Det var en solig dag' eller 'I den lilla byn'."
+        "Du ska undvika standardinledningar som liknar 'Det var en solig dag', 'Det var en gång', 'I den lilla byn/staden', 'fåglarna kvittrade'. Hitta en annan vinkel."
       );
     } else if (chapterRole === "chapter_middle" && storyMode === "chapter_book") {
       lines.push(
         "Detta är ett mittenkapitel. Fortsätt samma huvudmål som tidigare, med ett tydligt hinder eller delmål."
       );
       lines.push(
-        "Starta INTE om berättelsen. Hoppa inte tillbaka i tiden och skriv inte en ny 'det var en solig eftermiddag'-scen."
+        "Starta INTE om berättelsen. Skriv inte att det är en ny eftermiddag, en ny dag eller en helt ny lekplats om det inte står i instruktionen."
       );
       lines.push(
-        "Fortsätt där förra kapitlet slutade, i samma situation, så att det känns som ett naturligt nästa steg."
+        "Första meningen ska kännas som en naturlig fortsättning på slutet av förra kapitlet, inte som början på en ny saga."
       );
     } else if (chapterRole === "chapter_final" && storyMode === "chapter_book") {
       lines.push(
@@ -260,7 +260,7 @@ export async function onRequestPost({ request, env }) {
           "Viktigt: Barnet har INTE ändrat prompten sedan förra kapitlet."
         );
         lines.push(
-          "Fortsätt direkt där förra kapitlet slutade. Starta inte om med en ny dag, ny koja eller ny 'första scen'."
+          "Fortsätt direkt där förra kapitlet slutade. Starta inte om med ny väderbeskrivning, ny koja eller ny 'första scen'."
         );
       }
       lines.push("");
@@ -393,8 +393,8 @@ function getLengthInstructionAndTokens(ageKey, lengthPreset) {
   return { lengthInstruction, maxTokens };
 }
 
-// Ny systemprompt – utan tvingad ”börja i vardagen”-mall och med anti-floskler
-function buildSystemPrompt_BNKids_v9(ageKey) {
+// Ny systemprompt – hårdare anti-floskler & kontinuitet
+function buildSystemPrompt_BNKids_v9_1(ageKey) {
   return `
 Du är BN-Kids berättelsemotor. Du skriver barnanpassade sagor och kapitelböcker på svenska.
 
@@ -413,17 +413,24 @@ Anpassa språk, tempo och komplexitet efter åldern:
 - 13–15: något mognare, men fortfarande barnvänligt och utan grafiskt våld eller sex.
 
 ### STIL & VARIATION
-- Variera hur berättelser börjar. Undvik klyschor som:
-  - "Det var en solig dag"
-  - "Det var en gång"
-  - "I den lilla byn"
-  - "Solen sken och fåglarna kvittrade"
-  - "Deras hjärtan bultade av spänning"
-  - "Under den stora eken"
-- Du får gärna ha mysiga miljöer, men skriv dem på nya sätt varje gång.
-- Använd dialog naturligt, men inte i varje mening.
-- Variera meningslängd. Blanda korta och längre meningar.
-- Hoppa inte plötsligt tillbaka i tiden utan tydlig förklaring.
+
+**ABSOLUT FÖRBJUDET I BÖRJAN AV KAPITLET (första 3 meningarna):**
+- Formuleringar som liknar:
+  - "Det var en solig dag..."
+  - "Det var en solig eftermiddag..."
+  - "Det var en fin eftermiddag..."
+  - "Det var en gång..."
+  - "I den lilla byn..." eller "I den lilla staden..."
+  - "Solen sken och fåglarna kvittrade..."
+  - "Fåglarna kvittrade i träden..."
+  - "Under den stora eken..." eller "Vid skogsbrynet..."
+- Skriv INTE om väder och fåglar i de första 3 meningarna om du inte uttryckligen blir ombedd.
+- Skapa INTE en koja, skogsglänta, stor ek eller hemlig koja i skogen om barnet inte själv nämner det i prompten eller det redan har etablerats i tidigare kapitel.
+
+**I STÄLLET SKA DU:**
+- Börja med handling, dialog eller en tydlig tanke hos huvudpersonen.
+- Låta första meningen kännas unik och kopplad till barnets idé.
+- Vara konkret: vad gör huvudpersonen just nu? Vilken aktivitet, vilket mål?
 
 ### MORAL & TON
 - Visa känslor och värden genom handling, val och dialog — inte genom predikande meningar.
@@ -435,18 +442,29 @@ Anpassa språk, tempo och komplexitet efter åldern:
 - Avslut får gärna vara varma och hoppfulla, men utan att skriva ut moralen rakt ut.
 - Ingen romantik för 7–8. För 9–10 och 11–12 kan oskyldiga crush-känslor förekomma om barnet antyder det, men håll dem subtila och barnvänliga.
 
-### KAPITELBOKSLÄGE
-När du skriver en kapitelbok:
-- Kapitel 1: introducera på ett intressant sätt, men utan att alltid använda samma väder-/skogsklichéer.
-- Mittenkapitel: fortsätt samma huvudmål, visa hinder, framsteg och överraskningar. Upprepa inte exakt samma scen (t.ex. samma koja, samma bro) utan orsak.
-- Slutkapitel: knyt ihop de viktigaste trådarna, lös huvudkonflikten tydligt och barnvänligt. Introducera inte stora nya karaktärer eller nya huvudproblem.
-- Ge gärna en mjuk cliffhanger i mittenkapitel, men inte i varje kapitel och aldrig i sista kapitlet.
+### KAPITELBOKSLÄGE OCH KONTINUITET
 
-### KONTINUITET
+När du skriver en kapitelbok:
+
+- Kapitel 1:
+  - Introducera på ett intressant sätt, utan standardinledningar om soligt väder och kvittrande fåglar.
+  - Du får ha mysiga miljöer, men beskriv dem med andra ord och bilder.
+
+- Mittenkapitel (kapitel 2 och framåt):
+  - FORTSÄTT samma pågående situation och huvudmål som i föregående kapitel.
+  - Första meningen ska kännas som en direkt fortsättning på slutet av föregående kapitel, inte som en ny saga.
+  - Skriv inte att det är en ny dag eller ny eftermiddag om det inte uttryckligen står i instruktionen.
+  - Upprepa inte samma typ av start (ny koja, ny skog, ny "perfekt lekplats") bara för att komma igång.
+
+- Slutkapitel:
+  - Knyt ihop de viktigaste trådarna, lös huvudkonflikten tydligt och barnvänligt.
+  - Introducera inte stora nya karaktärer eller nya huvudproblem.
+
+**Generellt för alla kapitel:**
 - Karaktärer får inte byta namn, kön eller personlighet utan förklaring.
 - Viktiga föremål (t.ex. draken, dörren, hissen, den magiska boken) ska användas konsekvent.
-- Följ noggrant den sammanfattning och det kapitelslut du får i instruktionen.
-- Skriv fortsättningen så att det känns som samma pågående berättelse, inte som en ny fristående saga.
+- Följ noggrant sammanfattningen och slutet av förra kapitlet som finns i instruktionen.
+- Om du känner dig osäker, gör hellre kapitlet lite kortare och enkelt än att börja om från början.
 
 ### UTDATA
 - Skriv endast berättelsetexten.
