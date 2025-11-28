@@ -1,60 +1,27 @@
-// VERSION: 2.0.0 (BN-KIDS CHAPTER AWARE)
+// VERSION: 2.1.0 (BN-KIDS CHAPTER ENGINE, FÖRENKLAD)
 // BUILD: 2025-11-28
 //
-// Två lägen:
-// 1) GAMMALT LÄGE (ingen worldState/chapterIndex i body)
-//    → använder TEMPLATES, skriver en fristående saga (som innan).
-// 2) NYTT KAPITELLÄGE (worldState + chapterIndex från ws_button.gc.js)
-//    → använder KapitelFix, fortsätter där förra kapitlet slutade, inga omstarter.
+// En enda väg in:
+// - Tar alltid emot worldState/chapterIndex om det finns.
+// - Om worldState saknas funkar det ändå (skriver som fristående saga),
+//   men logiken är fortfarande "kapitel-medveten".
+//
+// Response innehåller alltid:
+// {
+//   ok: true/false,
+//   story: "...",
+//   debug: { ... }
+// }
 //
 // ENV:
 // - OPENAI_API_KEY (krävs)
 // - OPENAI_MODEL (valfritt, default "gpt-4o-mini")
 
-const { TEMPLATES } = require("./storyTemplates");
+const { TEMPLATES } = require("./storyTemplates"); // finns kvar för bakåtkompat, används knappt
 const fetch = require("node-fetch");
 
 // ------------------------------------------------------
-// GAMLA HJÄLPSAKER (behålls för kompatibilitet / single-story)
-// ------------------------------------------------------
-
-function estimateTokensFromWords(words) {
-  return Math.ceil(words * 1.6);
-}
-
-function pickTemplate(ageRange) {
-  if (!ageRange) return TEMPLATES["7-10"];
-  const key = String(ageRange).trim();
-  if (TEMPLATES[key]) return TEMPLATES[key];
-
-  if (key === "1-2" || key === "1" || key === "2") {
-    return TEMPLATES[key === "1" ? "1" : "2"];
-  }
-  if (key === "3-6") return TEMPLATES["3-6"];
-  if (key === "7-10") return TEMPLATES["7-10"];
-  if (key === "9-10") return TEMPLATES["9-10"];
-  if (key === "11-12" || key === "11") return TEMPLATES["11-12"];
-
-  return TEMPLATES["7-10"];
-}
-
-function splitIntoChunksByWords(text, targetWords = 200) {
-  const words = String(text || "")
-    .split(/\s+/)
-    .filter(Boolean);
-  if (words.length <= targetWords) return [String(text || "").trim()];
-  const chunks = [];
-  let i = 0;
-  while (i < words.length) {
-    const slice = words.slice(i, i + targetWords);
-    chunks.push(slice.join(" "));
-    i += targetWords;
-  }
-  return chunks;
-}
-
-// ------------------------------------------------------
-// NYA HJÄLPSAKER FÖR KAPITEL-LÄGE
+// Hjälpfunktioner
 // ------------------------------------------------------
 
 function normalizeAge(raw) {
@@ -74,25 +41,25 @@ function getLengthInstructionAndTokens(ageKey, lengthPreset) {
       case "7-8":
         return {
           baseInstr:
-            "Skriv på ett enkelt, tydligt och tryggt sätt som passar åldern. Korta meningar, tydliga känslor och få huvudkaraktärer.",
+            "Skriv på ett enkelt, tydligt och tryggt sätt som passar 7–8 år. Korta meningar, tydliga känslor, få huvudkaraktärer.",
           baseTokens: 900
         };
       case "9-10":
         return {
           baseInstr:
-            "Skriv på ett lite mer utvecklat sätt. Lite mer detaljer och dialog, men fortfarande tydligt och tryggt.",
+            "Skriv på ett lite mer utvecklat sätt som passar 9–10 år. Lite mer detaljer och dialog, men fortfarande tydligt och tryggt.",
           baseTokens: 1400
         };
       case "11-12":
         return {
           baseInstr:
-            "Skriv med mer djup och tempo. Mer känslor, mer dialog och lite mer avancerade scener, fortfarande barnvänligt.",
+            "Skriv med mer djup och tempo som passar 11–12 år. Mer dialog, mer känslor, men fortfarande barnvänligt.",
           baseTokens: 2000
         };
       case "13-15":
         return {
           baseInstr:
-            "Skriv för yngre tonåringar. Mogen men trygg ton, mer komplex handling, men utan våld eller sex.",
+            "Skriv för yngre tonåringar 13–15. Mogen men trygg ton, mer komplex handling, utan våld eller sex.",
           baseTokens: 2500
         };
       default:
@@ -145,16 +112,17 @@ function buildSystemPrompt_BNKids(ageKey) {
   return `
 Du är BN-Kids berättelsemotor. Du skriver barnanpassade sagor och kapitelböcker på svenska för åldersgruppen ${ageKey} år.
 
-Din viktigaste uppgift:
-- Följ instruktionen i användarens meddelande mycket noggrant.
-- Om det finns en särskild del som heter "KAPITELFIX – VIKTIGT" ska du följa den strikt, även om det strider mot dina vanliga vanor.
-- Särskilt: fortsätt berättelsen där förra kapitlet slutade, utan att starta om, om KAPITELFIX säger det.
+Viktigt:
+- Följ instruktionerna i användarens meddelande mycket noggrant.
+- Om det finns en del som heter "KAPITELFIX – VIKTIGT" ska du följa den strikt.
+- Särskilt: om KAPITELFIX säger att du ska fortsätta där förra kapitlet slutade,
+  får du INTE starta om berättelsen.
 
 Allmänt:
 - Håll tonen trygg och barnvänlig.
-- Undvik grovt innehåll, våld och skräck.
+- Undvik grovt innehåll, våld, skräck och romantik.
 - Anpassa språk och komplexitet till åldern.
-- Skriv endast själva berättelsetexten, inga rubriker, inga punktlistor, inga förklaringar.
+- Svara endast med själva berättelsetexten i löpande text.
 `.trim();
 }
 
@@ -166,11 +134,6 @@ async function generateStoryHandler(req, res) {
   try {
     const body = req.body || {};
 
-    const hasWorldState =
-      !!body.worldState ||
-      typeof body.chapterIndex !== "undefined" ||
-      typeof body.storyMode !== "undefined";
-
     const openAIKey = process.env.OPENAI_API_KEY;
     if (!openAIKey) {
       return res
@@ -178,139 +141,66 @@ async function generateStoryHandler(req, res) {
         .json({ ok: false, error: "OPENAI_API_KEY saknas i env." });
     }
 
-    // ------------------------------------------
-    // LÄGE 1: GAMMAL SINGLE-STORY (ingen worldState)
-    // ------------------------------------------
-    if (!hasWorldState) {
-      const {
-        ageRange = "7-10",
-        heroName = "",
-        prompt: userPrompt = ""
-      } = body;
-      const tpl = pickTemplate(ageRange);
+    // --------- Plocka worldState / meta ---------
 
-      let fullPrompt = tpl.prompt;
-      if (userPrompt) {
-        fullPrompt += `\n\nExtra info: ${String(userPrompt).trim()}`;
-      }
-      if (heroName) {
-        fullPrompt += `\n\nMain character name: ${String(heroName).trim()}`;
-      }
+    const ws = body.worldState || {};
+    const hasWorldState = !!body.worldState;
 
-      const maxWords = tpl.words[1];
-      const maxTokens = estimateTokensFromWords(maxWords) + 50;
+    const chapterIndex =
+      Number(body.chapterIndex || ws.chapterIndex || 1) || 1;
 
-      const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
-
-      const payload = {
-        model,
-        messages: [
-          {
-            role: "system",
-            content:
-              "You are a helpful creative story writer for children in Swedish."
-          },
-          { role: "user", content: fullPrompt }
-        ],
-        max_tokens: maxTokens,
-        temperature: 0.6
-      };
-
-      const r = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${openAIKey}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(payload)
-      });
-
-      if (!r.ok) {
-        const txt = await r.text().catch(() => "(no body)");
-        return res
-          .status(502)
-          .json({ ok: false, error: "OpenAI error", status: r.status, body: txt });
-      }
-
-      const jr = await r.json();
-      const content =
-        (jr.choices &&
-          jr.choices[0] &&
-          jr.choices[0].message &&
-          jr.choices[0].message.content) ||
-        (jr.choices && jr.choices[0] && jr.choices[0].text) ||
-        "";
-      const storyText = String(content || "").trim();
-
-      const lines = storyText.split("\n").map((l) => l.trim());
-      const imagePrompts = [];
-      const storyLines = [];
-      for (const line of lines) {
-        if (/^Image\d*:/i.test(line)) {
-          imagePrompts.push(line.replace(/^Image\d*:\s*/i, "").trim());
-        } else {
-          storyLines.push(line);
-        }
-      }
-      const story = storyLines.join("\n").trim();
-
-      const totalWords = story.split(/\s+/).filter(Boolean).length;
-      let chunks = [story];
-      if (totalWords > 400) {
-        chunks = splitIntoChunksByWords(story, 260);
-      }
-
-      return res.json({
-        ok: true,
-        ageRange,
-        wordsEstimate: totalWords,
-        chunksCount: chunks.length,
-        chunksWords: chunks.map((c) => c.split(/\s+/).filter(Boolean).length),
-        story,
-        imagePrompts
-      });
-    }
-
-    // ------------------------------------------
-    // LÄGE 2: NYTT KAPITELLÄGE (worldState + chapterIndex)
-    // ------------------------------------------
+    const storyMode =
+      body.storyMode ||
+      ws.story_mode ||
+      (chapterIndex > 1 ? "chapter_book" : "single_story");
 
     const promptRaw =
-      body.prompt || body.storyPrompt || body.childPrompt || "";
+      body.prompt ||
+      body.storyPrompt ||
+      body.childPrompt ||
+      ws._userPrompt ||
+      ws.last_prompt ||
+      "";
+
+    if (!promptRaw) {
+      return res
+        .status(400)
+        .json({ ok: false, error: "Barnets prompt saknas." });
+    }
 
     const heroName =
-      body.heroName || body.kidName || body.hero || "hjälten";
+      body.heroName ||
+      body.kidName ||
+      body.hero ||
+      (ws.meta && ws.meta.hero) ||
+      "hjälten";
 
     const ageGroupRaw =
       body.ageGroupRaw ||
       body.ageGroup ||
       body.ageRange ||
       body.age ||
+      (ws.meta && ws.meta.age) ||
       "9–10 år";
 
     const lengthPreset =
-      body.lengthPreset || body.length || body.lengthValue || "medium";
+      body.lengthPreset ||
+      body.length ||
+      body.lengthValue ||
+      (ws.meta && (ws.meta.lengthValue || ws.meta.length)) ||
+      "medium";
 
-    const storyMode =
-      body.storyMode ||
-      body.story_mode ||
-      (body.chapterIndex ? "chapter_book" : "single_story");
-
-    const chapterIndex = Number(body.chapterIndex || 1);
-    const worldState = body.worldState || {};
     const totalChapters =
       Number(
         body.totalChapters ||
-          (worldState.meta && worldState.meta.totalChapters)
+          (ws.meta && ws.meta.totalChapters) ||
+          8
       ) || 8;
 
-    const promptChanged = !!body.promptChanged;
-
-    if (!promptRaw && !(worldState && worldState.last_prompt)) {
-      return res
-        .status(400)
-        .json({ ok: false, error: "Barnets prompt saknas." });
-    }
+    const promptChanged =
+      typeof body.promptChanged === "boolean"
+        ? body.promptChanged
+        : false;
 
     const ageKey = normalizeAge(ageGroupRaw);
     const { lengthInstruction, maxTokens } = getLengthInstructionAndTokens(
@@ -318,10 +208,9 @@ async function generateStoryHandler(req, res) {
       lengthPreset
     );
 
-    const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+    // --------- Kapitelroll & historik ---------
 
-    // Kapitelroll
-    const userPromptStr = String(promptRaw || "");
+    const userPromptStr = String(promptRaw || "").trim();
     const userWantsEnd = /avslut|knyt ihop|slut(et)?/i.test(userPromptStr);
 
     let chapterRole;
@@ -336,26 +225,28 @@ async function generateStoryHandler(req, res) {
     }
 
     const previousSummary =
-      worldState.previousSummary || worldState.summary || "";
+      ws.previousSummary || ws.summary || "";
 
-    // Historik
     let previousChapters = [];
 
-    if (Array.isArray(worldState.previousChapters)) {
+    if (Array.isArray(ws.previousChapters)) {
       previousChapters = previousChapters.concat(
-        worldState.previousChapters.map(safeChapterToString).filter(Boolean)
+        ws.previousChapters.map(safeChapterToString).filter(Boolean)
       );
     }
-
-    if (Array.isArray(worldState.chapters)) {
+    if (Array.isArray(ws.chapters)) {
       previousChapters = previousChapters.concat(
-        worldState.chapters.map(safeChapterToString).filter(Boolean)
+        ws.chapters.map(safeChapterToString).filter(Boolean)
       );
     }
-
-    if (worldState.book && Array.isArray(worldState.book.chapters)) {
+    if (ws.book && Array.isArray(ws.book.chapters)) {
       previousChapters = previousChapters.concat(
-        worldState.book.chapters.map(safeChapterToString).filter(Boolean)
+        ws.book.chapters.map(safeChapterToString).filter(Boolean)
+      );
+    }
+    if (Array.isArray(body.previousChapters)) {
+      previousChapters = previousChapters.concat(
+        body.previousChapters.map(safeChapterToString).filter(Boolean)
       );
     }
 
@@ -373,14 +264,8 @@ async function generateStoryHandler(req, res) {
         ? String(previousChapters[previousChapters.length - 1] || "")
         : "";
 
-    const effectivePrompt =
-      userPromptStr && userPromptStr.trim()
-        ? userPromptStr.trim()
-        : worldState._userPrompt ||
-          worldState.last_prompt ||
-          "";
+    // --------- KapitelFix: ankra i sista scenen ---------
 
-    // KapitelFix
     let continuityInstruction = "";
     let lastScene = "";
 
@@ -398,9 +283,8 @@ Du SKA fortsätta direkt från sista scenen i föregående kapitel.
 Första meningen i detta kapitel ska kännas som NÄSTA RAD efter texten nedan.
 Du får INTE:
 - börja om sagan
-- hoppa till en ny dag eller ny tidpunkt
-- byta plats utan tydlig motivering
-- lägga in en ny allmän "inledning" (som om berättelsen startade om)
+- hoppa till en ny dag eller ny tidpunkt utan tydlig förklaring
+- byta plats eller huvudproblem utan att det följer logiskt av vad som hänt
 
 SISTA SCENEN FRÅN FÖRRA KAPITLET (ankare):
 "${lastScene}"
@@ -411,9 +295,11 @@ Fortsätt nu scenen, med samma huvudpersoner, samma situation, samma pågående 
 
     const systemPrompt = buildSystemPrompt_BNKids(ageKey);
 
+    // --------- Bygg userPrompt ---------
+
     const lines = [];
 
-    lines.push(`Barnets idé / prompt just nu: "${effectivePrompt}"`);
+    lines.push(`Barnets idé / prompt just nu: "${userPromptStr}"`);
     lines.push("");
     lines.push(`Hjälte: ${heroName}`);
     lines.push(`Åldersband: ${ageKey} år`);
@@ -430,9 +316,7 @@ Fortsätt nu scenen, med samma huvudpersoner, samma situation, samma pågående 
 
     if (storyMode === "chapter_book") {
       if (previousSummary) {
-        lines.push(
-          "Kort sammanfattning av vad som hänt hittills i boken:"
-        );
+        lines.push("Kort sammanfattning av vad som hänt hittills:");
         lines.push(shorten(previousSummary, 420));
         lines.push("");
       } else if (previousChapters.length) {
@@ -457,7 +341,10 @@ Fortsätt nu scenen, med samma huvudpersoner, samma situation, samma pågående 
       lines.push("");
     } else if (storyMode === "chapter_book" && chapterIndex === 1) {
       lines.push(
-        "Detta är första kapitlet. Sätt upp situationen så att kommande kapitel lätt kan fortsätta där detta slutar."
+        "Detta är första kapitlet. Börja i vardagen (plats, tid, enkel aktivitet) och låt äventyret växa fram."
+      );
+      lines.push(
+        "Avsluta kapitlet så att det är lätt att fortsätta direkt därifrån i nästa kapitel."
       );
       lines.push("");
     }
@@ -472,10 +359,7 @@ Fortsätt nu scenen, med samma huvudpersoner, samma situation, samma pågående 
         );
       } else {
         lines.push(
-          "Barnet har inte ändrat prompten sedan förra kapitlet."
-        );
-        lines.push(
-          "Fortsätt då samma scen och samma mål utan att starta om berättelsen."
+          "Barnet har inte ändrat prompten sedan förra kapitlet. Fortsätt då samma scen och samma mål utan att starta om berättelsen."
         );
       }
       lines.push("");
@@ -488,6 +372,8 @@ Fortsätt nu scenen, med samma huvudpersoner, samma situation, samma pågående 
     );
 
     const userPrompt = lines.join("\n");
+
+    const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
 
     const payload = {
       model,
@@ -530,10 +416,14 @@ Fortsätt nu scenen, med samma huvudpersoner, samma situation, samma pågående 
       ok: true,
       story,
       debug: {
-        mode: "chapter",
         chapterIndex,
         storyMode,
+        hasWorldState,
+        ageKey,
+        lengthPreset,
+        totalChapters,
         previousChaptersCount: previousChapters.length,
+        promptChanged,
         usedLastScene: Boolean(lastScene),
         lastScenePreview: lastScene ? shorten(lastScene, 120) : ""
       }
@@ -549,7 +439,5 @@ Fortsätt nu scenen, med samma huvudpersoner, samma situation, samma pågående 
 }
 
 module.exports = {
-  generateStoryHandler,
-  pickTemplate,
-  splitIntoChunksByWords
+  generateStoryHandler
 };
