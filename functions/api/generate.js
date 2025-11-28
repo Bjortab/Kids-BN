@@ -1,13 +1,15 @@
 // functions/api/generate.js
-// Pages Function: POST /api/generate
+// BN-KIDS — Cloudflare Pages Function: POST /api/generate
 //
-// BN-KIDS GC v7.2 – fokus på:
+// GC v7.3 – fokus:
+// - Säkrare kapitelindex: backend räknar själv ut kapitelnummer från previousChapters
 // - Stabil kapiteltråd (ingen omstart bara för att man klickar igen)
-// - promptChanged-stöd från ws_button.gc.js v7.1
-// - Kapitelroller: chapter_1 / chapter_middle / chapter_final / single_story
-// - KAPITELFIX: fortsätt direkt från sista scenen i förra kapitlet
-// - Mindre moral-floskler, mindre "äventyret har bara börjat"
-// - Debug-fält i svaret så vi kan se vad som händer
+// - Mindre floskler, mindre "äventyret har bara börjat"
+// - Tydlig fortsätt-instruktion för mittenkapitel
+//
+// Viktigt:
+// - Frontend (ws_button.gc.js) skickar worldState + ev. chapterIndex, men
+//   backend litar i första hand på worldState.previousChapters.length.
 
 export async function onRequestOptions({ env }) {
   const origin =
@@ -46,8 +48,9 @@ export async function onRequestPost({ request, env }) {
   try {
     const body = await request.json().catch(() => ({}));
 
-    // ------------------ Grunddata från body/worldState ------------------
-
+    // ------------------------------------------------------
+    // Grunddata från body
+    // ------------------------------------------------------
     const promptRaw =
       body.prompt ||
       body.storyPrompt ||
@@ -73,18 +76,44 @@ export async function onRequestPost({ request, env }) {
       body.lengthValue ||
       "medium";
 
-    const storyMode =
+    let storyMode =
       body.storyMode ||
       body.story_mode ||
       (body.chapterIndex ? "chapter_book" : "single_story");
 
-    const chapterIndex = Number(body.chapterIndex || 1);
     const worldState = body.worldState || {};
+    const promptChanged = !!body.promptChanged;
+
+    const previousChapters = Array.isArray(worldState.previousChapters)
+      ? worldState.previousChapters
+      : [];
+
+    const previousChaptersCount = previousChapters.length;
+
     const totalChapters =
       Number(body.totalChapters || worldState?.meta?.totalChapters) || 8;
 
-    const promptChanged = !!body.promptChanged;
+    // ------------------------------------------------------
+    // Robust kapitelIndex: räkna från historiken
+    // ------------------------------------------------------
+    let chapterIndexFromBody = Number(body.chapterIndex || 0);
+    let chapterIndex;
 
+    if (previousChaptersCount > 0) {
+      // Om det finns historik: kapitel = antal tidigare + 1
+      chapterIndex = previousChaptersCount + 1;
+    } else if (chapterIndexFromBody > 0) {
+      // Första kapitlet kan komma via body
+      chapterIndex = chapterIndexFromBody;
+    } else {
+      chapterIndex = 1;
+    }
+
+    if (!storyMode || storyMode === "single_story") {
+      storyMode = chapterIndex > 1 ? "chapter_book" : "single_story";
+    }
+
+    // Prompt får aldrig vara helt tom
     if (!promptRaw && !worldState?.last_prompt) {
       return json(
         { ok: false, error: "Barnets prompt saknas." },
@@ -101,19 +130,19 @@ export async function onRequestPost({ request, env }) {
       );
     }
 
-    // ------------------ Ålder + längd → instr + max_tokens ------------------
-
+    // ------------------------------------------------------
+    // Ålder + längd → instr + max_tokens
+    // ------------------------------------------------------
     const ageKey = normalizeAge(ageGroupRaw);
     const { lengthInstruction, maxTokens } = getLengthInstructionAndTokens(
       ageKey,
       lengthPreset
     );
 
-    // ------------------ Kapitelroll ------------------
-
-    const userWantsEnd = /avslut|knyt ihop|slut(et)?/i.test(
-      (promptRaw || "").toString()
-    );
+    // ------------------------------------------------------
+    // Kapitelroll: styr hur modellen ska bete sig
+    // ------------------------------------------------------
+    const userWantsEnd = /avslut|knyt ihop|slut(et)?/i.test(promptRaw || "");
 
     let chapterRole;
     if (!storyMode || storyMode === "single_story") {
@@ -126,45 +155,27 @@ export async function onRequestPost({ request, env }) {
       chapterRole = "chapter_middle";
     }
 
-    // ------------------ Historik från worldState ------------------
-
+    // ------------------------------------------------------
+    // Historik från worldState
+    // ------------------------------------------------------
     const previousSummary =
       worldState.previousSummary ||
       worldState.summary ||
       "";
 
-    let previousChapters = [];
-
-    if (Array.isArray(worldState.previousChapters)) {
-      previousChapters = previousChapters.concat(
-        worldState.previousChapters
-      );
-    }
-    if (Array.isArray(worldState.chapters)) {
-      previousChapters = previousChapters.concat(worldState.chapters);
-    }
-    if (worldState.book && Array.isArray(worldState.book.chapters)) {
-      previousChapters = previousChapters.concat(
-        worldState.book.chapters
-      );
-    }
-    if (Array.isArray(body.previousChapters)) {
-      previousChapters = previousChapters.concat(body.previousChapters);
-    }
-
-    previousChapters = previousChapters
-      .map(safeChapterToString)
-      .filter(Boolean);
-
-    if (previousChapters.length > 1) {
-      // ta bort dubbletter
-      previousChapters = Array.from(new Set(previousChapters));
-    }
-
     const compactHistory = previousChapters
       .map((txt, idx) => `Kapitel ${idx + 1}: ${shorten(txt, 320)}`)
       .slice(-3)
       .join("\n\n");
+
+    const lastChapterText =
+      previousChaptersCount > 0
+        ? String(previousChapters[previousChaptersCount - 1] || "")
+        : "";
+
+    const lastScenePreview = lastChapterText
+      ? shorten(lastChapterText.slice(-600), 320)
+      : "";
 
     const effectivePrompt =
       promptRaw && String(promptRaw).trim()
@@ -173,46 +184,14 @@ export async function onRequestPost({ request, env }) {
            worldState.last_prompt ||
            "");
 
-    const lastChapterText =
-      previousChapters.length > 0
-        ? String(previousChapters[previousChapters.length - 1] || "")
-        : "";
-
-    // ------------------ KAPITELFIX: ankra i sista scenen ------------------
-
-    let continuityInstruction = "";
-    let lastScene = "";
-
-    if (
-      storyMode === "chapter_book" &&
-      chapterIndex > 1 &&
-      lastChapterText
-    ) {
-      lastScene = lastChapterText.slice(-450).trim();
-
-      continuityInstruction = `
-KAPITELFIX – VIKTIGT:
-
-Du SKA fortsätta direkt från sista scenen i föregående kapitel.
-Första meningen i detta kapitel ska kännas som NÄSTA RAD efter texten nedan.
-Du får INTE:
-- börja om sagan
-- hoppa till en ny dag eller ny tidpunkt utan tydlig förklaring
-- byta plats eller huvudproblem utan att det följer logiskt av vad som hänt
-
-SISTA SCENEN FRÅN FÖRRA KAPITLET (ankare):
-"${lastScene}"
-
-Fortsätt nu scenen, med samma huvudpersoner, samma situation, samma pågående händelse.
-`.trim();
-    }
-
-    // ------------------ SYSTEMPROMPT ------------------
-
+    // ------------------------------------------------------
+    // SYSTEMPROMPT – BN-Kids stil + regler
+    // ------------------------------------------------------
     const systemPrompt = buildSystemPrompt_BNKids_v7(ageKey);
 
-    // ------------------ USERPROMPT ------------------
-
+    // ------------------------------------------------------
+    // USERPROMPT – barnets idé + worldstate + kapitelroll + promptChanged
+    // ------------------------------------------------------
     const lines = [];
 
     // Barnets idé
@@ -241,7 +220,7 @@ Fortsätt nu scenen, med samma huvudpersoner, samma situation, samma pågående 
         );
         lines.push(shorten(previousSummary, 420));
         lines.push("");
-      } else if (previousChapters.length) {
+      } else if (previousChaptersCount > 0) {
         lines.push(
           "Tidigare kapitel finns, men ingen separat sammanfattning är sparad. Här är några viktiga saker som hänt:"
         );
@@ -255,33 +234,37 @@ Fortsätt nu scenen, med samma huvudpersoner, samma situation, samma pågående 
       }
     }
 
+    if (storyMode === "chapter_book" && previousChaptersCount > 0 && lastScenePreview) {
+      lines.push(
+        "Här är slutet av förra kapitlet (den scen du ska fortsätta direkt efter):"
+      );
+      lines.push(lastScenePreview);
+      lines.push("");
+    }
+
     // Kapitelroll-instruktioner
     lines.push(`Kapitelroll just nu: ${chapterRole}.`);
-    lines.push("");
 
-    if (continuityInstruction) {
-      // tvinga modell att haka i förra kapitlets slut
-      lines.push(continuityInstruction);
-      lines.push("");
-    } else if (chapterRole === "chapter_1" && storyMode === "chapter_book") {
+    if (chapterRole === "chapter_1" && storyMode === "chapter_book") {
       lines.push(
         "Kapitel 1 ska börja i vardagen: visa plats, tid och en enkel aktivitet innan magi/äventyr eller huvudproblemet dyker upp."
       );
       lines.push(
         "Barnets idé ska vävas in gradvis – inte allt på första meningen."
       );
-      lines.push("");
     } else if (chapterRole === "chapter_middle" && storyMode === "chapter_book") {
       lines.push(
         "Detta är ett mittenkapitel. Fortsätt samma huvudmål som tidigare."
       );
       lines.push(
-        "Visa ett tydligt delmål eller hinder på vägen, men introducera inte en helt ny huvudkonflikt."
+        "Börja precis där förra kapitlet slutade. Upprepa inte samma startscen, utan för handlingen framåt."
       );
       lines.push(
-        "Upprepa inte exakt samma händelse (t.ex. springa över samma bro igen utan förklaring). För handlingen framåt."
+        "Skapa ett tydligt delmål eller hinder på vägen, men introducera inte en helt ny huvudkonflikt."
       );
-      lines.push("");
+      lines.push(
+        "Upprepa inte exakt samma händelse (t.ex. leta efter samma skatt på exakt samma sätt) utan tydlig förklaring."
+      );
     } else if (chapterRole === "chapter_final" && storyMode === "chapter_book") {
       lines.push(
         "Detta ska vara ett avslutande kapitel i samma bok, med samma karaktärer och samma huvudmål."
@@ -295,8 +278,9 @@ Fortsätt nu scenen, med samma huvudpersoner, samma situation, samma pågående 
       lines.push(
         "Avsluta varmt och hoppfullt men utan moral-predikningar."
       );
-      lines.push("");
     }
+
+    lines.push("");
 
     // promptChanged → hur modellen ska tolka barnets nya önskan
     if (storyMode === "chapter_book" && chapterIndex > 1) {
@@ -333,13 +317,14 @@ Fortsätt nu scenen, med samma huvudpersoner, samma situation, samma pågående 
 
     const userPrompt = lines.join("\n");
 
-    // ------------------ OpenAI-anrop ------------------
-
+    // ------------------------------------------------------
+    // OpenAI-anrop
+    // ------------------------------------------------------
     const model = env.OPENAI_MODEL || "gpt-4o-mini";
 
     const payload = {
       model,
-      temperature: 0.35, // lägre för mindre random omstarter
+      temperature: 0.7, // lite lägre för mindre random omstarter
       max_tokens: maxTokens,
       messages: [
         { role: "system", content: systemPrompt },
@@ -383,10 +368,10 @@ Fortsätt nu scenen, med samma huvudpersoner, samma situation, samma pågående 
           ageKey,
           lengthPreset,
           totalChapters,
-          previousChaptersCount: previousChapters.length,
+          previousChaptersCount,
           promptChanged,
-          usedLastScene: Boolean(lastScene),
-          lastScenePreview: lastScene ? shorten(lastScene, 120) : ""
+          usedLastScene: !!lastScenePreview,
+          lastScenePreview
         }
       },
       200,
@@ -454,16 +439,16 @@ function getLengthInstructionAndTokens(ageKey, lengthPreset) {
   })();
 
   let factor = 1.0;
-  if (lp.includes("kort")) factor = 0.7;
-  else if (lp.includes("lång")) factor = 1.3;
+  if (lp.includes("kort") || lp.includes("short")) factor = 0.7;
+  else if (lp.includes("lång") || lp.includes("long")) factor = 1.3;
 
   const maxTokens = Math.round(base.baseTokens * factor);
 
   const lengthInstruction =
     base.baseInstr +
-    (lp.includes("kort")
+    (lp.includes("kort") || lp.includes("short")
       ? " Denna saga/kapitel ska vara kortare än normalt."
-      : lp.includes("lång")
+      : lp.includes("lång") || lp.includes("long")
       ? " Detta kapitel får gärna vara längre än normalt."
       : " Längden kan vara mittemellan – inte för kort, inte för lång.");
 
@@ -510,7 +495,7 @@ Anpassa språk, tempo och komplexitet efter åldern:
 ### KAPITELBOKSLÄGE
 När du skriver en kapitelbok:
 - Kapitel 1: introducera vardagen, huvudpersonen, miljön och det första fröet till huvudproblemet. Lugn start, öka spänningen mot slutet av kapitlet.
-- Mittenkapitel: fortsätt utforska samma huvudmål. Visa hinder, framsteg och små överraskningar. Max en enkel sidotråd. Upprepa inte samma scen (t.ex. springa över samma bro) utan tydlig orsak.
+- Mittenkapitel: fortsätt utforska samma huvudmål. Visa hinder, framsteg och små överraskningar. Max en enkel sidotråd. Upprepa inte samma scen (t.ex. leta efter samma skatt i samma skog) utan tydlig orsak.
 - Slutkapitel: knyt ihop de viktigaste trådarna, lös huvudkonflikten tydligt och barnvänligt. Introducera inte stora nya karaktärer eller nya huvudproblem.
 - Ge gärna en mjuk cliffhanger i mittenkapitel, men inte i varje kapitel och aldrig i sista kapitlet.
 
@@ -531,18 +516,6 @@ function shorten(text, maxLen) {
   const s = String(text || "").replace(/\s+/g, " ").trim();
   if (s.length <= maxLen) return s;
   return s.slice(0, maxLen - 1) + "…";
-}
-
-function safeChapterToString(chapter) {
-  if (!chapter) return "";
-  if (typeof chapter === "string") return chapter;
-  if (typeof chapter === "object") {
-    if (typeof chapter.text === "string") return chapter.text;
-    if (typeof chapter.chapterText === "string") return chapter.chapterText;
-    if (typeof chapter.story === "string") return chapter.story;
-    if (typeof chapter.content === "string") return chapter.content;
-  }
-  return "";
 }
 
 function json(obj, status = 200, origin = "*") {
