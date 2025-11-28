@@ -1,11 +1,15 @@
 // functions/api/generate.js
 // BN-KIDS — Cloudflare Pages Function: POST /api/generate
 //
-// GC v7.3.2 – fokus:
-// - EXAKT samma kapitelmotor som v7.3 (chapterIndex, previousChapters, lastScenePreview)
-// - Striktare kontinuitet: huvudfigur/huvud-objekt får inte bytas ut utan förklaring
-// - promptChanged: barnets nya önskan ska märkas i SAMMA kapitel
-// - Tydligare instruktion att börja direkt efter föregående scen i mittenkapitel
+// GC v7.3.3 – fokus:
+// - Behåller fungerande kapitelmotor från v7.3.2 (ingen ändrad logik för chapterIndex / previousChapters).
+// - Förhindrar kapitelstart med "..." och avhuggna meningar.
+// - Mittenkapitel: max 1–2 meningars kort påminnelse, sedan ny scen framåt.
+// - Gåtor/rim/pussel ska vara konsekventa mellan kapitel (samma gåta tills den löses).
+//
+// Viktigt:
+// - Frontend (ws_button.gc.js) skickar worldState + ev. chapterIndex,
+//   men backend litar i första hand på worldState.previousChapters.length.
 
 export async function onRequestOptions({ env }) {
   const origin =
@@ -250,19 +254,19 @@ export async function onRequestPost({ request, env }) {
       );
     } else if (chapterRole === "chapter_middle" && storyMode === "chapter_book") {
       lines.push(
-        "Detta är ett mittenkapitel. Fortsätt samma huvudmål och samma huvudfigur(er) som tidigare."
+        "Detta är ett mittenkapitel. Fortsätt samma huvudmål som tidigare."
       );
       lines.push(
-        "Börja kapitlet direkt efter slutet av förra kapitlet: samma plats eller en tydligt förklarad förflyttning, samma karaktärer, samma situation."
+        "Börja precis där förra kapitlet slutade, men skriv en NY fullständig öppningsmening (inga '...' och inga avhuggna meningar)."
       );
       lines.push(
-        "Starta inte om i en ny vardagsscen och skriv inte om början på äventyret igen."
+        "Du får ge högst 1–2 korta meningar som påminner om vad de håller på med nu, men hoppa sedan snabbt vidare in i en ny scen framåt i samma äventyr."
       );
       lines.push(
         "Skapa ett tydligt delmål eller hinder på vägen, men introducera inte en helt ny huvudkonflikt."
       );
       lines.push(
-        "Upprepa inte exakt samma händelse (t.ex. leta efter samma sak på samma sätt) utan tydlig förklaring."
+        "Upprepa inte exakt samma scen (t.ex. leta efter samma skatt på samma plats) utan tydlig orsak."
       );
     } else if (chapterRole === "chapter_final" && storyMode === "chapter_book") {
       lines.push(
@@ -288,13 +292,10 @@ export async function onRequestPost({ request, env }) {
           "Viktigt: Barnet har nu ändrat eller lagt till en ny önskan för JUST DETTA KAPITEL."
         );
         lines.push(
-          "Du ska FORTSÄTTA samma bok och samma huvudfigur, men låta denna nya önskan synas tydligt i det här kapitlet."
+          "Du ska FORTSÄTTA samma bok, men låta denna nya önskan styra vad som händer nu."
         );
         lines.push(
-          "Genomför barnets nya önskan innan kapitlet är slut (minst en tydlig scen eller händelse där det märks)."
-        );
-        lines.push(
-          "Du får INTE börja om berättelsen och du får INTE skjuta upp barnets önskan till senare kapitel."
+          "Du får INTE börja om från början – allt som hänt i tidigare kapitel gäller fortfarande."
         );
       } else {
         lines.push(
@@ -465,12 +466,12 @@ Du är BN-Kids berättelsemotor. Din uppgift är att skriva barnanpassade sagor 
 - Följ alltid barnets prompt och tema noggrant.
 - Byt aldrig genre eller huvudtema på egen hand.
 - Om barnet nämner ett yrke (t.ex. detektiv) ska kapitlet kretsa kring det yrket.
-- Om barnet nämner ett viktigt objekt eller en magisk figur (t.ex. en enhörning, en magisk bok, en hemlig dörr) ska det vara centralt tills konflikten är löst.
+- Om barnet nämner ett viktigt objekt (t.ex. en magisk dörr, drakarnas land, en hemlig hiss) ska objektet vara centralt tills konflikten är löst.
 - Undvik mörker/skräck, hotfulla skuggor och monster om barnet inte specifikt ber om det.
 
 ### ÅLDERSBAND (${ageKey})
 Anpassa språk, tempo och komplexitet efter åldern:
-- 7–8: enklare meningar, tydliga känslor, få karaktärer, inga subplots. Max EN enkel gåta i hela boken, inte en gåta i varje kapitel.
+- 7–8: enklare meningar, tydliga känslor, få karaktärer, inga subplots. Max EN enkel gåta i hela boken, inte en ny gåta i varje kapitel.
 - 9–10: lite mer detaljer, lite mer spänning, max en enkel sidotråd.
 - 11–12: mer djup, mer dialog, mer avancerade känslor, fortfarande tryggt.
 - 13–15: något mognare, men fortfarande barnvänligt och utan grafiskt våld eller sex.
@@ -479,6 +480,8 @@ Anpassa språk, tempo och komplexitet efter åldern:
 - Börja aldrig direkt med barnets prompt i första meningen.
 - Kapitel och sagor ska börja i vardagen: plats, tid, enkel aktivitet, stämning.
 - Ge 3–6 meningar startscen innan magi/äventyr eller huvudproblemet dyker upp.
+- Börja ALDRIG ett kapitel med "..." eller en avhuggen, halv mening. Skriv alltid en ny, tydlig öppningsmening.
+- I mittenkapitel får du bara ha en mycket kort påminnelse (max 1–2 meningar) om vad de håller på med nu – sedan ska scenen röra sig framåt.
 - Variera miljöer och objekt: använd inte alltid samma träd, samma skattkartor, samma kistor eller samma "mystiska röst bakom ryggen".
 - "En röst bakom sig" eller liknande billiga skräcktriggers är förbjudna.
 - Använd dialog naturligt, men inte i varje mening.
@@ -497,16 +500,16 @@ Anpassa språk, tempo och komplexitet efter åldern:
 ### KAPITELBOKSLÄGE
 När du skriver en kapitelbok:
 - Kapitel 1: introducera vardagen, huvudpersonen, miljön och det första fröet till huvudproblemet. Lugn start, öka spänningen mot slutet av kapitlet.
-- Mittenkapitel: fortsätt utforska samma huvudmål. Visa hinder, framsteg och små överraskningar. Max en enkel sidotråd. Upprepa inte samma scen (t.ex. leta efter samma skatt i samma skog) utan tydlig orsak.
+- Mittenkapitel: fortsätt utforska samma huvudmål. Visa hinder, framsteg och små överraskningar. Max en enkel sidotråd. Upprepa inte samma scen utan tydlig orsak.
 - Slutkapitel: knyt ihop de viktigaste trådarna, lös huvudkonflikten tydligt och barnvänligt. Introducera inte stora nya karaktärer eller nya huvudproblem.
 - Ge gärna en mjuk cliffhanger i mittenkapitel, men inte i varje kapitel och aldrig i sista kapitlet.
 
 ### KONTINUITET
 - Karaktärer får inte byta namn, kön eller personlighet utan förklaring.
-- Viktiga föremål och magiska figurer (t.ex. enhörningen Lilla Stjärna, den magiska boken, den hemliga dörren) ska finnas kvar genom hela boken tills huvudkonflikten är löst.
-- Du får lägga till nya figurer, men du får inte byta ut den viktigaste figuren mot en annan (t.ex. byta enhörningen mot en uggla) utan en tydlig scen där förvandlingen händer.
+- Viktiga föremål (t.ex. draken, dörren, hissen, den magiska boken) ska användas konsekvent.
 - Om tidigare sammanfattning eller kapitelbeskrivningar finns, ska de följas lojalt.
 - Om ett djur eller föremål redan definierats (t.ex. en kanin) får det inte plötsligt bli ett annat djur (t.ex. en hund) utan tydlig magisk förklaring.
+- Om en gåta, ett rim eller ett pussel har introducerats ska det vara samma gåta i nästa kapitel tills den är löst. Ändra inte själva gåtan eller svaret utan tydlig förklaring.
 
 ### UTDATA
 - Skriv endast berättelsetexten.
