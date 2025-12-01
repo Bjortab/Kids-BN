@@ -1,7 +1,7 @@
 // functions/api/generate.js
 // BN-KIDS — Cloudflare Pages Function: POST /api/generate
 //
-// GC v8.1 – StoryEngine v2.2
+// GC v8.2 – StoryEngine v2.3
 // -------------------------------------------
 // - Behåller fungerande kapitelmotor från v7.3 (chapterIndex via previousChapters.length)
 // - Följetongsläge: en bok är ett deläventyr, inte "rädda världen" på 10 kapitel
@@ -14,11 +14,14 @@
 //   * Max 1 ny viktig figur + 1 ny viktig sak per kapitel
 //   * HÅRD scenkontinuitet: mittenkapitel får inte starta om samma händelse i ny miljö
 //   * En händelse kan pausas och fortsätta i senare kapitel (samma grej, inte “ny”)
-//   * De första meningarna i kapitel 2+ måste fortsätta direkt från slutscenen (om ingen tydlig tidsmarkör)
 //   * Kapitlen med nummer > 1 får ALDRIG skrivas som om de är första kapitlet i boken
 //   * Floskler och moraliska klyschor bannlyses i avslut
-//   * Allt skrivs på naturlig, modern SVENSKA (ingen intern eng → sv-översättning)
-//   * Gåtor & prov: max EN enkel gåta / prov i hela boken, inga upprepade “test” från mentorn
+//   * Allt skrivs på naturlig, modern SVENSKA
+//   * Gåtor & prov: max EN enkel gåta / prov i hela boken, och om flera nämns i dialog
+//     måste texten direkt förklara att bara en uppgift faktiskt gäller nu.
+//   * Magiska böcker: om boken varit öppen/bläddrad får den inte plötsligt vara låst
+//     med fysisk nyckel i senare kapitel. "Låsa upp boken" senare betyder låsa upp
+//     hemligheter/innehåll, inte sätta i ett nytt hänglås.
 
 export async function onRequestOptions({ env }) {
   const origin =
@@ -205,9 +208,9 @@ export async function onRequestPost({ request, env }) {
            "");
 
     // ------------------------------------------------------
-    // SYSTEMPROMPT – BN-Kids v2.2
+    // SYSTEMPROMPT – BN-Kids v2.3
     // ------------------------------------------------------
-    const systemPrompt = buildSystemPrompt_BNKids_v2_2(ageKey);
+    const systemPrompt = buildSystemPrompt_BNKids_v2_3(ageKey);
 
     // ------------------------------------------------------
     // USERPROMPT – barnets idé + worldstate + kapitelroll + följetong + promptChanged
@@ -344,7 +347,7 @@ export async function onRequestPost({ request, env }) {
         "Om förra kapitlet slutade med att de började göra något (rita en karta, gå till parken, prata med någon) ska detta kapitel fortsätta samma aktivitet eller visa vad som händer direkt efter. Inte starta om aktiviteten på en ny plats som om den vore ny."
       );
       lines.push(
-        "En tydlig engångshändelse (presentera en ny elev, börja rita karta, hitta en nyckel, öppna en magisk bok första gången) får bara introduceras EN gång i boken."
+        "En tydlig engångshändelse (ny elev, första gången de öppnar en bok, hittar en nyckel, börjar ett projekt) får bara introduceras EN gång i boken."
       );
       lines.push(
         "Du får pausa en aktivitet i ett kapitel och återuppta den senare, men då ska du tydligt visa att det är samma aktivitet de fortsätter med."
@@ -408,7 +411,7 @@ export async function onRequestPost({ request, env }) {
     lines.push(lengthInstruction);
     lines.push("");
     lines.push(
-      "VIKTIGT SPRÅK: Du tänker och skriver uteslutande på SVENSKA. Du får inte först formulera texten på engelska och sedan översätta. Skriv direkt på naturlig, modern svenska som ett barn skulle förstå."
+      "SPRÅK: Du tänker och skriver uteslutande på SVENSKA. Du får inte först formulera texten på engelska och sedan översätta. Skriv direkt på naturlig, modern svenska som ett barn skulle förstå."
     );
     lines.push(
       "Undvik konstlade eller för gamla ord. Skriv vardagligt men fint. Variera ditt språk – använd inte samma ord (t.ex. 'förväntansfull') i varje stycke."
@@ -575,10 +578,10 @@ function getSeriesPhaseForBook(chapterIndex, totalChapters) {
   }
 }
 
-// Systemprompt – StoryEngine v2.2, hård scenkontroll + anti-floskler + svensk stil + anti-gåta
-function buildSystemPrompt_BNKids_v2_2(ageKey) {
+// Systemprompt – StoryEngine v2.3
+function buildSystemPrompt_BNKids_v2_3(ageKey) {
   return `
-Du är BN-Kids StoryEngine v2.2. Du skriver kapitelböcker och sagor på SVENSKA för barn. Ditt mål är att hålla en tydlig röd tråd, långsamt tempo och trygg ton.
+Du är BN-Kids StoryEngine v2.3. Du skriver kapitelböcker och sagor på SVENSKA för barn. Ditt mål är att hålla en tydlig röd tråd, långsamt tempo och trygg ton.
 
 Du tänker och skriver direkt på svenska. Du får inte först formulera text på engelska och sedan översätta.
 
@@ -616,8 +619,21 @@ Detta är viktiga regler för ALLA åldrar:
 - Om du introducerar ett uppdrag med en sak (t.ex. en kristall, en nyckel, en bok):
   - ska det vara EN tydlig sak,
   - uppdraget får inte förvandlas till en lång serie abstrakta gåtor.
+- Om en figur i dialog råkar säga att det finns flera prov eller flera gåtor
+  ska texten direkt förklara att det i praktiken bara finns EN verklig uppgift
+  i den här boken (t.ex. "de andra sparar vi till en annan gång").
 - Använd inte formuleringar som "du måste först klara tre prov", "för att bevisa att du är värdig", "lös min gåta så får du veta mer".
 - Mentorfigurer får förklara, stötta och vara hemlighetsfulla, men de ska inte testa barnen om och om igen.
+
+------------------------------------
+MAGISKA BÖCKER OCH LÅS
+------------------------------------
+- Om en bok redan varit öppen och barnet har bläddrat i den i ett tidigare kapitel får den inte plötsligt beskrivas som låst med hänglås, kedja eller fysisk nyckel i senare kapitel.
+- Om barnet i sin prompt skriver något i stil med "låsa upp boken" i ett senare kapitel:
+  - tolka det som att de låser upp NYA hemligheter i boken: gömda sidor, förseglade kapitel, dold text.
+  - det kan gärna ske med en enkel besvärjelse, symboler, ljus eller att boken reagerar på känslor.
+  - använd inte en helt ny fysisk nyckel om boken tidigare bara varit en vanlig bok.
+- En bok kan alltså vara öppen men ändå dölja innehåll som "låses upp" magiskt; det är innehållet som öppnas, inte själva boken som fysiskt lås.
 
 ------------------------------------
 KAPITEL 1 – STRIKTA REGLER
@@ -649,7 +665,7 @@ När det redan finns kapitel ska du följa dessa regler:
 1. Detta är INTE första kapitlet:
 - Om kapitlet har nummer större än 1 får du aldrig skriva det som om boken börjar här.
 - Du får inte öppna med en ny "Det var en vanlig dag..."-start som introducerar huvudpersonen, skolan eller miljön på nytt.
-- Du får inte presentera samma person igen som om de var nya (t.ex. "Det här är Ella, hon är ny i klassen") om personen redan introducerats i tidigare kapitel.
+- Du får inte presentera samma person igen som om de var nya om de redan introducerats.
 
 2. Scenlåsning:
 - Första stycket i kapitel 2+ ska kännas som en fortsättning på föregående kapitel:
@@ -670,13 +686,12 @@ När det redan finns kapitel ska du följa dessa regler:
   - att en karta börjar ritas,
   - att en nyckel hittas,
   - att en magisk bok öppnas för första gången.
-- I senare kapitel ska du referera till samma händelse ("kartan de ritade i parken", "nyckeln de hittat tidigare") – inte beskriva starten som om den händer igen.
+- I senare kapitel ska du referera till samma händelse ("kartan de ritade i parken", "boken de redan öppnat") – inte beskriva starten som om den händer igen.
 
 5. Pausa och återuppta:
 - Du får pausa en aktivitet i ett kapitel och återuppta den i ett senare kapitel.
 - När du tar upp den igen ska du tydligt visa att det är samma aktivitet:
   "Nästa dag fortsatte de på kartan de börjat rita i parken."
-- Du får inte låtsas som att det är en helt ny karta eller en helt ny plan.
 
 6. Delmål:
 - Mittenkapitel ska ha ett litet delmål eller hinder: en konflikt, en miss, en diskussion, ett dilemma.
@@ -710,7 +725,7 @@ Du får INTE avsluta kapitel med generiska moraliska floskler. Undvik formulerin
 - "ingenting skulle någonsin bli som förut",
 - "det var början på något nytt som skulle förändra deras liv",
 - "allt kändes möjligt".
-I stället: avsluta med en konkret handling, enkel tanke eller känsla i nuet: någon som ler, är nervös inför morgondagen, funderar över en fråga, eller går hem i kvällsljuset.
+I stället: avsluta med en konkret handling, enkel tanke eller känsla i nuet.
 
 4. Språk:
 - Skriv på naturlig, modern svenska.
@@ -730,6 +745,7 @@ KONTINUITET
 ------------------------------------
 - Karaktärer får inte byta namn, kön eller personlighet utan tydlig förklaring.
 - Viktiga föremål ska användas konsekvent. Om en karta ritats i parken är det samma karta i senare kapitel.
+- Om en bok redan varit öppen/bläddrad ska den inte plötsligt beskrivas som ny-låst med fysisk nyckel senare.
 - Upprepa inte långa stycken eller scener från tidigare kapitel. Om du behöver påminna, gör det kort och integrerat i nuvarande scen.
 
 ------------------------------------
