@@ -1,17 +1,19 @@
 // functions/api/generate.js
 // BN-KIDS — Cloudflare Pages Function: POST /api/generate
 //
-// GC v7.7 – fokus:
+// GC v7.8 – fokus:
 // - Behåller fungerande kapitelmotor från v7.3 (kapitelIndex via previousChapters.length)
 // - Följetongsläge: en bok är ett deläventyr, inte "rädda världen" på 10 kapitel
 // - Mindre floskler & äventyrsslogans, mjukare kapitelavslut för 7–9 år
 // - Hårdare regler för magi-progress (ingen "supermagi" utan träning eller prompt)
 // - Högre variation i startscener, mindre recaps i början av varje kapitel
-// - StoryEngine v2 + extra åtstramning:
+// - StoryEngine v2 + HARD RULES v7.8:
 //   * Kapitel 1: ingen magiträning, inga portaler, inga "detta ska förändra deras liv för alltid"
 //   * Max 1 ny viktig figur + 1 magisk sak per kapitel
 //   * Magi och bok ÄR INTE standard – om barnet inte nämner magi ska allt vara vardagligt
-//   * Neutrala seriesPhase-texter (ingen hårdkodad "bok + magi")
+//   * HÅRD scenkontinuitet: ett kapitel får inte starta om samma händelse i ny miljö
+//   * Händelser får pausas i ett kapitel och fortsättas i senare kapitel (samma sak, inte ny)
+//   * Floskler och moraliska klyschor bannlyses i avslut
 
 export async function onRequestOptions({ env }) {
   const origin =
@@ -198,9 +200,9 @@ export async function onRequestPost({ request, env }) {
            "");
 
     // ------------------------------------------------------
-    // SYSTEMPROMPT – BN-Kids stil + regler (v7.7)
+    // SYSTEMPROMPT – BN-Kids stil + regler (v7.8)
     // ------------------------------------------------------
-    const systemPrompt = buildSystemPrompt_BNKids_v7_4(ageKey);
+    const systemPrompt = buildSystemPrompt_BNKids_v7_8(ageKey);
 
     // ------------------------------------------------------
     // USERPROMPT – barnets idé + worldstate + kapitelroll + följetong + promptChanged
@@ -325,16 +327,19 @@ export async function onRequestPost({ request, env }) {
         "Detta är ett mittenkapitel. Fortsätt samma huvudmål som tidigare, i följetongs-tempo."
       );
       lines.push(
-        "Börja precis där förra kapitlet slutade. Upprepa inte samma startscen eller dialog. Gå rakt in i nuet."
+        "Börja precis där förra kapitlet slutade. Du får INTE hoppa tillbaka i tid eller byta plats utan tydlig tidsmarkör (t.ex. 'Nästa dag i klassrummet...')."
       );
       lines.push(
-        "Om förra kapitlet slutade med att de bestämde sig för att träna eller göra något särskilt, ska detta kapitel fokusera just på det."
+        "Om förra kapitlet slutade med att de började göra något (t.ex. rita en karta, öppna en bok, planera en presentation) ska detta kapitel fortsätta samma aktivitet, inte starta om den som en ny händelse på en annan plats."
+      );
+      lines.push(
+        "En enskild handling (som att börja rita en karta) får bara 'starta' en gång. Senare kapitel får fortsätta, justera eller använda samma karta, men inte beskriva starten som om den händer igen."
+      );
+      lines.push(
+        "Du får pausa en aktivitet i ett kapitel och låta karaktärerna göra något annat, men när du tar upp aktiviteten igen i ett senare kapitel ska du tydligt markera att det är samma sak de jobbar vidare på, inte något helt nytt."
       );
       lines.push(
         "Skapa ett tydligt delmål eller hinder på vägen, men introducera inte en helt ny huvudkonflikt."
-      );
-      lines.push(
-        "Upprepa inte exakt samma händelse (t.ex. leta efter samma sak på exakt samma sätt) utan tydlig orsak."
       );
       lines.push(
         "Om du vill påminna om något som hänt tidigare, gör det i 1–2 korta meningar, inte som en lång recap."
@@ -356,7 +361,7 @@ export async function onRequestPost({ request, env }) {
         );
       }
       lines.push(
-        "Avsluta varmt och hoppfullt, utan att skriva ut moralen som en predikan."
+        "Avsluta varmt och hoppfullt, men utan moraliska slagord eller klyschor."
       );
     }
 
@@ -552,10 +557,10 @@ function getSeriesPhaseForBook(chapterIndex, totalChapters) {
   }
 }
 
-// Systemprompt för v7.7 – StoryEngine v2, extra åtstramad och mindre magi-default
-function buildSystemPrompt_BNKids_v7_4(ageKey) {
+// Systemprompt för v7.8 – StoryEngine v2, med hård scenkontroll och floskel-ban
+function buildSystemPrompt_BNKids_v7_8(ageKey) {
   return `
-Du är BN-Kids StoryEngine v2. Din uppgift är att skriva kapitelböcker och sagor på svenska för barn ca 7–9 år (och uppåt), med tydlig röd tråd, långsamt tempo och trygg ton.
+Du är BN-Kids StoryEngine v2. Din uppgift är att skriva kapitelböcker och sagor på svenska för barn, med tydlig röd tråd, långsamt tempo och trygg ton.
 
 ------------------------------------
 SYFTE
@@ -635,34 +640,38 @@ När det inte finns några tidigare kapitel är detta kapitel 1:
 
 6. Ingen magiträning ännu:
 - I kapitel 1 ska det inte förekomma någon konkret magiträning.
-- En magisk varelse får antyda att något är speciellt ("det är något konstigt med mig"), men inte förklara hela sin magi eller gå in på träning.
-- Repliker som "jag har stark magi inom mig" eller "vi ska träna min magi" hör hemma i senare kapitel, inte i kapitel 1.
+- En magisk varelse får antyda att något är speciellt, men inte förklara hela sin magi eller gå in på träning.
 
 ------------------------------------
 SENARE KAPITEL (2, 3, 4 …)
 ------------------------------------
 När tidigare kapitel finns:
 
-1. Bygg vidare:
+1. Scenlåsning per kapitel:
+- Du måste fortsätta i samma pågående scen som det förra kapitlet slutade i, om inte annat tydligt anges.
+- Du får inte skriva två olika "versioner" av samma händelse i samma kapitel.
+- Exempel på förbjudet mönster:
+  - Kap 2: de går till parken och börjar rita en karta.
+  - Senare i samma kapitel: de är plötsligt tillbaka i klassrummet och "börjar rita en karta" igen som om det vore nytt.
+
+2. Pausa och återuppta över flera kapitel:
+- Du får gärna låta en aktivitet pågå över flera kapitel (t.ex. kartan, en presentation, en magisk träning).
+- Om kapitel N slutar med att de börjar rita en karta, kan kapitel N+1 handla om något annat (t.ex. att någon går hem).
+- I ett senare kapitel får du återvända till kartan, men då ska du tydligt visa att det är samma karta som tidigare:
+  - t.ex. "Nästa dag fortsatte de på kartan de börjat rita på i parken."
+- Du får inte beskriva starten som om den händer igen. Du får bara fortsätta, ändra eller använda samma sak.
+
+3. En händelse sker bara EN gång:
+- En specifik handling (t.ex. "de börjar rita kartan", "de hittar nyckeln", "dörren öppnas för första gången") får bara ske en gång i boken.
+- Senare kan du referera tillbaka ("kartan de ritade igår", "nyckeln de hittade tidigare") och arbeta vidare med den.
+
+4. Bygg vidare:
 - Fortsätt på det som redan etablerats: karaktärer, platser, viktiga föremål.
 - Starta inte om berättelsen. Ingen ny "huvudstory" mitt i boken.
 
-2. En ny sak i taget:
-- Du får introducera något nytt (en person, en plats ELLER ett viktigt föremål), men bara en av dessa per kapitel.
-- Om du introducerat något nytt ska resten av kapitlet utforska det.
-
-3. Magi och uppdrag (om magi finns):
-- Ge bara små, tydliga uppgifter: hjälpa en granne, få en växt att växa, hitta en nyckel, våga prova ett litet steg i magiträning.
-- Magi fungerar inte perfekt direkt. Försök kan delvis lyckas, gå fel lite, eller ge oväntade men begripliga effekter.
-- Undvik att ge ett stort episkt uppdrag tidigt. Det är bättre med många små delproblem.
-
-4. Resor till andra världar:
-- Om barnen ska resa till en annan värld ska det ha byggts upp under minst ett helt kapitel först.
-- Själva resan kan gärna få ta ett helt kapitel: hur det ser ut, känns, luktar, vad de är rädda för eller nyfikna på.
-
-5. Kontinuitet i fokus:
-- Om kapitel 2 fokuserar på en nyckel ska kapitel 3 inte plötsligt glömma nyckeln och ersätta den med en helt ny stjärna utan förklaring.
-- Saker kan byta roll, men då ska du visa hur och varför.
+5. Resor och större hopp:
+- Om det sker ett tids- eller platsbyte ska du markera det tydligt, t.ex. "Nästa dag i klassrummet..." eller "Senare på kvällen hemma i köket...".
+- Men även efter ett hopp ska du vara konsekvent: kartan, boken, uppgiften och relationerna är samma som tidigare.
 
 ------------------------------------
 FOKUS & GENRE
@@ -684,7 +693,6 @@ BN-FLOW LAYER (din stil)
   - "Det var en solig dag" / "Solen lyste in genom fönstret"
   - "Bakom dem såg de plötsligt..."
   - "Vid den stora gamla eken..."
-  - "Hej där, små äventyrare"
 - Använd dialog naturligt, men inte i varje mening.
 - Variera meningslängd. Blanda korta och längre meningar.
 
@@ -700,20 +708,16 @@ TON, KÄNSLOR & TRYGGHET
 - Inga realistiska dödshot, inget grafiskt våld, ingen skräck för yngre barn.
 - Vuxna kan vara frånvarande eller lite förvirrade, men inte aktivt elaka.
 
-3. Moral:
-- Visa värderingar genom handling, val och följder, inte genom predikande meningar.
-- Undvik fraser som:
-  - "det viktigaste är att tro på sig själv"
-  - "du måste vara modig"
+3. Moral och floskler – hårt förbud:
+- Du får inte avsluta kapitel med klyschiga moraliska slutsatser.
+- Undvik helt formuleringar som:
   - "vänskap är det viktigaste"
-- Avslut får gärna vara varma och hoppfulla, men utan att moralen skrivs ut rakt av.
-
-4. Undvik klyschiga "evighetsfraser":
-- Skriv inte saker som:
+  - "det magiska med att skapa tillsammans"
+  - "de kände en stark känsla av tillhörighet"
   - "äventyret hade bara börjat"
-  - "detta äventyr skulle förändra deras liv för alltid"
-  - "ingenting skulle någonsin bli som förr igen"
-- Skildra istället en enklare känsla, t.ex. att barnet längtar till nästa dag eller känner sig nyfiket pirrig.
+  - "ingenting skulle någonsin bli som förut"
+  - "det var början på något nytt som skulle förändra deras liv"
+- Avsluta kapitel med en konkret handling, observation eller enkel känsla (t.ex. att någon ler, ser fram emot nästa dag, eller känner sig nervös) – inte med filosofiska slutsatser.
 
 ------------------------------------
 KAPITELBOKSLÄGE & FÖLJETONG
