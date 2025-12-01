@@ -1,20 +1,21 @@
 // functions/api/generate.js
 // BN-KIDS — Cloudflare Pages Function: POST /api/generate
 //
-// GC v7.9 – StoryEngine v2.0
+// GC v8.0 – StoryEngine v2.1
 // -------------------------------------------
 // - Behåller fungerande kapitelmotor från v7.3 (chapterIndex via previousChapters.length)
 // - Följetongsläge: en bok är ett deläventyr, inte "rädda världen" på 10 kapitel
 // - Mindre floskler & äventyrsslogans, mjukare kapitelavslut för 7–12 år
 // - Hårdare regler för magi-progress (ingen "supermagi" utan träning eller prompt)
 // - Högre variation i startscener, mindre recaps i början av varje kapitel
-// - StoryEngine v2.0 HARD RULES:
+// - StoryEngine v2.x HARD RULES:
 //   * Kapitel 1: vardag först, ingen magiträning, ingen portalresa direkt
 //   * Magi och bok ÄR INTE standard – om barnet inte nämner magi ska allt vara vardagligt
 //   * Max 1 ny viktig figur + 1 ny viktig sak per kapitel
 //   * HÅRD scenkontinuitet: mittenkapitel får inte starta om samma händelse i ny miljö
 //   * En händelse kan pausas och fortsätta i senare kapitel (samma grej, inte “ny”)
 //   * De första meningarna i kapitel 2+ måste fortsätta direkt från slutscenen (om ingen tydlig tidsmarkör)
+//   * Kapitlen med nummer > 1 får ALDRIG skrivas som om de är första kapitlet i boken
 //   * Floskler och moraliska klyschor bannlyses i avslut
 //   * Allt skrivs på naturlig, modern SVENSKA (ingen intern eng → sv-översättning)
 
@@ -203,9 +204,9 @@ export async function onRequestPost({ request, env }) {
            "");
 
     // ------------------------------------------------------
-    // SYSTEMPROMPT – BN-Kids v2.0
+    // SYSTEMPROMPT – BN-Kids v2.1
     // ------------------------------------------------------
-    const systemPrompt = buildSystemPrompt_BNKids_v2(ageKey);
+    const systemPrompt = buildSystemPrompt_BNKids_v2_1(ageKey);
 
     // ------------------------------------------------------
     // USERPROMPT – barnets idé + worldstate + kapitelroll + följetong + promptChanged
@@ -330,22 +331,25 @@ export async function onRequestPost({ request, env }) {
       );
     } else if (chapterRole === "chapter_middle" && storyMode === "chapter_book") {
       lines.push(
-        "Detta är ett mittenkapitel. Fortsätt samma huvudmål som tidigare, i följetongs-tempo."
+        "Detta är ett MITTENKAPITEL. Det är inte första kapitlet och får aldrig kännas som en ny start på boken."
       );
       lines.push(
-        "Första stycket i detta kapitel måste fortsätta direkt i samma situation som det förra kapitlet slutade i – samma dag, samma plats, samma aktivitet – om du inte tydligt markerar ett tids- eller platsbyte (t.ex. 'Nästa dag i klassrummet...')."
+        "Du får inte presentera samma person igen som om de vore nya (t.ex. 'Det här är Ella, hon är ny i klassen') om de redan introducerats i ett tidigare kapitel."
       );
       lines.push(
-        "Du får INTE skriva en ny 'skolstartsscen' eller 'det var en vanlig dag...' i mittenkapitel om föregående kapitel slutade mitt i en pågående scen."
+        "Första stycket i detta kapitel måste kännas som en fortsättning av förra kapitlets slut: samma dag, samma plats, samma stämning – eller ett tydligt markerat hopp (t.ex. 'Nästa morgon på skolgården...')."
       );
       lines.push(
-        "Om förra kapitlet slutade med att de började göra något (t.ex. rita en karta, gå ut från klassrummet, stå och prata på skolgården) ska detta kapitel fortsätta samma aktivitet, inte starta om den som en ny händelse på en annan plats."
+        "Du får INTE skriva en ny generisk start som 'Det var en vanlig dag...', 'Solen strålade...' eller 'Björn satt vid sitt skrivbord...' i mittenkapitel, om föregående kapitel slutade mitt i en pågående scen."
       );
       lines.push(
-        "En enskild handling (som att börja rita en karta, hitta en nyckel, öppna en bok, be någon följa med till parken) får bara 'starta' en gång i boken. Senare kapitel får fortsätta, justera eller använda samma sak, men inte beskriva starten som om den händer igen."
+        "Om förra kapitlet slutade med att de började göra något (rita en karta, gå till parken, prata med någon) ska detta kapitel fortsätta samma aktivitet eller visa vad som händer direkt efter. Inte starta om aktiviteten på en ny plats som om den vore ny."
       );
       lines.push(
-        "Du får pausa en aktivitet i ett kapitel och låta karaktärerna göra något annat, men när du tar upp aktiviteten igen i ett senare kapitel ska du tydligt markera att det är samma sak de jobbar vidare på, inte något helt nytt."
+        "En tydlig engångshändelse (presentera en ny elev, påbörja en karta, hitta en nyckel) får bara introduceras EN gång i boken. Senare kapitel får bara hänvisa till den."
+      );
+      lines.push(
+        "Du får pausa en aktivitet i ett kapitel och återuppta den senare, men då ska du tydligt visa att det är samma aktivitet de fortsätter med."
       );
       lines.push(
         "Skapa ett tydligt delmål eller hinder på vägen, men introducera inte en helt ny huvudkonflikt mitt i boken."
@@ -402,7 +406,7 @@ export async function onRequestPost({ request, env }) {
       lines.push("");
     }
 
-    // Längdinstruktion
+    // Längdinstruktion + språk
     lines.push(lengthInstruction);
     lines.push("");
     lines.push(
@@ -573,10 +577,10 @@ function getSeriesPhaseForBook(chapterIndex, totalChapters) {
   }
 }
 
-// Systemprompt – StoryEngine v2.0, hård scenkontroll + anti-floskler + svensk stil
-function buildSystemPrompt_BNKids_v2(ageKey) {
+// Systemprompt – StoryEngine v2.1, hård scenkontroll + anti-floskler + svensk stil
+function buildSystemPrompt_BNKids_v2_1(ageKey) {
   return `
-Du är BN-Kids StoryEngine v2. Du skriver kapitelböcker och sagor på SVENSKA för barn. Ditt mål är att hålla en tydlig röd tråd, långsamt tempo och trygg ton.
+Du är BN-Kids StoryEngine v2.1. Du skriver kapitelböcker och sagor på SVENSKA för barn. Ditt mål är att hålla en tydlig röd tråd, långsamt tempo och trygg ton.
 
 Du tänker och skriver direkt på svenska. Du får inte först formulera text på engelska och sedan översätta.
 
@@ -625,33 +629,39 @@ MITTENKAPITEL (2, 3, 4 …) – SCENLÅS
 ------------------------------------
 När det redan finns kapitel ska du följa dessa regler:
 
-1. Scenlåsning:
-- Du måste fortsätta i samma pågående scen som föregående kapitel slutade i, om inte användaren uttryckligen vill något annat.
-- Första stycket i kapitel 2+ ska kännas som en fortsättning av slutet: samma plats, samma tidpunkt eller ett tydligt markerat hopp ("Nästa dag i klassrummet...").
+1. Detta är INTE första kapitlet:
+- Om kapitlet har nummer större än 1 får du aldrig skriva det som om boken börjar här.
+- Du får inte öppna med en ny "Det var en vanlig dag..."-start som introducerar huvudpersonen, skolan eller miljön på nytt.
+- Du får inte presentera samma person igen som om de var nya (t.ex. "Det här är Ella, hon är ny i klassen") om personen redan introducerats i tidigare kapitel.
 
-2. Förbjudna omstarter:
-- Du får INTE börja om med en ny generisk start som:
+2. Scenlåsning:
+- Första stycket i kapitel 2+ ska kännas som en fortsättning på föregående kapitel:
+  samma dag, samma plats, samma pågående situation – eller ett tydligt markerat hopp, t.ex. "Nästa morgon i klassrummet...".
+- Om föregående kapitel slutade mitt i en scen ska detta kapitel fortsätta den scenen, inte starta en ny introduktion.
+
+3. Förbjudna omstarter:
+- Du får inte börja mittenkapitel med generiska startfraser som:
   - "Det var en vanlig dag..."
   - "Solen strålade in genom fönstret..."
   - "Björn satt vid sitt skrivbord..."
   - "Skolgården var full av liv..."
-- Skriv inte en ny "introduktion av skolan" i mittenkapitel om vi redan är inne i berättelsen.
+- Sådana formuleringar är bara tillåtna i kapitel 1.
 
-3. Unika händelser:
-- En tydlig engångshändelse får bara starta en gång i boken, t.ex.:
-  - de börjar rita en karta,
-  - de hittar en nyckel,
-  - de öppnar en bok första gången,
-  - någon ny elev presenteras för klassen.
-- I senare kapitel ska du referera till den som samma sak ("kartan de ritade i parken", "nyckeln de hittat tidigare"), inte beskriva starten som om den händer igen.
+4. Unika händelser:
+- En tydlig engångshändelse får bara starta en gång i boken:
+  - att en ny elev presenteras,
+  - att en karta börjar ritas,
+  - att en nyckel hittas,
+  - att en magisk bok öppnas för första gången.
+- I senare kapitel ska du referera till samma händelse ("kartan de ritade i parken", "nyckeln de hittat tidigare") – inte beskriva starten som om den händer igen.
 
-4. Pausa och återuppta:
-- Du får pausa en aktivitet i ett kapitel (t.ex. kartan, en presentation, en plan) och återuppta den i ett senare kapitel.
-- När du tar upp den igen ska du tydligt markera att det är samma aktivitet:
-  - "Nästa dag fortsatte de på kartan de börjat rita i parken."
+5. Pausa och återuppta:
+- Du får pausa en aktivitet i ett kapitel och återuppta den i ett senare kapitel.
+- När du tar upp den igen ska du tydligt visa att det är samma aktivitet:
+  "Nästa dag fortsatte de på kartan de börjat rita i parken."
 - Du får inte låtsas som att det är en helt ny karta eller en helt ny plan.
 
-5. Delmål:
+6. Delmål:
 - Mittenkapitel ska ha ett litet delmål eller hinder: en konflikt, en miss, en diskussion, ett dilemma.
 - Introducera inte en helt ny huvudstory mitt i boken.
 
@@ -675,14 +685,14 @@ TON, KÄNSLOR & TRYGGHET
 - Inga realistiska dödshot, inget grafiskt våld, ingen tung skräck för yngre barn.
 
 3. Anti-floskler:
-Du får INTE avsluta kapitel med generiska moraliska floskler. Undvik helt formuleringar som:
-- "vänskap är det viktigaste"
-- "det magiska med att skapa tillsammans"
-- "de kände en stark känsla av tillhörighet"
-- "äventyret hade bara börjat"
-- "ingenting skulle någonsin bli som förut"
-- "det var början på något nytt som skulle förändra deras liv"
-- "allt kändes möjligt"
+Du får INTE avsluta kapitel med generiska moraliska floskler. Undvik formuleringar som:
+- "vänskap är det viktigaste",
+- "det magiska med att skapa tillsammans",
+- "de kände en stark känsla av tillhörighet",
+- "äventyret hade bara börjat",
+- "ingenting skulle någonsin bli som förut",
+- "det var början på något nytt som skulle förändra deras liv",
+- "allt kändes möjligt".
 I stället: avsluta med en konkret handling, enkel tanke eller känsla i nuet: någon som ler, är nervös inför morgondagen, funderar över en fråga, eller går hem i kvällsljuset.
 
 4. Språk:
