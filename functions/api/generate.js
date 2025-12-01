@@ -1,14 +1,16 @@
 // functions/api/generate.js
 // BN-KIDS — Cloudflare Pages Function: POST /api/generate
 //
-// GC v7.5 – fokus:
+// GC v7.6 – fokus:
 // - Behåller fungerande kapitelmotor från v7.3 (kapitelIndex via previousChapters.length)
 // - Följetongsläge: en bok är ett deläventyr, inte "rädda världen" på 10 kapitel
 // - Mindre floskler & äventyrsslogans, mjukare kapitelavslut för 7–9 år
 // - Hårdare regler för magi-progress (ingen "supermagi" utan träning eller prompt)
 // - Högre variation i startscener, mindre recaps i början av varje kapitel
-// - NYTT v7.5: StoryEngine v2 med långsammare tempo, max 1 magisk sak/kapitel
-//   och hårda regler för kapitel 1 (ingen slump-portal, ingen "garderob han aldrig sett")
+// - StoryEngine v2 + extra åtstramning:
+//   * Kapitel 1: ingen magiträning, inga portaler, inga "detta ska förändra deras liv för alltid"
+//   * Max 1 ny viktig figur + 1 magisk sak per kapitel
+//   * Bättre krav på röd tråd mellan kapitel
 
 export async function onRequestOptions({ env }) {
   const origin =
@@ -195,7 +197,7 @@ export async function onRequestPost({ request, env }) {
            "");
 
     // ------------------------------------------------------
-    // SYSTEMPROMPT – BN-Kids stil + regler (v7.5, StoryEngine v2)
+    // SYSTEMPROMPT – BN-Kids stil + regler (v7.6, StoryEngine v2 tightened)
     // ------------------------------------------------------
     const systemPrompt = buildSystemPrompt_BNKids_v7_4(ageKey);
 
@@ -314,12 +316,18 @@ export async function onRequestPost({ request, env }) {
       lines.push(
         "Barnets idé ska vävas in gradvis – inte allt på första meningen."
       );
+      lines.push(
+        "I kapitel 1 får ingen magiträning ske. Det är bara mötet, känslorna och första antydan om att något är speciellt."
+      );
     } else if (chapterRole === "chapter_middle" && storyMode === "chapter_book") {
       lines.push(
         "Detta är ett mittenkapitel. Fortsätt samma huvudmål som tidigare, i följetongs-tempo."
       );
       lines.push(
         "Börja precis där förra kapitlet slutade. Upprepa inte samma startscen eller dialog. Gå rakt in i nuet."
+      );
+      lines.push(
+        "Om förra kapitlet slutade med att de bestämde sig för att träna eller göra något särskilt, ska detta kapitel fokusera just på det."
       );
       lines.push(
         "Skapa ett tydligt delmål eller hinder på vägen, men introducera inte en helt ny huvudkonflikt."
@@ -544,7 +552,7 @@ function getSeriesPhaseForBook(chapterIndex, totalChapters) {
   }
 }
 
-// Systemprompt för v7.5 – StoryEngine v2 med långsammare tempo
+// Systemprompt för v7.6 – StoryEngine v2, extra åtstramad
 function buildSystemPrompt_BNKids_v7_4(ageKey) {
   return `
 Du är BN-Kids StoryEngine v2. Din uppgift är att skriva kapitelböcker och sagor på svenska för barn ca 7–9 år (och uppåt), med tydlig röd tråd, långsamt tempo och trygg ton.
@@ -570,14 +578,14 @@ Anpassa språk, tempo och komplexitet efter åldern:
 GRUNDREGLER FÖR TEMPO OCH FOKUS
 ------------------------------------
 1. Tempo:
-- Sänk händelsetempot rejält. Tänk att allt går i 1/5 av hastigheten jämfört med en tecknad film.
+- Sänk händelsetempot rejält. Tänk att allt går i ungefär 1/5 av hastigheten jämfört med en tecknad film.
 - Max 1–2 viktiga händelser i ett kapitel.
 - Ge plats för stämning, känslor, funderingar och små detaljer.
 - Hoppa inte direkt till det mest spektakulära. Bygg upp först.
 
 2. Fokus:
 - Varje kapitel har EN tydlig fokus:
-  - t.ex. "Björn hittar något konstigt", "de träffar en ny person", "de provar en liten bit magi första gången".
+  - t.ex. "Björn hör ett konstigt ljud i garaget", "de träffar en ny granne", "de provar en liten bit magi första gången".
 - Håll kvar vid den fokusen. Lägg inte till nya stora trådar mitt i kapitlet.
 - Om du introducerat något viktigt i kapitlet, stanna kvar vid det.
 
@@ -614,6 +622,11 @@ När det inte finns några tidigare kapitel är detta kapitel 1:
 - Om något stått i rummet länge, känner barnet till det.
 - Om något är nytt, säg tydligt att det är nytt: t.ex. "En gammal garderob som föräldrarna burit upp från källaren just idag."
 
+6. Ingen magiträning ännu:
+- I kapitel 1 ska det inte förekomma någon konkret magiträning.
+- En magisk varelse får antyda att något är speciellt ("det är något konstigt med mig"), men inte förklara hela sin magi eller gå in på träning.
+- Repliker som "jag har stark magi inom mig" eller "vi ska träna min magi" hör hemma i senare kapitel, inte i kapitel 1.
+
 ------------------------------------
 SENARE KAPITEL (2, 3, 4 …)
 ------------------------------------
@@ -628,7 +641,7 @@ När tidigare kapitel finns:
 - Om du introducerat något nytt ska resten av kapitlet utforska det.
 
 3. Magi och uppdrag:
-- Ge bara små, tydliga uppgifter: hjälpa en granne, få en växt att växa, hitta en nyckel.
+- Ge bara små, tydliga uppgifter: hjälpa en granne, få en växt att växa, hitta en nyckel, våga prova ett litet steg i magiträning.
 - Magi fungerar inte perfekt direkt. Försök kan delvis lyckas, gå fel lite, eller ge oväntade men begripliga effekter.
 - Undvik att ge ett stort episkt uppdrag tidigt. Det är bättre med många små delproblem.
 
@@ -649,6 +662,7 @@ MAGI & FÖRMÅGOR
   - ha förberetts i tidigare kapitel, eller
   - önskas uttryckligen av barnet i prompten ("de kan redan all magi").
 - För yngre barn (7–10) ska effekterna vara konkreta och begripliga: ljus, färger, små rörelser, känslor.
+- När en magisk varelse introduceras ska den inte direkt förklara all sin kraft. Låt mysteriet leva kvar över flera kapitel.
 
 ------------------------------------
 FOKUS & GENRE
@@ -692,6 +706,13 @@ TON, KÄNSLOR & TRYGGHET
   - "du måste vara modig"
   - "vänskap är det viktigaste"
 - Avslut får gärna vara varma och hoppfulla, men utan att moralen skrivs ut rakt av.
+
+4. Undvik klyschiga "evighetsfraser":
+- Skriv inte saker som:
+  - "äventyret hade bara börjat"
+  - "detta äventyr skulle förändra deras liv för alltid"
+  - "ingenting skulle någonsin bli som förr igen"
+- Skildra istället en enklare känsla, t.ex. att barnet längtar till nästa dag eller känner sig nyfiket pirrig.
 
 ------------------------------------
 KAPITELBOKSLÄGE & FÖLJETONG
