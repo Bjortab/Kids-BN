@@ -1,7 +1,7 @@
 // functions/api/generate.js
 // BN-KIDS — Cloudflare Pages Function: POST /api/generate
 //
-// GC v7.6 – fokus:
+// GC v7.7 – fokus:
 // - Behåller fungerande kapitelmotor från v7.3 (kapitelIndex via previousChapters.length)
 // - Följetongsläge: en bok är ett deläventyr, inte "rädda världen" på 10 kapitel
 // - Mindre floskler & äventyrsslogans, mjukare kapitelavslut för 7–9 år
@@ -10,7 +10,8 @@
 // - StoryEngine v2 + extra åtstramning:
 //   * Kapitel 1: ingen magiträning, inga portaler, inga "detta ska förändra deras liv för alltid"
 //   * Max 1 ny viktig figur + 1 magisk sak per kapitel
-//   * Bättre krav på röd tråd mellan kapitel
+//   * Magi och bok ÄR INTE standard – om barnet inte nämner magi ska allt vara vardagligt
+//   * Neutrala seriesPhase-texter (ingen hårdkodad "bok + magi")
 
 export async function onRequestOptions({ env }) {
   const origin =
@@ -94,7 +95,7 @@ export async function onRequestPost({ request, env }) {
     const totalChapters =
       Number(body.totalChapters || worldState?.meta?.totalChapters) || 8;
 
-    // Enkel "progress" per bok (B-valet) – används som hint, inte hård logik.
+    // Enkel "progress" per bok – används som hint, inte hård logik.
     const progress = worldState.progress || {};
 
     // Barnet kan uttryckligen vilja avsluta hela sagan / följetongen här.
@@ -164,7 +165,7 @@ export async function onRequestPost({ request, env }) {
       chapterRole = "chapter_middle";
     }
 
-    // Följetongs-fas hint (per bok, B-valet)
+    // Följetongs-fas hint (per bok)
     const seriesPhase = getSeriesPhaseForBook(chapterIndex, totalChapters);
 
     // ------------------------------------------------------
@@ -197,7 +198,7 @@ export async function onRequestPost({ request, env }) {
            "");
 
     // ------------------------------------------------------
-    // SYSTEMPROMPT – BN-Kids stil + regler (v7.6, StoryEngine v2 tightened)
+    // SYSTEMPROMPT – BN-Kids stil + regler (v7.7)
     // ------------------------------------------------------
     const systemPrompt = buildSystemPrompt_BNKids_v7_4(ageKey);
 
@@ -236,7 +237,7 @@ export async function onRequestPost({ request, env }) {
     }
     lines.push("");
 
-    // Progress-hint (enkel, per bok – B-val)
+    // Progress-hint (enkel, per bok)
     if (storyMode === "chapter_book") {
       const simpleProgress = [];
 
@@ -403,7 +404,7 @@ export async function onRequestPost({ request, env }) {
 
     const payload = {
       model,
-      temperature: 0.7, // lite lägre för mindre random omstarter
+      temperature: 0.7,
       max_tokens: maxTokens,
       messages: [
         { role: "system", content: systemPrompt },
@@ -473,7 +474,6 @@ export async function onRequestPost({ request, env }) {
 
 function normalizeAge(raw) {
   const s = String(raw || "").toLowerCase();
-  // Matcha våra dropdown-värden: 7-8, 9-10, 11-12, 13-15
   if (s.includes("7") && s.includes("8")) return "7-8";
   if (s.includes("9") && s.includes("10")) return "9-10";
   if (s.includes("11") && s.includes("12")) return "11-12";
@@ -536,15 +536,15 @@ function getLengthInstructionAndTokens(ageKey, lengthPreset) {
   return { lengthInstruction, maxTokens };
 }
 
-// Enkel följetongs-fas per bok (B-valet)
+// Neutralt följetongs-fas per bok (inga hårdkodade böcker/magi)
 function getSeriesPhaseForBook(chapterIndex, totalChapters) {
   const total = totalChapters && totalChapters > 0 ? totalChapters : 10;
   const ratio = chapterIndex / total;
 
   if (ratio <= 0.3) {
-    return "att upptäcka boken, känna in magin och göra de allra första försöken";
+    return "att lära känna vardagen, platsen och de viktigaste personerna och ta de allra första små stegen i äventyret";
   } else if (ratio <= 0.6) {
-    return "att träna magi i små steg och lösa små, lokala problem";
+    return "att ta små steg framåt, prova enkla saker och lösa små, lokala problem";
   } else if (ratio <= 0.9) {
     return "att stöta på ett lite större men fortfarande hanterbart problem";
   } else {
@@ -552,7 +552,7 @@ function getSeriesPhaseForBook(chapterIndex, totalChapters) {
   }
 }
 
-// Systemprompt för v7.6 – StoryEngine v2, extra åtstramad
+// Systemprompt för v7.7 – StoryEngine v2, extra åtstramad och mindre magi-default
 function buildSystemPrompt_BNKids_v7_4(ageKey) {
   return `
 Du är BN-Kids StoryEngine v2. Din uppgift är att skriva kapitelböcker och sagor på svenska för barn ca 7–9 år (och uppåt), med tydlig röd tråd, långsamt tempo och trygg ton.
@@ -575,6 +575,16 @@ Anpassa språk, tempo och komplexitet efter åldern:
 - 13–15: något mognare ton, men fortfarande barnvänligt och utan grafiskt våld eller sex.
 
 ------------------------------------
+MAGI OCH VARDAG – STANDARDLÄGET
+------------------------------------
+- Om barnets prompt INTE nämner magi, drakar, superkrafter, magiska böcker eller något övernaturligt:
+  - ska kapitlet vara helt vardagligt och realistiskt.
+  - inga magiska föremål, inga portaler, inga övernaturliga händelser.
+  - fokus ligger på relationer, skola, familj, fritid, känslor och vardagsproblem.
+- Om barnet senare uttryckligen lägger till magiska inslag i en ny prompt kan magi vävas in då, steg för steg.
+- Magi ska aldrig introduceras enbart för att "göra det häftigt" om barnet inte bett om det.
+
+------------------------------------
 GRUNDREGLER FÖR TEMPO OCH FOKUS
 ------------------------------------
 1. Tempo:
@@ -585,13 +595,13 @@ GRUNDREGLER FÖR TEMPO OCH FOKUS
 
 2. Fokus:
 - Varje kapitel har EN tydlig fokus:
-  - t.ex. "Björn hör ett konstigt ljud i garaget", "de träffar en ny granne", "de provar en liten bit magi första gången".
+  - t.ex. "Björn hör ett konstigt ljud i garaget", "en ny tjej börjar i klassen", "de provar en liten bit magi första gången".
 - Håll kvar vid den fokusen. Lägg inte till nya stora trådar mitt i kapitlet.
 - Om du introducerat något viktigt i kapitlet, stanna kvar vid det.
 
 3. Nya inslag per kapitel:
 - Max EN ny viktig karaktär per kapitel.
-- Max EN ny magisk sak eller magiskt fenomen per kapitel.
+- Max EN ny magisk sak eller magiskt fenomen per kapitel (om magi överhuvudtaget finns).
 - Om något nytt redan introducerats (t.ex. en bok, en ny person eller en konstig katt), ska resten av kapitlet kretsa kring det.
 
 ------------------------------------
@@ -604,10 +614,11 @@ När det inte finns några tidigare kapitel är detta kapitel 1:
 - Visa vad barnet gör, hur det känns, hur dagen är. Låt läsaren landa.
 - Inga omedelbara portaler, resor till andra världar eller stora magiska explosioner.
 
-2. En (1) konstig eller magisk sak:
+2. En (1) konstig eller magisk sak (endast om prompten har magi):
 - Introducera max EN sak som känns mystisk:
   - t.ex. en gammal bok, ett smycke, en märklig granne, ett djur som verkar ovanligt.
 - Den ska framför allt väcka frågor och nyfikenhet, inte direkt lösa allt.
+- Om barnets prompt handlar om något vardagligt (t.ex. "en ny tjej börjar i klassen") ska kapitlet inte ha någon magisk sak alls.
 
 3. Ingen "slumpmagi":
 - Undvik att saker händer helt av sig själva, som böcker som börjar bläddra utan att någon rör dem, möbler som bara dyker upp eller portaler som bara öppnas utan orsak.
@@ -633,14 +644,14 @@ SENARE KAPITEL (2, 3, 4 …)
 När tidigare kapitel finns:
 
 1. Bygg vidare:
-- Fortsätt på det som redan etablerats: karaktärer, platser, magiska saker.
+- Fortsätt på det som redan etablerats: karaktärer, platser, viktiga föremål.
 - Starta inte om berättelsen. Ingen ny "huvudstory" mitt i boken.
 
 2. En ny sak i taget:
-- Du får introducera något nytt (en person, en plats ELLER ett magiskt objekt), men bara en av dessa per kapitel.
+- Du får introducera något nytt (en person, en plats ELLER ett viktigt föremål), men bara en av dessa per kapitel.
 - Om du introducerat något nytt ska resten av kapitlet utforska det.
 
-3. Magi och uppdrag:
+3. Magi och uppdrag (om magi finns):
 - Ge bara små, tydliga uppgifter: hjälpa en granne, få en växt att växa, hitta en nyckel, våga prova ett litet steg i magiträning.
 - Magi fungerar inte perfekt direkt. Försök kan delvis lyckas, gå fel lite, eller ge oväntade men begripliga effekter.
 - Undvik att ge ett stort episkt uppdrag tidigt. Det är bättre med många små delproblem.
@@ -654,23 +665,13 @@ När tidigare kapitel finns:
 - Saker kan byta roll, men då ska du visa hur och varför.
 
 ------------------------------------
-MAGI & FÖRMÅGOR
-------------------------------------
-- Magi utvecklas stegvis: först små effekter, sedan bättre kontroll, och först senare mer kraftfulla saker.
-- Introducera inte avancerad magi utan att det antytts att barnen tränat på det.
-- Om en ny förmåga dyker upp ska den antingen:
-  - ha förberetts i tidigare kapitel, eller
-  - önskas uttryckligen av barnet i prompten ("de kan redan all magi").
-- För yngre barn (7–10) ska effekterna vara konkreta och begripliga: ljus, färger, små rörelser, känslor.
-- När en magisk varelse introduceras ska den inte direkt förklara all sin kraft. Låt mysteriet leva kvar över flera kapitel.
-
-------------------------------------
 FOKUS & GENRE
 ------------------------------------
 - Följ alltid barnets prompt och tema noggrant.
 - Byt aldrig genre eller huvudtema på egen hand.
+- Om prompten handlar om en ny elev i klassen ska kapitlet kretsa kring skolan, relationerna och känslorna kring det.
 - Om barnet nämner ett yrke (t.ex. detektiv) ska kapitlet kretsa kring det yrket.
-- Om barnet nämner ett viktigt objekt (t.ex. en magisk bok, en fjäder, drakarnas land, en hemlig hiss) ska objektet vara centralt tills konflikten är löst.
+- Om barnet nämner ett viktigt objekt (t.ex. en bok, en fjäder, en fotboll, en mobil, en hemlig hiss) ska objektet vara centralt tills konflikten är löst.
 - Undvik mörker/skräck, hotfulla skuggor och monster om barnet inte specifikt ber om det.
 
 ------------------------------------
@@ -727,7 +728,7 @@ KAPITELBOKSLÄGE & FÖLJETONG
 KONTINUITET
 ------------------------------------
 - Karaktärer får inte byta namn, kön eller personlighet utan förklaring.
-- Viktiga föremål (t.ex. draken, dörren, hissen, den magiska boken, en fjäder) ska användas konsekvent.
+- Viktiga föremål (t.ex. draken, dörren, hissen, den magiska boken, en fjäder, en fotboll) ska användas konsekvent.
 - Om ett djur eller föremål redan definierats (t.ex. en enhörning) ska det inte bytas ut mot något helt annat utan tydlig magisk förklaring.
 - Upprepa inte längre stycken ur tidigare kapitel. Om du behöver påminna, gör det kort och integrerat i nuvarande scen.
 
