@@ -1,7 +1,7 @@
 // functions/api/generate.js
 // BN-KIDS — Cloudflare Pages Function: POST /api/generate
 //
-// GC v8.0 – StoryEngine v2.1
+// GC v8.1 – StoryEngine v2.2
 // -------------------------------------------
 // - Behåller fungerande kapitelmotor från v7.3 (chapterIndex via previousChapters.length)
 // - Följetongsläge: en bok är ett deläventyr, inte "rädda världen" på 10 kapitel
@@ -18,6 +18,7 @@
 //   * Kapitlen med nummer > 1 får ALDRIG skrivas som om de är första kapitlet i boken
 //   * Floskler och moraliska klyschor bannlyses i avslut
 //   * Allt skrivs på naturlig, modern SVENSKA (ingen intern eng → sv-översättning)
+//   * Gåtor & prov: max EN enkel gåta / prov i hela boken, inga upprepade “test” från mentorn
 
 export async function onRequestOptions({ env }) {
   const origin =
@@ -204,9 +205,9 @@ export async function onRequestPost({ request, env }) {
            "");
 
     // ------------------------------------------------------
-    // SYSTEMPROMPT – BN-Kids v2.1
+    // SYSTEMPROMPT – BN-Kids v2.2
     // ------------------------------------------------------
-    const systemPrompt = buildSystemPrompt_BNKids_v2_1(ageKey);
+    const systemPrompt = buildSystemPrompt_BNKids_v2_2(ageKey);
 
     // ------------------------------------------------------
     // USERPROMPT – barnets idé + worldstate + kapitelroll + följetong + promptChanged
@@ -324,7 +325,7 @@ export async function onRequestPost({ request, env }) {
         "Barnets idé ska vävas in gradvis – inte allt på första meningen."
       );
       lines.push(
-        "I kapitel 1 får ingen magiträning ske. Det är bara mötet, känslorna och första antydan om att något är speciellt."
+        "I kapitel 1 ska ingen magiträning ske. Det är bara mötet, känslorna och första antydan om att något är speciellt."
       );
       lines.push(
         "Om barnets prompt inte nämner magi eller övernaturliga saker ska kapitlet vara helt vardagligt."
@@ -340,13 +341,10 @@ export async function onRequestPost({ request, env }) {
         "Första stycket i detta kapitel måste kännas som en fortsättning av förra kapitlets slut: samma dag, samma plats, samma stämning – eller ett tydligt markerat hopp (t.ex. 'Nästa morgon på skolgården...')."
       );
       lines.push(
-        "Du får INTE skriva en ny generisk start som 'Det var en vanlig dag...', 'Solen strålade...' eller 'Björn satt vid sitt skrivbord...' i mittenkapitel, om föregående kapitel slutade mitt i en pågående scen."
-      );
-      lines.push(
         "Om förra kapitlet slutade med att de började göra något (rita en karta, gå till parken, prata med någon) ska detta kapitel fortsätta samma aktivitet eller visa vad som händer direkt efter. Inte starta om aktiviteten på en ny plats som om den vore ny."
       );
       lines.push(
-        "En tydlig engångshändelse (presentera en ny elev, påbörja en karta, hitta en nyckel) får bara introduceras EN gång i boken. Senare kapitel får bara hänvisa till den."
+        "En tydlig engångshändelse (presentera en ny elev, börja rita karta, hitta en nyckel, öppna en magisk bok första gången) får bara introduceras EN gång i boken."
       );
       lines.push(
         "Du får pausa en aktivitet i ett kapitel och återuppta den senare, men då ska du tydligt visa att det är samma aktivitet de fortsätter med."
@@ -577,10 +575,10 @@ function getSeriesPhaseForBook(chapterIndex, totalChapters) {
   }
 }
 
-// Systemprompt – StoryEngine v2.1, hård scenkontroll + anti-floskler + svensk stil
-function buildSystemPrompt_BNKids_v2_1(ageKey) {
+// Systemprompt – StoryEngine v2.2, hård scenkontroll + anti-floskler + svensk stil + anti-gåta
+function buildSystemPrompt_BNKids_v2_2(ageKey) {
   return `
-Du är BN-Kids StoryEngine v2.1. Du skriver kapitelböcker och sagor på SVENSKA för barn. Ditt mål är att hålla en tydlig röd tråd, långsamt tempo och trygg ton.
+Du är BN-Kids StoryEngine v2.2. Du skriver kapitelböcker och sagor på SVENSKA för barn. Ditt mål är att hålla en tydlig röd tråd, långsamt tempo och trygg ton.
 
 Du tänker och skriver direkt på svenska. Du får inte först formulera text på engelska och sedan översätta.
 
@@ -601,6 +599,25 @@ MAGI OCH VARDAG – STANDARDLÄGE
   - inga magiska föremål, inga portaler, inga övernaturliga händelser.
 - Magi får bara finnas om barnet ber om det. Annars: skola, familj, fritid, känslor och vardagsproblem.
 - Magi ska utvecklas stegvis: små effekter först, mer kontroll senare.
+
+------------------------------------
+GÅTOR, PROV OCH KRISTALLJAKTER
+------------------------------------
+Detta är viktiga regler för ALLA åldrar:
+
+- Det får finnas MAX EN enkel gåta eller "prov" i hela boken.
+- Om en gåta redan har förekommit i något tidigare kapitel ska du INTE skapa fler gåtor, gåtfulla ledtrådar eller test-ritualer.
+- Mentorfigurer (t.ex. en magiker som Malcolm) får gärna vara kloka, men ska inte utsätta barnen för prov efter prov.
+- När en mentor vill se om barnen är redo ska det helst ske genom en KONKRET situation:
+  - hjälpa någon,
+  - våga säga något,
+  - samarbeta i en uppgift,
+  - våga prova något nytt i verkligheten.
+- Om du introducerar ett uppdrag med en sak (t.ex. en kristall, en nyckel, en bok):
+  - ska det vara EN tydlig sak,
+  - uppdraget får inte förvandlas till en lång serie abstrakta gåtor.
+- Använd inte formuleringar som "du måste först klara tre prov", "för att bevisa att du är värdig", "lös min gåta så får du veta mer".
+- Mentorfigurer får förklara, stötta och vara hemlighetsfulla, men de ska inte testa barnen om och om igen.
 
 ------------------------------------
 KAPITEL 1 – STRIKTA REGLER
