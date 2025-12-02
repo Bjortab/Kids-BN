@@ -1,11 +1,10 @@
 // functions/api/generate.js
 // BN-KIDS — Cloudflare Pages Function: POST /api/generate
 //
-// GC v8.1 – BN-Kids StoryEngine v3.1 "Magic Restored + Floskel-filter"
-// - Bas: v8.0 (din magiska version) – kapitelmotor och flow oförändrat
+// GC v8.0 – BN-Kids StoryEngine v3.0 "Magic Restored"
+// - Behåller fungerande kapitelmotor från v7.x (chapterIndex via previousChapters.length)
 // - Följetongsläge: en bok är ett deläventyr, inte "rädda världen" på 10 kapitel
 // - Hårdare regler mot tugg, floskler, gåtor och moralkakor
-// - Extra: hårt förbud mot dina hatfraser + post-filter som klipper bort dem om de ändå skrivs
 // - Starkare krav på kontinuitet, ingen omstart, inget kopierat första-kapitel-flow
 // - Tydlig skillnad i ton mellan 7–8 & 11–12 (mer moget och episkt för 11–12)
 // - Extra regler för rymd + tidsresor
@@ -195,9 +194,9 @@ export async function onRequestPost({ request, env }) {
            "");
 
     // ------------------------------------------------------
-    // SYSTEMPROMPT – BN-Kids stil + regler (v8.1 = v8.0 + floskelförbud)
+    // SYSTEMPROMPT – BN-Kids stil + regler (uppdaterad v8.0)
     // ------------------------------------------------------
-    const systemPrompt = buildSystemPrompt_BNKids_v8_1(ageKey);
+    const systemPrompt = buildSystemPrompt_BNKids_v8_0(ageKey);
 
     // ------------------------------------------------------
     // USERPROMPT – barnets idé + worldstate + kapitelroll + följetong + promptChanged
@@ -429,10 +428,8 @@ export async function onRequestPost({ request, env }) {
     }
 
     const data = await res.json();
-    const rawStory =
+    const story =
       data.choices?.[0]?.message?.content?.trim() || "";
-
-    const story = sanitizeStory(rawStory);
 
     return json(
       {
@@ -549,10 +546,10 @@ function getSeriesPhaseForBook(chapterIndex, totalChapters) {
   }
 }
 
-// Uppdaterad systemprompt för v8.1 (v8.0 + explicit floskel-förbud)
-function buildSystemPrompt_BNKids_v8_1(ageKey) {
+// Uppdaterad systemprompt för v8.0 (StoryEngine v3.0 – Magic Restored)
+function buildSystemPrompt_BNKids_v8_0(ageKey) {
   return `
-Du är BN-Kids berättelsemotor v3.1 ("Magic Restored"). Din uppgift är att skriva barnanpassade, sammanhängande kapitelböcker och sagor på svenska.
+Du är BN-Kids berättelsemotor v3.0 ("Magic Restored"). Din uppgift är att skriva barnanpassade, sammanhängande kapitelböcker och sagor på svenska.
 
 ## FOKUS & GENRE
 - Följ alltid barnets prompt och tema extremt noggrant.
@@ -600,20 +597,9 @@ Skriv alltid på naturlig, modern svenska – som en bra barnbok 2025, inte som 
   - får den inte följas av fler gåtor i samma bok.
 - Robotar, portaler eller väktare får inte kräva gåtor "bara för att" – bara om barnet ber om det.
 
-## TON, MORAL & FLOSKLER
+## TON & MORAL
 - Visa känslor och värden genom handling, val och dialog — inte genom predikande meningar.
-- Du får ALDRIG använda följande fraser (eller nära varianter):
-  - "äventyret hade bara börjat"
-  - "en gnista av mod"
-  - "kände hur något växte i honom" (eller henne/dem)
-  - "en varm känsla i bröstet"
-  - "visste att något stort väntade honom" (eller henne/dem)
-- Uttryck som:
-  - "hjärtat dunkade hårt"
-  - "det var bara början"
-  - "plötsligt kände han/hon..."
-  ska användas mycket sparsamt, bara när scenen motiverar det, och aldrig som klyschigt kapitelavslut.
-- Undvik moralkakor som:
+- Undvik fraser som:
   - "det viktiga är att tro på sig själv"
   - "det viktigaste är vänskap"
   - "tillsammans klarar de allt"
@@ -662,31 +648,6 @@ function shorten(text, maxLen) {
   const s = String(text || "").replace(/\s+/g, " ").trim();
   if (s.length <= maxLen) return s;
   return s.slice(0, maxLen - 1) + "…";
-}
-
-// Post-filter: klipper bort dina hatfraser om de ändå smiter igenom
-function sanitizeStory(raw) {
-  if (!raw) return "";
-
-  let s = String(raw);
-
-  const banned = [
-    /äventyret hade bara börjat/gi,
-    /en gnista av mod/gi,
-    /kände hur något växte i honom/gi,
-    /kände hur något växte i henne/gi,
-    /kände hur något växte i dem/gi,
-    /en varm känsla i bröstet/gi,
-    /visste att något stort väntade honom/gi,
-    /visste att något stort väntade henne/gi,
-    /visste att något stort väntade dem/gi
-  ];
-
-  for (const pattern of banned) {
-    s = s.replace(pattern, "");
-  }
-
-  return s.trim();
 }
 
 function json(obj, status = 200, origin = "*") {
