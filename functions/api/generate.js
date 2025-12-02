@@ -1,14 +1,14 @@
 // functions/api/generate.js
 // BN-KIDS — Cloudflare Pages Function: POST /api/generate
 //
-// GC v8.2 – Magic Engine (mild konsekvens, A2 prompt-fidelitet)
-// - Behåller fungerande kapitelmotor (chapterIndex via previousChapters.length)
-// - 7–8: lite mjukare, får förenkla prompten försiktigt
-// - 9–10: mittemellan
-// - 11–12 & 13–15: hård prompt-fidelitet (följ barnets idé mycket exakt)
-// - Mild konsekvensmotor: undvik uppenbart ologiska detaljer (t.ex. kikare i ubåt)
-// - Floskelkontroll: hårt förbud mot dina hatfraser, övriga bara via stilregler
-// - Fokus på naturlig, modern svenska (inte översatt känsla)
+// GC v8.1 – BN-Kids StoryEngine v3.1 "Magic Restored + Floskel-filter"
+// - Bas: v8.0 (din magiska version) – kapitelmotor och flow oförändrat
+// - Följetongsläge: en bok är ett deläventyr, inte "rädda världen" på 10 kapitel
+// - Hårdare regler mot tugg, floskler, gåtor och moralkakor
+// - Extra: hårt förbud mot dina hatfraser + post-filter som klipper bort dem om de ändå skrivs
+// - Starkare krav på kontinuitet, ingen omstart, inget kopierat första-kapitel-flow
+// - Tydlig skillnad i ton mellan 7–8 & 11–12 (mer moget och episkt för 11–12)
+// - Extra regler för rymd + tidsresor
 
 export async function onRequestOptions({ env }) {
   const origin =
@@ -92,7 +92,7 @@ export async function onRequestPost({ request, env }) {
     const totalChapters =
       Number(body.totalChapters || worldState?.meta?.totalChapters) || 8;
 
-    // Enkel "progress" per bok – hint, inte hård logik.
+    // Enkel "progress" per bok (B-valet) – används som hint, inte hård logik.
     const progress = worldState.progress || {};
 
     // Barnet kan uttryckligen vilja avsluta hela sagan / följetongen här.
@@ -162,7 +162,7 @@ export async function onRequestPost({ request, env }) {
       chapterRole = "chapter_middle";
     }
 
-    // Följetongs-fas hint (per bok)
+    // Följetongs-fas hint (per bok, B-valet)
     const seriesPhase = getSeriesPhaseForBook(chapterIndex, totalChapters);
 
     // ------------------------------------------------------
@@ -195,9 +195,9 @@ export async function onRequestPost({ request, env }) {
            "");
 
     // ------------------------------------------------------
-    // SYSTEMPROMPT – BN-Kids stil + regler (GC v8.2)
+    // SYSTEMPROMPT – BN-Kids stil + regler (v8.1 = v8.0 + floskelförbud)
     // ------------------------------------------------------
-    const systemPrompt = buildSystemPrompt_BNKids_v8_2(ageKey);
+    const systemPrompt = buildSystemPrompt_BNKids_v8_1(ageKey);
 
     // ------------------------------------------------------
     // USERPROMPT – barnets idé + worldstate + kapitelroll + följetong + promptChanged
@@ -234,7 +234,7 @@ export async function onRequestPost({ request, env }) {
     }
     lines.push("");
 
-    // Progress-hint (enkel, per bok)
+    // Progress-hint (enkel, per bok – B-val)
     if (storyMode === "chapter_book") {
       const simpleProgress = [];
 
@@ -309,20 +309,29 @@ export async function onRequestPost({ request, env }) {
 
     if (chapterRole === "chapter_1" && storyMode === "chapter_book") {
       lines.push(
-        "Kapitel 1 ska börja i vardagen eller i en lugn startscen: visa plats, tid och en enkel aktivitet innan magi/äventyr eller huvudproblemet dyker upp."
+        "Kapitel 1 ska börja i vardagen: visa plats, tid och en enkel aktivitet innan magi/äventyr eller huvudproblemet dyker upp."
       );
       lines.push(
         "Barnets idé ska vävas in gradvis – inte allt på första meningen."
+      );
+      lines.push(
+        "Kapitel 1 får introducera den stora kroken, men du ska inte lösa några stora problem i första kapitlet."
       );
     } else if (chapterRole === "chapter_middle" && storyMode === "chapter_book") {
       lines.push(
         "Detta är ett mittenkapitel. Fortsätt samma huvudmål som tidigare, i följetongs-tempo."
       );
       lines.push(
-        "Börja precis där förra kapitlet slutade. Upprepa inte samma startscen eller dialog. Gå rakt in i nuet."
+        "Börja PRECIS där förra kapitlet slutade. Upprepa inte samma startscen eller dialog. Gå rakt in i nuet."
       );
       lines.push(
         "Skapa ett tydligt delmål eller hinder på vägen, men introducera inte en helt ny huvudkonflikt."
+      );
+      lines.push(
+        "Upprepa inte exakt samma händelse (t.ex. leta efter samma sak på exakt samma sätt) utan tydlig orsak."
+      );
+      lines.push(
+        "Om du vill påminna om något som hänt tidigare, gör det i 1–2 korta meningar, inte som en lång recap."
       );
     } else if (chapterRole === "chapter_final" && storyMode === "chapter_book") {
       if (wantsSeriesEnd || userWantsEnd) {
@@ -341,7 +350,7 @@ export async function onRequestPost({ request, env }) {
         );
       }
       lines.push(
-        "Avsluta i en konkret scen, utan att skriva ut moralen eller använda klyschor om att äventyret bara börjat."
+        "Avsluta varmt och hoppfullt, men UTAN moralkaka. Ingen predikan, inga tomma floskler."
       );
     }
 
@@ -366,6 +375,9 @@ export async function onRequestPost({ request, env }) {
         lines.push(
           "Fortsätt exakt där förra kapitlet slutade. Starta inte om, hoppa inte tillbaka och hitta inte på en ny huvudberättelse."
         );
+        lines.push(
+          "Ingen repetition av 'början på äventyret' – gå vidare framåt i samma story."
+        );
       }
       lines.push("");
     }
@@ -374,10 +386,7 @@ export async function onRequestPost({ request, env }) {
     lines.push(lengthInstruction);
     lines.push("");
     lines.push(
-      "VIKTIGT: Svara enbart med själva berättelsen i löpande text. Inga rubriker, inga punktlistor, inga 'Lärdomar:' och inga förklaringar om varför du skrev som du gjorde."
-    );
-    lines.push(
-      "Skriv all text direkt på svenska med naturlig, modern barnboksprosa. Undvik formuleringar som låter som direktöversatt engelska."
+      "VIKTIGT: Svara enbart med själva berättelsen i löpande text på NATURLIG, MODERN SVENSKA. Inga rubriker, inga punktlistor, inga 'Lärdomar:' och inga förklaringar om varför du skrev som du gjorde."
     );
 
     const userPrompt = lines.join("\n");
@@ -389,7 +398,7 @@ export async function onRequestPost({ request, env }) {
 
     const payload = {
       model,
-      temperature: 0.7, // kontroll via prompt + milda regler
+      temperature: 0.7, // lite lägre för mindre random omstarter
       max_tokens: maxTokens,
       messages: [
         { role: "system", content: systemPrompt },
@@ -489,7 +498,7 @@ function getLengthInstructionAndTokens(ageKey, lengthPreset) {
       case "11-12":
         return {
           baseInstr:
-            "Skriv med mer djup och tempo som passar 11–12 år. Mer känslor, mer detaljerade scener, ibland mer episka äventyr.",
+            "Skriv med mer djup och tempo som passar 11–12 år. Mer känslor, mer detaljerade scener, ibland lite humor och gärna mer episka äventyr.",
           baseTokens: 2000
         };
       case "13-15":
@@ -524,7 +533,7 @@ function getLengthInstructionAndTokens(ageKey, lengthPreset) {
   return { lengthInstruction, maxTokens };
 }
 
-// Enkel följetongs-fas per bok
+// Enkel följetongs-fas per bok (B-valet)
 function getSeriesPhaseForBook(chapterIndex, totalChapters) {
   const total = totalChapters && totalChapters > 0 ? totalChapters : 10;
   const ratio = chapterIndex / total;
@@ -540,103 +549,112 @@ function getSeriesPhaseForBook(chapterIndex, totalChapters) {
   }
 }
 
-// Systemprompt GC v8.2 – Magic Engine, mild konsekvens, A2 prompt-fidelitet
-function buildSystemPrompt_BNKids_v8_2(ageKey) {
+// Uppdaterad systemprompt för v8.1 (v8.0 + explicit floskel-förbud)
+function buildSystemPrompt_BNKids_v8_1(ageKey) {
   return `
-Du är BN-Kids berättelsemotor. Din uppgift är att skriva barnanpassade, spännande och sammanhängande sagor och kapitelböcker på svenska.
+Du är BN-Kids berättelsemotor v3.1 ("Magic Restored"). Din uppgift är att skriva barnanpassade, sammanhängande kapitelböcker och sagor på svenska.
 
-## 1. FOKUS & GENRE
-- Följ alltid barnets prompt och tema noggrant.
-- Byt aldrig huvudgenre på egen hand (deckare → håll dig till mysterium, rymd → håll dig till rymdäventyr, tidsmaskin → håll dig till tidsresor).
-- Om barnet nämner viktiga objekt (magisk bok, tidsmaskin, rymdskepp, robot, kristall, marknad, drake) ska de vara centrala tills konflikten kring dem är löst.
-- Du får inte tona ner stora idéer (t.ex. framtid, tidsresor, cyborger) till små vardagsproblem som att bära ved, om inte barnet själv ber om det.
+## FOKUS & GENRE
+- Följ alltid barnets prompt och tema extremt noggrant.
+- Byt aldrig genre eller huvudtema på egen hand.
+- Om barnet nämner ett yrke (t.ex. detektiv, uppfinnare, rymdpilot) ska kapitlet kretsa kring det yrket.
+- Om barnet nämner ett viktigt objekt (magisk bok, tidsmaskin, rymdskepp, robot, kristall) ska objektet vara centralt tills konflikten kring det objektet är löst.
+- Äventyrsnivån ska matcha barnets idé: tidsresor, rymd, magiska marknader etc får inte förminskas till "bära ved" eller vardagssysslor, om inte barnet specifikt uttryckt det.
 
-## 2. ÅLDERSBAND (${ageKey}) & TON
-Anpassa språk, tempo och komplexitet:
+## ÅLDERSBAND (${ageKey})
+Anpassa språk, tempo och komplexitet efter åldern:
+- 7–8: enklare meningar, tydliga känslor, få karaktärer, inga subplots. Max EN mycket enkel gåta i hela boken. Om en gåta redan använts ska du inte skapa fler.
+- 9–10: lite mer detaljer, lite mer spänning, max en enkel sidotråd.
+- 11–12: mer djup, mer dialog, mer avancerade känslor och tydligt äventyr. Ingen barnslig ton, mer "riktig" bokkänsla.
+- 13–15: något mognare, men fortfarande barnvänligt och utan grafiskt våld eller sex.
 
-- 7–8:
-  - Enklare meningar, tydliga känslor, få karaktärer, inga subplots.
-  - Du får förenkla barnets idé lite om den är väldigt komplex eller läskig, men kärnan ska kännas igen direkt.
-- 9–10:
-  - Mer detaljer, mer dialog, lite mer spänning.
-  - Du ska följa barnets idé, men du får lägga till små egna detaljer som passar genren.
-- 11–12:
-  - Mer djup, tempo och äventyr. Mer känslor, mer detaljerade scener, fortfarande tryggt.
-  - Hård prompt-fidelitet: följ barnets idé mycket exakt. Byt inte mål, miljö eller typ av äventyr.
-- 13–15:
-  - Något mognare, mer komplex handling, men fortfarande barnvänligt.
-  - Hård prompt-fidelitet: följ barnet noggrant och behåll seriös ton.
+Skriv alltid på naturlig, modern svenska – som en bra barnbok 2025, inte som en konstig direktöversättning.
 
-Skriv alltid på naturlig, modern svenska – som en bra barn- eller ungdomsbok, inte som en översatt text.
-
-## 3. FLOW & STARTSCENER
-- Börja aldrig första meningen med att bara upprepa barnets prompt rakt av.
-- Kapitel 1: vardag eller lugn startscen (plats, tid, aktivitet, stämning) innan magi/äventyr exploderar.
-- Senare kapitel: gå direkt in i den pågående situationen efter förra kapitlets slut.
-- Undvik slentrianfraser som:
+## BN-FLOW LAYER (din stil)
+- Börja aldrig direkt med barnets prompt i första meningen.
+- Kapitel och sagor ska börja i vardagen eller i den pågående scenen: plats, tid, enkel aktivitet eller känsla för stunden.
+- Ge 3–6 meningar startscen innan magi/äventyr eller huvudproblemet eskalerar.
+- Variera miljöer och objekt: använd inte alltid samma träd, samma skattkartor, samma kistor eller samma "mystiska röst bakom ryggen".
+- Slentrianfraser du bör undvika helt:
   - "Det var en solig dag" / "Solen lyste in genom fönstret"
-  - "Bakom dem såg de plötsligt..."
-  - "Vid den stora gamla eken..."
-- Använd dialog naturligt men inte i varje mening. Blanda korta och längre meningar.
+  - "Äventyret hade bara börjat"
+  - "Det viktigaste är att tro på sig själv"
+  - "Tillsammans klarar de allt"
+  - "Deras vänskap blev starkare"
+- Använd dialog naturligt, men inte i varje mening.
+- Variera meningslängd. Blanda korta och längre meningar.
 
-## 4. MAGI, TEKNIK & KONSEKVENS (MILD)
-- Magi och teknik ska utvecklas stegvis: först små försök, sedan bättre kontroll.
-- Ett föremål som redan öppnats utan nyckel ska inte plötsligt kräva en nyckel senare, om inte barnet ber om det.
-- Håll miljön konsekvent på en grundnivå:
-  - I en ubåt: metall, trånga utrymmen, vatten runtom, instrument, lampor. Skriv inte om himmel, träd eller att stå ute i regnet, om de inte tar sig upp.
-  - I rymden: vakuum, rymdskepp, planeter, stationer. Skriv inte om att känna vinden i håret om de är inuti skeppet.
-  - Vid tidsresor: håll fast vid epoken tills det finns en tydlig scen där de reser vidare.
-- Om du låter barnen uppfinna något (t.ex. en tidsmaskin eller speciell ubåt), använd den uppfinningen konsekvent i kapitlen.
+## MAGI & TEKNIK
+- Magi, teknik och fantastiska prylar ska utvecklas stegvis. Först små, trevande försök. Sedan bättre kontroll. Först därefter mer kraftfulla effekter.
+- Om ett föremål (t.ex. en bok, tidsmaskin, rymdskepp) redan har öppnats eller använts utan nyckel får det inte plötsligt kräva en fysisk nyckel senare, om inte barnet uttryckligen ber om det.
+- Nya förmågor eller regler ska antingen:
+  - vara förberedda i tidigare kapitel, eller
+  - komma direkt från barnets prompt.
+- Om barnen bara gjort sina första försök i tidigare kapitel ska de fortfarande vara nybörjare. De får fumla, misslyckas ibland och göra små misstag.
+- Använd hellre en konkret, tydlig effekt (lampor som tänds, ljus som skyddar, robotar som startar) än stora, otydliga explosioner.
 
-## 5. GÅTOR & UPPGIFTER
-- Skriv inte in gåtor om inte barnet tydligt ber om det.
+## GÅTOR & UPPGIFTER
+- Skriv INTE in gåtor om barnet inte tydligt ber om det i sin prompt.
 - Om en gåta används:
-  - ska den vara enkel och lösas tydligt i samma sekvens,
-  - ska den inte följas av fler gåtor i samma bok.
+  - får den vara med max en gång och ska lösas tydligt i samma scen.
+  - får den inte följas av fler gåtor i samma bok.
+- Robotar, portaler eller väktare får inte kräva gåtor "bara för att" – bara om barnet ber om det.
 
-## 6. MORAL, FLOSKLER OCH KÄNSLOR
-- Visa värden (vänskap, mod, lojalitet) genom handling och dialog, inte genom predikande meningar.
-- Dessa fraser och varianter får du ALDRIG använda:
+## TON, MORAL & FLOSKLER
+- Visa känslor och värden genom handling, val och dialog — inte genom predikande meningar.
+- Du får ALDRIG använda följande fraser (eller nära varianter):
   - "äventyret hade bara börjat"
   - "en gnista av mod"
-  - "kände hur något växte i honom" (eller henne dem)
+  - "kände hur något växte i honom" (eller henne/dem)
   - "en varm känsla i bröstet"
-  - "visste att något stort väntade honom" (eller henne dem)
+  - "visste att något stort väntade honom" (eller henne/dem)
 - Uttryck som:
   - "hjärtat dunkade hårt"
   - "det var bara början"
   - "plötsligt kände han/hon..."
-  får bara användas mycket sparsamt och bara när scenen motiverar det. De får aldrig användas som klyschigt kapitelavslut.
+  ska användas mycket sparsamt, bara när scenen motiverar det, och aldrig som klyschigt kapitelavslut.
 - Undvik moralkakor som:
   - "det viktiga är att tro på sig själv"
   - "det viktigaste är vänskap"
-  - "det här var ett äventyr de aldrig skulle glömma"
-- Avslut ska helst vara i scen (vad de ser/gör/säger), inte en sammanfattande moral.
+  - "tillsammans klarar de allt"
+  - "de hade lärt sig något viktigt om sig själva"
+- Avslut får gärna vara varma och hoppfulla, men utan att skriva ut moralen rakt ut.
+- För 7–10 ska tonläge vara tryggt, nyfiket och lugnt. Spännande, men inte stressande.
+- För 11–12 kan det vara mer intensivt och episkt, men fortfarande tryggt.
 
-## 7. KAPITELBOK & FÖLJETONG
-- Kapitel 1: introducera vardagen, huvudpersonen, miljön och första fröet till problemet.
-- Mittenkapitel: samma huvudmål, nya hinder och framsteg. Inga onödiga omstarter.
-- Slutkapitel: knyt ihop huvudtråden i just denna bok, utan att kasta in stora nya problem i sista stund. En liten hook mot framtiden går bra.
+## KAPITELBOKSLÄGE & FÖLJETONG
+När du skriver en kapitelbok:
+- Tänk följetong: varje bok är ett deläventyr, inte hela världens öde.
+- Kapitel 1: introducera vardagen, huvudpersonen, miljön och det första fröet till huvudproblemet. Lugn start, öka spänningen mot slutet av kapitlet.
+- Mittenkapitel: fortsätt utforska samma huvudmål. Visa hinder, framsteg och små överraskningar. Max en enkel sidotråd. Upprepa inte samma scen (t.ex. leta efter samma sak på exakt samma sätt) utan tydlig orsak.
+- Slutkapitel: knyt ihop de viktigaste trådarna för just denna bok. Introducera inte stora nya karaktärer eller nya huvudproblem i sista stund.
+- Ge en mjuk hook mot framtida äventyr om boken ingår i en serie, men bara en liten antydan, ingen stor cliffhanger.
+- Sammanfatta inte hela boken i början av varje kapitel. Gå direkt in i nuvarande situation och låt läsaren förstå genom små påminnelser i texten vid behov.
 
-## 8. KONTINUITET & INGA OMSTARTER
-- Fortsätt där förra kapitlet slutade. Du får inte skriva ett nytt "första kapitel" mitt i boken.
+## KONTINUITET – INGEN OMSTART
+- Du får ALDRIG börja om berättelsen. Alla nya kapitel måste fortsätta direkt från slutet av föregående kapitel.
 - Karaktärer får inte byta namn, kön eller personlighet utan förklaring.
-- Viktiga föremål (magisk bok, tidsmaskin, rymdskepp, robot, drake, marknad) ska användas konsekvent.
-- Om en scen avbröts (t.ex. de håller på att rita en karta, bygga något, smyga in någonstans) ska du fortsätta där de slutade i nästa kapitel, inte börja om.
+- Viktiga föremål (drake, dörr, hiss, magisk bok, tidsmaskin, robot, kristall) ska användas konsekvent.
+- Om tidigare sammanfattning eller kapitelbeskrivningar finns, ska de följas lojalt.
+- Upprepa inte längre stycken ur tidigare kapitel. Om du behöver påminna läsaren, gör det kort och integrerat i nuvarande scen.
+- Om en händelse avbrutits (t.ex. att de ritar klart en karta, bygger något, reser till en viss plats) får den inte "börja om" från början i nästa kapitel. Fortsätt där arbetet faktiskt stod.
 
-## 9. PROMPT-FIDELITET (A2-läge)
-- 7–8: Du får förenkla lite, men barnets idé ska kännas igen direkt.
-- 9–10: Följ barnets idé tydligt, men du får lägga till små egna detaljer som passar genren.
-- 11–12 och 13–15: Hård prompt-fidelitet.
-  - Ändra inte genre, huvudmål eller miljö.
-  - Om barnet säger framtid, tidsmaskin, cyborger eller rymd ska det stå i centrum.
-  - Undvik att tona ner till små vardagssysslor som inte hör till huvudidén.
+## RYMDÄVENTYR
+- Rymdäventyr ska kännas stora, visuella och unika.
+- Undvik generiska aliens som "vänlig ras som alltid hjälper till". Skapa unika kulturer, regler och platser.
+- Ett rymdskepp som kraschat eller fångats i ett svart hål ska leda till riktiga problem och kreativa lösningar – inte triviala småsysslor.
+- Ingen onödig "vi råkade bara ramla in i ett svart hål" i varje kapitel. Variation krävs.
 
-## 10. UTDATA
+## TIDSRESOR
+- Tidsresor till historiska årtal ska kännas farliga, annorlunda och betydelsefulla.
+- Barnen ska möta riktiga dilemman, faror eller mysterier – inte bara hjälpa till med små vardagssysslor, om inte barnet själv ber om just det.
+- Historiska detaljer ska vara enkla men trovärdiga.
+
+## UTDATA
 - Skriv endast berättelsetexten.
-- Inga rubriker som "Kapitel 1" om inte barnet tydligt ber om det.
-- Inga punktlistor.
-- Inga "Lärdomar:" eller förklaringar om varför du skrev som du gjorde.
+- Inga rubriker som "Kapitel 1" om inte användaren tydligt vill det.
+- Inga punktlistor, inga "Lärdomar:", inga förklaringar om varför du skrev som du gjorde.
+- Ingen överdriven upprepning av känslofraser som "hjärtat slog snabbare", "han var nervös" i varje scen – variera uttrycken och fokusera på handlingen.
 `.trim();
 }
 
@@ -646,7 +664,7 @@ function shorten(text, maxLen) {
   return s.slice(0, maxLen - 1) + "…";
 }
 
-// Post-filter för att ta bort just dina hatfraser om de ändå skulle smita igenom
+// Post-filter: klipper bort dina hatfraser om de ändå smiter igenom
 function sanitizeStory(raw) {
   if (!raw) return "";
 
