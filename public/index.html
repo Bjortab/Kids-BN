@@ -149,6 +149,27 @@
       white-space:nowrap;
       border:0;
     }
+    .tips-box {
+      margin-top:8px;
+      font-size:13px;
+      color:#ccc;
+      background:#151515;
+      border-radius:8px;
+      border:1px solid #262626;
+      padding:10px 12px;
+      line-height:1.4;
+    }
+    .tips-box strong {
+      display:block;
+      margin-bottom:4px;
+    }
+    .tips-box ul {
+      padding-left:18px;
+      margin:4px 0 0 0;
+    }
+    .tips-box li {
+      margin-bottom:2px;
+    }
   </style>
 </head>
 
@@ -200,6 +221,17 @@
           placeholder="Skriv din idé här…"
         ></textarea>
       </div>
+    </div>
+
+    <!-- Tips för magiska berättelser -->
+    <div class="tips-box">
+      <strong>Tips för magiska berättelser</strong>
+      <ul>
+        <li>Skriv gärna <em>en tydlig idé i taget</em> (t.ex. “vi är i en ubåt på havsbotten”).</li>
+        <li>Om du vill byta plats eller tema – gör det i nästa kapitel.</li>
+        <li>Om du inte skriver något nytt inför nästa kapitel fortsätter BN där förra kapitlet slutade.</li>
+        <li>Ju tydligare idé, desto tydligare saga. Ju vildare idé, desto vildare saga – och det är också okej. ✨</li>
+      </ul>
     </div>
 
     <!-- Röst-UI: inspelning + transkript -->
@@ -266,7 +298,7 @@
         Skapa saga
       </button>
       <button class="btn-secondary" data-id="btn-ws-dev">
-        Skapa saga (WS dev)
+        Skapa Kapitel 1
       </button>
       <button class="btn-secondary" data-id="btn-tts">
         Läs upp (om saga finns)
@@ -315,5 +347,27 @@
   <script src="/ws_button.gc.js"></script>
   <script src="/app_playTTS.js"></script>
 
+  <!-- UI-auto: uppdatera WS-dev-knappen med kapitelnummer (endast kosmetiskt) -->
+  <script>
+    (function () {
+      const wsBtn = document.querySelector('[data-id="btn-ws-dev"]');
+      if (!wsBtn) return;
+
+      // Starta på 1 (matchar texten i HTML)
+      let currentChapter = 1;
+      const match = wsBtn.textContent.match(/Kapitel\s+(\d+)/);
+      if (match) {
+        const num = parseInt(match[1], 10);
+        if (!isNaN(num) && num > 0) currentChapter = num;
+      }
+
+      wsBtn.addEventListener("click", () => {
+        // Efter att kapitel skapas, bumpa bara etiketten uppåt.
+        // Detta påverkar INTE kapitelmotorn, bara texten på knappen.
+        currentChapter += 1;
+        wsBtn.textContent = "Skapa Kapitel " + currentChapter;
+      });
+    })();
+  </script>
 </body>
 </html>
