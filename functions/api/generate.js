@@ -1,15 +1,16 @@
 // functions/api/generate.js
 // BN-KIDS — Cloudflare Pages Function: POST /api/generate
 //
-// GC v8.3 – BN-Kids StoryEngine v3.0 "Magic Restored – Sense & Intro Balance"
+// GC v8.5 – BN-Kids StoryEngine v3.0 "Magic Restored – Portals & Objects"
 // - Behåller fungerande kapitelmotor från v7.x (chapterIndex via previousChapters.length)
 // - Följetongsläge: en bok är ett deläventyr, inte "rädda världen" på 10 kapitel
 // - Hårdare regler mot tugg, floskler, gåtor och moralkakor
 // - Starkare krav på kontinuitet, ingen omstart, inget kopierat första-kapitel-flow
 // - Tydlig skillnad i ton mellan 7–8 & 11–12 (mer moget och episkt för 11–12)
 // - Extra regler för rymd + tidsresor
-// - Nytt i v8.3: realistiskt beteende (ingen prasslande nyckel), bättre karaktärsintro,
-//   djur beter sig som djur, mild extra konsekvens-guard
+// - v8.3: realistiskt beteende, bättre karaktärsintro, djur beter sig som djur, konsekvens-guard
+// - v8.4: viktiga föremål är unika (ingen “extra gyllene fjäder”)
+// - NYTT v8.5: portaler/dörrar/trösklar får inte “startas om” i varje kapitel – fortsätt på andra sidan
 
 export async function onRequestOptions({ env }) {
   const origin =
@@ -93,7 +94,7 @@ export async function onRequestPost({ request, env }) {
     const totalChapters =
       Number(body.totalChapters || worldState?.meta?.totalChapters) || 8;
 
-    // Enkel "progress" per bok (B-valet) – används som hint, inte hård logik.
+    // Enkel "progress" per bok – används som hint, inte hård logik.
     const progress = worldState.progress || {};
 
     // Barnet kan uttryckligen vilja avsluta hela sagan / följetongen här.
@@ -163,7 +164,7 @@ export async function onRequestPost({ request, env }) {
       chapterRole = "chapter_middle";
     }
 
-    // Följetongs-fas hint (per bok, B-valet)
+    // Följetongs-fas hint per bok
     const seriesPhase = getSeriesPhaseForBook(chapterIndex, totalChapters);
 
     // ------------------------------------------------------
@@ -196,9 +197,9 @@ export async function onRequestPost({ request, env }) {
            "");
 
     // ------------------------------------------------------
-    // SYSTEMPROMPT – BN-Kids stil + regler (uppdaterad v8.3)
+    // SYSTEMPROMPT – BN-Kids stil + regler (uppdaterad v8.5)
     // ------------------------------------------------------
-    const systemPrompt = buildSystemPrompt_BNKids_v8_3(ageKey);
+    const systemPrompt = buildSystemPrompt_BNKids_v8_5(ageKey);
 
     // ------------------------------------------------------
     // USERPROMPT – barnets idé + worldstate + kapitelroll + följetong + promptChanged
@@ -235,7 +236,7 @@ export async function onRequestPost({ request, env }) {
     }
     lines.push("");
 
-    // Progress-hint (enkel, per bok – B-val)
+    // Progress-hint (enkel, per bok)
     if (storyMode === "chapter_book") {
       const simpleProgress = [];
 
@@ -532,7 +533,7 @@ function getLengthInstructionAndTokens(ageKey, lengthPreset) {
   return { lengthInstruction, maxTokens };
 }
 
-// Enkel följetongs-fas per bok (B-valet)
+// Enkel följetongs-fas per bok
 function getSeriesPhaseForBook(chapterIndex, totalChapters) {
   const total = totalChapters && totalChapters > 0 ? totalChapters : 10;
   const ratio = chapterIndex / total;
@@ -548,8 +549,8 @@ function getSeriesPhaseForBook(chapterIndex, totalChapters) {
   }
 }
 
-// Uppdaterad systemprompt för v8.3 (StoryEngine v3.0 – Magic Restored, Sense & Intro Balance)
-function buildSystemPrompt_BNKids_v8_3(ageKey) {
+// Uppdaterad systemprompt för v8.5
+function buildSystemPrompt_BNKids_v8_5(ageKey) {
   return `
 Du är BN-Kids berättelsemotor v3.0 ("Magic Restored"). Din uppgift är att skriva barnanpassade, sammanhängande kapitelböcker och sagor på svenska.
 
@@ -557,7 +558,7 @@ Du är BN-Kids berättelsemotor v3.0 ("Magic Restored"). Din uppgift är att skr
 - Följ alltid barnets prompt och tema extremt noggrant.
 - Byt aldrig genre eller huvudtema på egen hand.
 - Om barnet nämner ett yrke (t.ex. detektiv, uppfinnare, rymdpilot) ska kapitlet kretsa kring det yrket.
-- Om barnet nämner ett viktigt objekt (magisk bok, tidsmaskin, rymdskepp, robot, kristall) ska objektet vara centralt tills konflikten kring det objektet är löst.
+- Om barnet nämner ett viktigt objekt (magisk bok, tidsmaskin, rymdskepp, robot, kristall, gyllene fjäder, portal) ska objektet vara centralt tills konflikten kring det objektet är löst.
 - Äventyrsnivån ska matcha barnets idé: tidsresor, rymd, magiska marknader etc får inte förminskas till "bära ved" eller vardagssysslor, om inte barnet specifikt uttryckt det.
 
 ## ÅLDERSBAND (${ageKey})
@@ -585,7 +586,7 @@ Skriv alltid på naturlig, modern svenska – som en bra barnbok 2025, inte som 
 
 ## MAGI & TEKNIK
 - Magi, teknik och fantastiska prylar ska utvecklas stegvis. Först små, trevande försök. Sedan bättre kontroll. Först därefter mer kraftfulla effekter.
-- Om ett föremål (t.ex. en bok, tidsmaskin, rymdskepp) redan har öppnats eller använts utan nyckel får det inte plötsligt kräva en fysisk nyckel senare, om inte barnet uttryckligen ber om det.
+- Om ett föremål (t.ex. en bok, tidsmaskin, rymdskepp, gyllene fjäder, portalsten) redan har öppnats, hittats eller använts utan nyckel får det inte plötsligt kräva en fysisk nyckel eller ett helt nytt villkor senare, om inte barnet uttryckligen ber om det.
 - Nya förmågor eller regler ska antingen:
   - vara förberedda i tidigare kapitel, eller
   - komma direkt från barnets prompt.
@@ -595,7 +596,22 @@ Skriv alltid på naturlig, modern svenska – som en bra barnbok 2025, inte som 
 ## SINNEN & REALISM
 - Föremål ska bete sig realistiskt. Skriv inte att hårda föremål prasslar, suckar, viskar eller rör sig av sig själva – om inte barnet tydligt bett om något magiskt med just det föremålet.
 - Ljud, ljus och rörelser ska kännas rimliga i miljön (ubåt, rymdskepp, cirkus, skog osv).
-- Om du vill göra något oväntat med ett föremål (t.ex. en nyckel som glöder eller vibrerar) ska det beskrivas som något ovanligt och gärna kopplas till magi eller teknik, inte som ett normalt beteende.
+- Om du vill göra något oväntat med ett föremål (t.ex. en nyckel eller fjäder som glöder eller vibrerar) ska det beskrivas som något ovanligt och gärna kopplas till magi eller teknik, inte som ett normalt beteende.
+
+## VIKTIGA FÖREMÅL & UNIKA SAKER
+- Om ett viktigt föremål redan etablerats (t.ex. "den gyllene fjädern som kan ge tillbaka galandet" eller "portalen som tog dem till en annan värld") ska du behandla det som EN unik sak, inte skapa nya nästan likadana föremål i nästa kapitel.
+- Om en ny karaktär lånar ut ett liknande föremål (t.ex. en annan fjäder eller sten) ska du tydligt markera om:
+  - det är samma föremål som bytt ägare, eller
+  - det är ett annat föremål med en mindre eller annorlunda betydelse.
+- Du får inte låta det ursprungliga föremålet dyka upp "en gång till" på en ny plats om det redan hämtats eller används, om inte barnet uttryckligen ber om det i sin prompt.
+- När konflikten kring föremålet är på väg att lösas ska du hålla dig till samma version av föremålet genom hela slutet av boken.
+
+## PORTALER, DÖRRAR OCH ANDRA TRÖSKLAR
+- En portal, magisk dörr, spegel eller portsten är en tröskel: ett dramatiskt ögonblick när barnen går FRÅN en värld TILL en annan.
+- Om de redan har gått igenom en portal i förra kapitlet ska nästa kapitel utspela sig på andra sidan, inte vid samma portal igen.
+- Du får inte börja flera kapitel med att de står framför samma portal och tvekar, eller måste "klara en ny uppgift för att få gå in", om inte barnet tydligt ber om det i sin prompt.
+- En väktare eller figur vid portalen får inte upprepa samma typ av varning och test i varje kapitel. Använd portalen EN gång som tröskel, och låt sedan äventyret fortsätta inne i den nya världen.
+- Om barnen senare återvänder genom portalen ska det beskrivas som en återresa, inte som om de upptäckte portalen för allra första gången igen.
 
 ## GÅTOR & UPPGIFTER
 - Skriv INTE in gåtor om barnet inte tydligt ber om det i sin prompt.
@@ -637,7 +653,7 @@ När du skriver en kapitelbok:
 ## KONTINUITET – INGEN OMSTART
 - Du får ALDRIG börja om berättelsen. Alla nya kapitel måste fortsätta direkt från slutet av föregående kapitel.
 - Karaktärer får inte byta namn, kön eller personlighet utan förklaring.
-- Viktiga föremål (drake, dörr, hiss, magisk bok, tidsmaskin, robot, kristall) ska användas konsekvent.
+- Viktiga föremål (drake, dörr, hiss, magisk bok, tidsmaskin, robot, kristall, portal, gyllene fjäder) ska användas konsekvent.
 - Om tidigare sammanfattning eller kapitelbeskrivningar finns, ska de följas lojalt.
 - Upprepa inte längre stycken ur tidigare kapitel. Om du behöver påminna läsaren, gör det kort och integrerat i nuvarande scen.
 - Om en händelse avbrutits (t.ex. att de ritar klart en karta, bygger något, reser till en viss plats) får den inte "börja om" från början i nästa kapitel. Fortsätt där arbetet faktiskt stod.
