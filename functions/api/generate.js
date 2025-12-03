@@ -1,14 +1,15 @@
 // functions/api/generate.js
 // BN-KIDS — Cloudflare Pages Function: POST /api/generate
 //
-// GC v8.1 – BN-Kids StoryEngine v3.1 "Magic Restored + Floskel-filter"
-// - Bas: v8.0 (din magiska version) – kapitelmotor och flow oförändrat
+// GC v8.3 – BN-Kids StoryEngine v3.0 "Magic Restored – Sense & Intro Balance"
+// - Behåller fungerande kapitelmotor från v7.x (chapterIndex via previousChapters.length)
 // - Följetongsläge: en bok är ett deläventyr, inte "rädda världen" på 10 kapitel
 // - Hårdare regler mot tugg, floskler, gåtor och moralkakor
-// - Extra: hårt förbud mot dina hatfraser + post-filter som klipper bort dem om de ändå skrivs
 // - Starkare krav på kontinuitet, ingen omstart, inget kopierat första-kapitel-flow
 // - Tydlig skillnad i ton mellan 7–8 & 11–12 (mer moget och episkt för 11–12)
 // - Extra regler för rymd + tidsresor
+// - Nytt i v8.3: realistiskt beteende (ingen prasslande nyckel), bättre karaktärsintro,
+//   djur beter sig som djur, mild extra konsekvens-guard
 
 export async function onRequestOptions({ env }) {
   const origin =
@@ -195,9 +196,9 @@ export async function onRequestPost({ request, env }) {
            "");
 
     // ------------------------------------------------------
-    // SYSTEMPROMPT – BN-Kids stil + regler (v8.1 = v8.0 + floskelförbud)
+    // SYSTEMPROMPT – BN-Kids stil + regler (uppdaterad v8.3)
     // ------------------------------------------------------
-    const systemPrompt = buildSystemPrompt_BNKids_v8_1(ageKey);
+    const systemPrompt = buildSystemPrompt_BNKids_v8_3(ageKey);
 
     // ------------------------------------------------------
     // USERPROMPT – barnets idé + worldstate + kapitelroll + följetong + promptChanged
@@ -429,10 +430,8 @@ export async function onRequestPost({ request, env }) {
     }
 
     const data = await res.json();
-    const rawStory =
+    const story =
       data.choices?.[0]?.message?.content?.trim() || "";
-
-    const story = sanitizeStory(rawStory);
 
     return json(
       {
@@ -549,10 +548,10 @@ function getSeriesPhaseForBook(chapterIndex, totalChapters) {
   }
 }
 
-// Uppdaterad systemprompt för v8.1 (v8.0 + explicit floskel-förbud)
-function buildSystemPrompt_BNKids_v8_1(ageKey) {
+// Uppdaterad systemprompt för v8.3 (StoryEngine v3.0 – Magic Restored, Sense & Intro Balance)
+function buildSystemPrompt_BNKids_v8_3(ageKey) {
   return `
-Du är BN-Kids berättelsemotor v3.1 ("Magic Restored"). Din uppgift är att skriva barnanpassade, sammanhängande kapitelböcker och sagor på svenska.
+Du är BN-Kids berättelsemotor v3.0 ("Magic Restored"). Din uppgift är att skriva barnanpassade, sammanhängande kapitelböcker och sagor på svenska.
 
 ## FOKUS & GENRE
 - Följ alltid barnets prompt och tema extremt noggrant.
@@ -593,6 +592,11 @@ Skriv alltid på naturlig, modern svenska – som en bra barnbok 2025, inte som 
 - Om barnen bara gjort sina första försök i tidigare kapitel ska de fortfarande vara nybörjare. De får fumla, misslyckas ibland och göra små misstag.
 - Använd hellre en konkret, tydlig effekt (lampor som tänds, ljus som skyddar, robotar som startar) än stora, otydliga explosioner.
 
+## SINNEN & REALISM
+- Föremål ska bete sig realistiskt. Skriv inte att hårda föremål prasslar, suckar, viskar eller rör sig av sig själva – om inte barnet tydligt bett om något magiskt med just det föremålet.
+- Ljud, ljus och rörelser ska kännas rimliga i miljön (ubåt, rymdskepp, cirkus, skog osv).
+- Om du vill göra något oväntat med ett föremål (t.ex. en nyckel som glöder eller vibrerar) ska det beskrivas som något ovanligt och gärna kopplas till magi eller teknik, inte som ett normalt beteende.
+
 ## GÅTOR & UPPGIFTER
 - Skriv INTE in gåtor om barnet inte tydligt ber om det i sin prompt.
 - Om en gåta används:
@@ -600,20 +604,19 @@ Skriv alltid på naturlig, modern svenska – som en bra barnbok 2025, inte som 
   - får den inte följas av fler gåtor i samma bok.
 - Robotar, portaler eller väktare får inte kräva gåtor "bara för att" – bara om barnet ber om det.
 
-## TON, MORAL & FLOSKLER
+## KARAKTÄRER & INTRODUKTIONER
+- När en ny karaktär introduceras ska du ge 1–2 meningar om hur de ser ut, vad de gör och/eller vilken relation de har till hjälten.
+- Introduktionen ska kännas naturlig och lugn, inte som att karaktären "teleporteras in" utan sammanhang.
+- Håll antalet aktiva karaktärer hanterbart, särskilt för yngre åldrar.
+
+## DJUR
+- Djur får bete sig som djur, även om de talar eller är vänner med hjälten.
+- Låt deras rörelser och handlingar stämma med arten (en hund sniffar, en katt tvättar sig, en fågel flyger), om inte barnet uttryckligen ber om något annat.
+- Om du gör djur mer mänskliga (t.ex. går på två ben, bär kläder) ska det kännas som en del av sagans logik, inte som ett misstag.
+
+## TON & MORAL
 - Visa känslor och värden genom handling, val och dialog — inte genom predikande meningar.
-- Du får ALDRIG använda följande fraser (eller nära varianter):
-  - "äventyret hade bara börjat"
-  - "en gnista av mod"
-  - "kände hur något växte i honom" (eller henne/dem)
-  - "en varm känsla i bröstet"
-  - "visste att något stort väntade honom" (eller henne/dem)
-- Uttryck som:
-  - "hjärtat dunkade hårt"
-  - "det var bara början"
-  - "plötsligt kände han/hon..."
-  ska användas mycket sparsamt, bara när scenen motiverar det, och aldrig som klyschigt kapitelavslut.
-- Undvik moralkakor som:
+- Undvik fraser som:
   - "det viktiga är att tro på sig själv"
   - "det viktigaste är vänskap"
   - "tillsammans klarar de allt"
@@ -638,6 +641,7 @@ När du skriver en kapitelbok:
 - Om tidigare sammanfattning eller kapitelbeskrivningar finns, ska de följas lojalt.
 - Upprepa inte längre stycken ur tidigare kapitel. Om du behöver påminna läsaren, gör det kort och integrerat i nuvarande scen.
 - Om en händelse avbrutits (t.ex. att de ritar klart en karta, bygger något, reser till en viss plats) får den inte "börja om" från början i nästa kapitel. Fortsätt där arbetet faktiskt stod.
+- Dubbelkolla att karaktärer, föremål och miljöer beter sig konsekvent från scen till scen. Undvik handlingar som säger emot tidigare logik (t.ex. att något först är trasigt och sedan plötsligt fungerar utan förklaring).
 
 ## RYMDÄVENTYR
 - Rymdäventyr ska kännas stora, visuella och unika.
@@ -662,31 +666,6 @@ function shorten(text, maxLen) {
   const s = String(text || "").replace(/\s+/g, " ").trim();
   if (s.length <= maxLen) return s;
   return s.slice(0, maxLen - 1) + "…";
-}
-
-// Post-filter: klipper bort dina hatfraser om de ändå smiter igenom
-function sanitizeStory(raw) {
-  if (!raw) return "";
-
-  let s = String(raw);
-
-  const banned = [
-    /äventyret hade bara börjat/gi,
-    /en gnista av mod/gi,
-    /kände hur något växte i honom/gi,
-    /kände hur något växte i henne/gi,
-    /kände hur något växte i dem/gi,
-    /en varm känsla i bröstet/gi,
-    /visste att något stort väntade honom/gi,
-    /visste att något stort väntade henne/gi,
-    /visste att något stort väntade dem/gi
-  ];
-
-  for (const pattern of banned) {
-    s = s.replace(pattern, "");
-  }
-
-  return s.trim();
 }
 
 function json(obj, status = 200, origin = "*") {
