@@ -353,19 +353,45 @@
       const wsBtn = document.querySelector('[data-id="btn-ws-dev"]');
       if (!wsBtn) return;
 
-      // Starta på 1 (matchar texten i HTML)
       let currentChapter = 1;
+
+      const setLabel = () => {
+        wsBtn.textContent = "Skapa Kapitel " + currentChapter;
+      };
+
+      // Init utifrån ev. befintlig text
       const match = wsBtn.textContent.match(/Kapitel\s+(\d+)/);
       if (match) {
         const num = parseInt(match[1], 10);
         if (!isNaN(num) && num > 0) currentChapter = num;
       }
+      setLabel();
 
       wsBtn.addEventListener("click", () => {
-        // Efter att kapitel skapas, bumpa bara etiketten uppåt.
-        // Detta påverkar INTE kapitelmotorn, bara texten på knappen.
+        // Efter att ett kapitel skapats: bumpa bara UI-numret.
         currentChapter += 1;
-        wsBtn.textContent = "Skapa Kapitel " + currentChapter;
+        setLabel();
+      });
+
+      const resetChapterLabel = () => {
+        currentChapter = 1;
+        setLabel();
+      };
+
+      // Transcript-Rensa nollställer också kapitel-label
+      const clearTranscriptBtn = document.querySelector("#clear-transcript");
+      if (clearTranscriptBtn) {
+        clearTranscriptBtn.addEventListener("click", resetChapterLabel);
+      }
+
+      // Fånga ev. andra "Rensa"-knappar (t.ex. Rensa bok från ws_button.gc.js)
+      document.addEventListener("click", (e) => {
+        const el = e.target;
+        if (!el) return;
+        const text = (el.textContent || "").trim();
+        if (/^rensa\b/i.test(text) || /rensa bok/i.test(text)) {
+          resetChapterLabel();
+        }
       });
     })();
   </script>
